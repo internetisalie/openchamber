@@ -101,8 +101,7 @@
       "entitlementsInherit": "resources/entitlements.mac.plist",
       "notarize": true,
       "target": [
-        "dmg",
-        "zip"
+        "dir"
       ]
     },
     "win": {
@@ -115,7 +114,7 @@
     },
     "linux": {
       "target": [
-        "AppImage"
+        "dir"
       ],
       "category": "Development",
       "icon": "resources/icons/icon.png",
