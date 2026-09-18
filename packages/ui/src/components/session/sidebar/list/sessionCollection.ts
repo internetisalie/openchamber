@@ -16,6 +16,7 @@ import { isChatDirectoryPath } from '@/lib/chatDirectories';
 import { isBtwSession } from '@/lib/sessionBtwMetadata';
 import type { GlobalSessionStructure } from '@/stores/globalSessionStructure';
 import { countSyncPerformance } from '@/sync/performance-diagnostics';
+import { isSessionArchived } from '@/lib/sessionArchive';
 
 type ProjectSidebarActiveSessionsArgs = {
   globalActiveSessions: Session[];
@@ -27,6 +28,7 @@ type ProjectSidebarActiveSessionsArgs = {
 type SidebarSessionPartitions = {
   projectSessions: Session[];
   chatSessions: Session[];
+  globalSessions: Session[];
 };
 
 const parentIdOf = (session: Session): string | null => {
@@ -39,9 +41,11 @@ const parentIdOf = (session: Session): string | null => {
 export const partitionSidebarSessions = (
   sessions: readonly Session[],
   isVSCode: boolean,
+  classifyGlobalSessions = false,
 ): SidebarSessionPartitions => {
   const projectSessions: Session[] = [];
   const chatSessions: Session[] = [];
+  const globalSessions: Session[] = [];
   for (const session of sessions) {
     if (isBtwSession(session)) continue;
     if (isChatDirectoryPath(session.directory)) {
@@ -49,9 +53,13 @@ export const partitionSidebarSessions = (
       chatSessions.push(session);
       continue;
     }
+    if (classifyGlobalSessions && session.projectID === 'global') {
+      globalSessions.push(session);
+      continue;
+    }
     projectSessions.push(session);
   }
-  return { projectSessions, chatSessions };
+  return { projectSessions, chatSessions, globalSessions };
 };
 
 const EMPTY_ACTIVE_SESSION_IDS: ReadonlySet<string> = new Set();
@@ -61,7 +69,7 @@ const isKnownActiveSessionDirectory = (
   knownDirectories: Set<string>,
   isVSCode: boolean,
 ): boolean => {
-  if (session.time?.archived) return true;
+  if (isSessionArchived(session)) return true;
   const directory = normalizePath(resolveGlobalSessionDirectory(session))?.toLowerCase();
   if (!directory) return !isVSCode;
   if (knownDirectories.size === 0) return !isVSCode;
@@ -84,7 +92,7 @@ export const projectSidebarActiveSessions = ({
     sessions.push(session);
   }
 
-  return partitionSidebarSessions(sessions, isVSCode).projectSessions
+  return partitionSidebarSessions(sessions, isVSCode, !isVSCode).projectSessions
     .filter((session) => isKnownActiveSessionDirectory(session, knownDirectories, isVSCode));
 };
 
@@ -146,10 +154,10 @@ const buildSidebarSessionStructure = ({
   countSyncPerformance('sidebarStructureBuilds');
   const indexedGlobalSessions = globalActiveSessions ?? [];
   const visibleSessions = mergeSidebarSessionSources(indexedGlobalSessions, liveSessions);
-  const partition = partitionSidebarSessions(visibleSessions, isVSCode);
+  const partition = partitionSidebarSessions(visibleSessions, isVSCode, !isVSCode);
   const projectSessions = partition.projectSessions
     .filter((session) => isKnownActiveSessionDirectory(session, knownDirectories, isVSCode));
-  const sessions = [...projectSessions, ...partition.chatSessions];
+  const sessions = [...projectSessions, ...partition.chatSessions, ...partition.globalSessions];
   const sessionById = new Map(sessions.map((session) => [session.id, session]));
   const projectSessionIds = new Set(projectSessions.map((session) => session.id));
   const indexedRootIds = globalStructure?.activeRootIds ?? [];
@@ -166,6 +174,7 @@ const buildSidebarSessionStructure = ({
   ];
   return {
     chatSessionIds: new Set(partition.chatSessions.map((session) => session.id)),
+    globalSessionIds: new Set(partition.globalSessions.map((session) => session.id)),
     projectSessions,
     rootSessions,
     sessionById,
@@ -196,9 +205,16 @@ const orderSidebarSessionStructure = (
     siblings.push(session);
     childrenMap.set(parentID, siblings);
   }
+  const chatSessions: Session[] = [];
+  const globalSessions: Session[] = [];
+  for (const session of orderedSessions) {
+    if (structure.chatSessionIds.has(session.id)) chatSessions.push(session);
+    else if (structure.globalSessionIds.has(session.id)) globalSessions.push(session);
+  }
   return {
-    chatSessions: orderedSessions.filter((session) => structure.chatSessionIds.has(session.id)),
+    chatSessions,
     childrenMap,
+    globalSessions,
     orderedSessions,
   };
 };
@@ -260,7 +276,7 @@ export const useSessionProjectCollection = ({
     () => orderSidebarSessionStructure(structure, pinnedSessionIds, sessionOrderRanks),
     [pinnedSessionIds, sessionOrderRanks, structure],
   );
-  const { chatSessions, orderedSessions } = ordering;
+  const { chatSessions, globalSessions, orderedSessions } = ordering;
   const sessions = structure.projectSessions;
   const sessionById = React.useMemo(() => new Map(
     [...structure.sessions, ...archivedSessions].map((session) => [session.id, session]),
@@ -280,7 +296,10 @@ export const useSessionProjectCollection = ({
   }, [archivedSessions, ordering.childrenMap]);
   const getDescendantIdsForAction = React.useCallback(
     (sessionId: string, options: { includeArchived: boolean }) => getDescendantIds(childrenMap, sessionId)
-      .filter((id) => options.includeArchived || !sessionById.get(id)?.time?.archived),
+      .filter((id) => {
+        const session = sessionById.get(id);
+        return options.includeArchived || !session || !isSessionArchived(session);
+      }),
     [childrenMap, sessionById],
   );
 
@@ -289,6 +308,7 @@ export const useSessionProjectCollection = ({
     childrenMap,
     chatSessions,
     getDescendantIds: getDescendantIdsForAction,
+    globalSessions,
     hasAuthoritativeGlobalSessions,
     liveSessions,
     orderedSessions,

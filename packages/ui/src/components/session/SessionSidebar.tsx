@@ -6,6 +6,7 @@ import { isDesktopShell, isVSCodeRuntime } from '@/lib/desktop';
 import { sessionEvents } from '@/lib/sessionEvents';
 import { cn } from '@/lib/utils';
 import { useSessionUIStore } from '@/sync/session-ui-store';
+import { useGlobalSyncStore } from '@/sync/global-sync-store';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useUIStore } from '@/stores/useUIStore';
@@ -40,7 +41,10 @@ import { recordWorktreesSeen } from './sidebar/projects/worktreeFirstSeen';
 import { getRuntimeKey } from '@/lib/runtime-switch';
 import { streamPerfCount, streamPerfMark } from '@/stores/utils/streamDebug';
 import { runBackgroundNetworkTask } from '@/lib/background-network';
-import { buildKnownSessionDirectories } from './sidebar/list/sessionListDirectories';
+import {
+  buildKnownSessionDirectories,
+  buildOpenCodeWorkspaceDirectoriesByProject,
+} from './sidebar/list/sessionListDirectories';
 import { sortProjectsByOrder } from './sidebar/list/projectSort';
 import { z } from 'zod';
 import { subscribeOpenchamberEvents } from '@/lib/openchamberEvents';
@@ -120,6 +124,7 @@ const SessionSidebarComponent: React.FC<SessionSidebarProps> = ({
   const homeDirectory = useDirectoryStore((state) => state.homeDirectory);
 
   const projects = useProjectsStore((state) => state.projects);
+  const openCodeProjects = useGlobalSyncStore((state) => state.projects);
   const activeProjectId = useProjectsStore((state) => state.activeProjectId);
   const removeProject = useProjectsStore((state) => state.removeProject);
   const setActiveProjectIdOnly = useProjectsStore((state) => state.setActiveProjectIdOnly);
@@ -161,9 +166,16 @@ const SessionSidebarComponent: React.FC<SessionSidebarProps> = ({
   const worktreeMetadata = useSessionUIStore((state) => state.worktreeMetadata);
   const availableWorktreesByProject = useSessionUIStore((state) => state.availableWorktreesByProject);
   const openNewSessionDraft = useSessionUIStore((state) => state.openNewSessionDraft);
+  const workspaceDirectoriesByProject = React.useMemo(
+    () => buildOpenCodeWorkspaceDirectoriesByProject(projects, openCodeProjects),
+    [openCodeProjects, projects],
+  );
   const knownSessionDirectories = React.useMemo(
-    () => buildKnownSessionDirectories(projects, availableWorktreesByProject, { includeWorktrees: !isVSCode }),
-    [availableWorktreesByProject, isVSCode, projects],
+    () => buildKnownSessionDirectories(projects, availableWorktreesByProject, {
+      includeWorktrees: !isVSCode,
+      workspaceDirectoriesByProject: isVSCode ? undefined : workspaceDirectoriesByProject,
+    }),
+    [availableWorktreesByProject, isVSCode, projects, workspaceDirectoriesByProject],
   );
   // The sidebar tree's +-buttons (project / group / folder) open a draft but,
   // unlike selecting an existing session, don't navigate. VS Code's compact view
@@ -459,6 +471,7 @@ const SessionSidebarComponent: React.FC<SessionSidebarProps> = ({
     manualProjectOrder,
     worktreeMetadata,
     availableWorktreesByProject,
+    workspaceDirectoriesByProject,
     gitBranches,
     gitRepoStatus,
     updateStore,
@@ -644,6 +657,7 @@ const SessionSidebarComponent: React.FC<SessionSidebarProps> = ({
         topology={{
           projects: sortedProjects,
           availableWorktreesByProject,
+          workspaceDirectoriesByProject,
           knownDirectories: knownSessionDirectories,
           isVSCode,
           worktreeMetadata,

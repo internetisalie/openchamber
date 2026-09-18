@@ -9,6 +9,7 @@ import type { ActivityItem } from './SidebarActivitySections';
 import type { SessionTreeItemProps } from '../sessions/SessionTreeItem';
 import type { SessionNode } from '../types';
 import { formatProjectLabel, normalizePath } from '../utils';
+import { isSessionArchived } from '@/lib/sessionArchive';
 
 type Props = {
   projects: { id: string; label?: string; normalizedPath: string }[];
@@ -31,6 +32,7 @@ type Props = {
   mobileVariant: boolean;
   alwaysShowActions: boolean;
   chatSessions: Session[];
+  globalSessionNodes: SessionNode[];
   renderChatsSection: (items: ActivityItem[]) => React.ReactNode;
   onNewChat: () => void;
   showRecentSection: boolean;
@@ -66,6 +68,7 @@ export const RecentSessionSection: React.FC<Props> = (props) => {
     pinnedSessionIds,
     recentSessions,
     chatSessions,
+    globalSessionNodes,
     showRecentSection,
   } = props;
   const { t } = useI18n();
@@ -103,7 +106,7 @@ export const RecentSessionSection: React.FC<Props> = (props) => {
   const getSessionNode = React.useCallback(
     (session: Session): SessionNode => ({
       session,
-      children: (childrenMap.get(session.id) ?? []).filter((child) => !child.time?.archived).map((child) => ({
+      children: (childrenMap.get(session.id) ?? []).filter((child) => !isSessionArchived(child)).map((child) => ({
         session: child,
         children: [],
         worktree: null,
@@ -129,8 +132,18 @@ export const RecentSessionSection: React.FC<Props> = (props) => {
         secondaryMeta: null,
       })),
     },
+    {
+      key: 'global' as const,
+      title: t('sessions.sidebar.activity.globalTitle'),
+      items: globalSessionNodes.map((node) => ({
+        node,
+        projectId: null,
+        groupDirectory: node.session.directory ?? null,
+        secondaryMeta: null,
+      })),
+    },
     ...(showRecentSection ? recentSections.map((section) => ({ ...section, title: t('sessions.sidebar.activity.recentTitle') })) : []),
-  ], [chatSessions, getSessionNode, recentSections, showRecentSection, t]);
+  ], [chatSessions, getSessionNode, globalSessionNodes, recentSections, showRecentSection, t]);
   return (
     <SidebarActivitySections
       sections={sections}

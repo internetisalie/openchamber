@@ -124,10 +124,28 @@ describe('useGlobalSessionsStore', () => {
     const structure = useGlobalSessionsStore.getState().structure;
     useGlobalSessionsStore.getState().upsertSession({
       ...archived,
-      time: { created: 1, updated: 4, archived: 3 },
+      time: { created: 1, updated: 3, archived: 4 },
     });
     expect(useGlobalSessionsStore.getState().activeSessions).toBe(activeSessions);
     expect(useGlobalSessionsStore.getState().structure).toBe(structure);
+  });
+
+  test('returns a session to its active directory after post-archive activity', () => {
+    const archived = buildSession('https://share.example/archived', {
+      directory: '/workspaces/M32.20',
+      time: { created: 1, updated: 10, archived: 15 },
+    });
+    useGlobalSessionsStore.getState().applySnapshot([], [archived]);
+
+    useGlobalSessionsStore.getState().upsertSession({
+      ...archived,
+      time: { created: 1, updated: 20, archived: 15 },
+    });
+
+    const state = useGlobalSessionsStore.getState();
+    expect(state.archivedSessions).toEqual([]);
+    expect(state.activeSessions.map((session) => session.id)).toEqual([archived.id]);
+    expect(state.sessionsByDirectory.get('/workspaces/M32.20')?.map((session) => session.id)).toEqual([archived.id]);
   });
 
   test('applies a batch of session upserts in one store publication', () => {
@@ -187,6 +205,23 @@ describe('useGlobalSessionsStore', () => {
     expect(next.structure).toBe(previous.structure);
     expect(next.structure.activeChildrenByParentId.get(parent.id)).toBe(previousChildren);
     expect(next.entityById.get(child.id)?.title).toBe('Renamed child');
+  });
+
+  test('publishes an authoritative project ID migration without rebuilding hierarchy indexes', () => {
+    const global = buildSession('https://share.example/session', {
+      projectID: 'global',
+      directory: '/repo',
+    });
+    useGlobalSessionsStore.getState().upsertSession(global);
+    const previous = useGlobalSessionsStore.getState();
+
+    useGlobalSessionsStore.getState().upsertSession({ ...global, projectID: 'project' });
+
+    const next = useGlobalSessionsStore.getState();
+    expect(next.activeSessions).not.toBe(previous.activeSessions);
+    expect(next.activeSessions[0]?.projectID).toBe('project');
+    expect(next.entityById.get(global.id)?.projectID).toBe('project');
+    expect(next.structure).toBe(previous.structure);
   });
 
   test('updates only affected hierarchy buckets when a session is reparented', () => {
@@ -304,5 +339,18 @@ describe('isGlobalSessionRecencyOnlyUpdate', () => {
 
     expect(isGlobalSessionRecencyOnlyUpdate(existing, reparented)).toBe(false);
     expect(isGlobalSessionRecencyOnlyUpdate(existing, reslugged)).toBe(false);
+  });
+
+  test('rejects project ID changes as structural updates', () => {
+    const existing = buildSession('https://share.example/s', {
+      projectID: 'global',
+      time: { created: 1, updated: 2 },
+    });
+    const migrated = buildSession('https://share.example/s', {
+      projectID: 'project',
+      time: { created: 1, updated: 3 },
+    });
+
+    expect(isGlobalSessionRecencyOnlyUpdate(existing, migrated)).toBe(false);
   });
 });

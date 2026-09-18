@@ -4,6 +4,7 @@ import { retry } from "@/sync/retry";
 import { stripSessionListDetails } from "@/sync/sanitize";
 import { startSessionLoadPerformanceEvent } from "@/sync/session-load-performance";
 import { isChatDirectoryPath } from '@/lib/chatDirectories';
+import { isSessionArchived } from '@/lib/sessionArchive';
 
 export type GlobalSessionRecord = Session & {
     project?: {
@@ -89,16 +90,13 @@ const unwrapSessionList = (
  * expect archived-only records, so narrow the response here, at the data
  * boundary, instead of leaving every consumer to re-derive it.
  */
-const isArchivedSession = (session: GlobalSessionRecord): boolean => Boolean(session.time?.archived);
-
 /**
  * Split an inclusive (`archived: true`) session page stream into active and
  * archived buckets. Restored sessions carry `time.archived === 0` (see
- * `UNARCHIVED_TIMESTAMP` in `sync/session-actions.ts`); the truthiness check
- * classifies them as active even though the server's own
- * `time_archived IS NULL` filter would still exclude them, which is why the
- * global cache must split client-side instead of issuing an
- * `archived: false` request for its active list.
+ * `UNARCHIVED_TIMESTAMP` in `sync/session-actions.ts`). OpenCode also keeps an
+ * older archive timestamp when a reused session receives later activity. The
+ * server's `time_archived IS NULL` filter excludes both records, so the global
+ * cache must split the inclusive response client-side.
  */
 export const splitGlobalSessionsByArchived = <T extends GlobalSessionRecord>(
     sessions: T[],
@@ -106,7 +104,7 @@ export const splitGlobalSessionsByArchived = <T extends GlobalSessionRecord>(
     const active: T[] = [];
     const archived: T[] = [];
     for (const session of sessions) {
-        if (isArchivedSession(session)) archived.push(session);
+        if (isSessionArchived(session)) archived.push(session);
         else active.push(session);
     }
     return { active, archived };
@@ -184,7 +182,7 @@ export async function listGlobalSessionPages(
             if (!session?.id || seenIds.has(session.id)) continue;
             seenIds.add(session.id);
             appended += 1;
-            if (options.archived && narrowToArchived && !isArchivedSession(session)) continue;
+            if (options.archived && narrowToArchived && !isSessionArchived(session)) continue;
             all.push(session);
             accepted.push(session);
         }

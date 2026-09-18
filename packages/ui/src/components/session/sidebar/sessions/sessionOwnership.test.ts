@@ -60,6 +60,24 @@ describe('createSessionOwnershipIndex', () => {
     expect(ownership.bySessionId.get('nested')?.kind).toBe('project');
   });
 
+  test('assigns SDK-only sandbox directories without treating them as worktrees', () => {
+    const ownership = createSessionOwnershipIndex(
+      [{ id: 'sandbox-session', directory: '/sandboxes/independent/src' } as Session],
+      [{ id: 'app', normalizedPath: '/projects/app' }],
+      new Map(),
+      false,
+      [],
+      new Map([['/projects/app', ['/sandboxes/independent']]]),
+    );
+
+    expect(ownership.bySessionId.get('sandbox-session')).toEqual({
+      projectId: 'app',
+      projectRoot: '/projects/app',
+      scopeDirectory: '/sandboxes/independent',
+      kind: 'sandbox',
+    });
+  });
+
   test('indexes archived sessions separately', () => {
     const ownership = createSessionOwnershipIndex(
       [],
@@ -76,6 +94,48 @@ describe('createSessionOwnershipIndex', () => {
       'archived-child',
       'archived-fallback',
     ]);
+  });
+
+  test('does not assign authoritative Global sessions to path-derived projects outside VS Code', () => {
+    const active: Session = {
+      id: 'global-active',
+      slug: 'global-active',
+      projectID: 'global',
+      directory: '/projects/app',
+      title: 'Global active',
+      version: '1',
+      time: { created: 1, updated: 1 },
+    };
+    const archived: Session = {
+      id: 'global-archived',
+      slug: 'global-archived',
+      projectID: 'global',
+      directory: '/projects/app',
+      title: 'Global archived',
+      version: '1',
+      time: { created: 1, updated: 1, archived: 1 },
+    };
+    const ownership = createSessionOwnershipIndex(
+      [active],
+      [{ id: 'app', normalizedPath: '/projects/app' }],
+      new Map(),
+      false,
+      [archived],
+    );
+
+    expect(ownership.bySessionId.has(active.id)).toBe(false);
+    expect(ownership.sessionsByProject.size).toBe(0);
+    expect(ownership.archivedSessionsByProject.size).toBe(0);
+
+    const vscodeOwnership = createSessionOwnershipIndex(
+      [active],
+      [{ id: 'app', normalizedPath: '/projects/app' }],
+      new Map(),
+      true,
+      [archived],
+    );
+    expect(vscodeOwnership.sessionsByProject.get('app')?.map((session) => session.id)).toEqual(['global-active']);
+    expect(vscodeOwnership.archivedSessionsByProject.get('app')?.map((session) => session.id)).toEqual(['global-archived']);
   });
 
   test('requires exact workspace directories in VS Code', () => {

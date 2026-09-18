@@ -14,7 +14,13 @@ export type DirectoryOwner = {
   projectId: string;
   projectRoot: string;
   scopeDirectory: string;
-  kind: 'project' | 'worktree';
+  kind: 'project' | 'worktree' | 'sandbox';
+};
+
+const ownerKindRank: Record<DirectoryOwner['kind'], number> = {
+  project: 2,
+  worktree: 1,
+  sandbox: 0,
 };
 
 export type SessionOwnershipIndex = {
@@ -28,7 +34,7 @@ export type SessionOwnershipIndex = {
 const shouldReplaceOwner = (existing: DirectoryOwner | undefined, candidate: DirectoryOwner): boolean => {
   if (!existing) return true;
   if (candidate.kind !== existing.kind) {
-    return candidate.kind === 'project';
+    return ownerKindRank[candidate.kind] > ownerKindRank[existing.kind];
   }
   if (candidate.projectRoot.length !== existing.projectRoot.length) {
     return candidate.projectRoot.length > existing.projectRoot.length;
@@ -67,6 +73,7 @@ export const createSessionOwnershipIndex = (
   availableWorktreesByProject: Map<string, Worktree[]>,
   isVSCode: boolean,
   archivedSessions: Session[] = [],
+  workspaceDirectoriesByProject: ReadonlyMap<string, readonly string[]> = new Map(),
 ): SessionOwnershipIndex => {
   const ownerByDirectory = new Map<string, DirectoryOwner>();
   const projectByRoot = new Map<string, Project>();
@@ -87,6 +94,21 @@ export const createSessionOwnershipIndex = (
   }
 
   if (!isVSCode) {
+    for (const [projectPath, workspaceDirectories] of workspaceDirectoriesByProject) {
+      const projectRoot = normalizePath(projectPath);
+      const project = projectRoot ? projectByRoot.get(projectRoot) : undefined;
+      if (!project || !projectRoot) continue;
+      for (const workspaceDirectory of workspaceDirectories) {
+        const directory = normalizePath(workspaceDirectory);
+        if (!directory) continue;
+        setOwner(ownerByDirectory, directory, {
+          projectId: project.id,
+          projectRoot,
+          scopeDirectory: directory,
+          kind: 'sandbox',
+        });
+      }
+    }
     for (const [projectPath, worktrees] of availableWorktreesByProject) {
       const projectRoot = normalizePath(projectPath);
       const project = projectRoot ? projectByRoot.get(projectRoot) : undefined;
@@ -141,33 +163,34 @@ export const createSessionOwnershipIndex = (
     return owner;
   };
 
-  const bucket = (
-    input: Session[],
-    target: Map<string, Session[]>,
-    scopeTarget?: Map<string, Set<string>>,
+  const addSessionsToIndex = (
+    sessionsToIndex: Session[],
+    projectBuckets: Map<string, Session[]>,
+    scopeBuckets?: Map<string, Set<string>>,
   ): void => {
-    for (const session of input) {
+    for (const session of sessionsToIndex) {
+      if (!isVSCode && session.projectID === 'global') continue;
       const owner = resolveOwner(resolveSessionDirectory(session));
       if (!owner) continue;
       bySessionId.set(session.id, owner);
-      const projectSessions = target.get(owner.projectId);
+      const projectSessions = projectBuckets.get(owner.projectId);
       if (projectSessions) {
         projectSessions.push(session);
       } else {
-        target.set(owner.projectId, [session]);
+        projectBuckets.set(owner.projectId, [session]);
       }
-      if (!scopeTarget) continue;
-      const scopeSessions = scopeTarget.get(owner.scopeDirectory);
+      if (!scopeBuckets) continue;
+      const scopeSessions = scopeBuckets.get(owner.scopeDirectory);
       if (scopeSessions) {
         scopeSessions.add(session.id);
       } else {
-        scopeTarget.set(owner.scopeDirectory, new Set([session.id]));
+        scopeBuckets.set(owner.scopeDirectory, new Set([session.id]));
       }
     }
   };
 
-  bucket(sessions, sessionsByProject, sessionsByScope);
-  bucket(archivedSessions, archivedSessionsByProject);
+  addSessionsToIndex(sessions, sessionsByProject, sessionsByScope);
+  addSessionsToIndex(archivedSessions, archivedSessionsByProject);
 
   return {
     bySessionId,

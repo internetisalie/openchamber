@@ -28,31 +28,37 @@ type ProjectSectionCacheEntry = {
   activeSessions: Session[];
   archivedSessions: Session[];
   availableWorktrees: WorktreeMetadata[];
+  workspaceDirectories: readonly string[];
   rootBranch: string | null;
-  /** Current branch of every worktree directory the section renders. */
-  worktreeBranchesKey: string;
+  /** Current branch of every secondary workspace directory the section renders. */
+  workspaceBranchesKey: string;
   isRepo: boolean;
   buildGroupedSessions: Args['buildGroupedSessions'];
   section: ProjectSection;
 };
 
-const worktreeBranchesKeyFor = (
+const workspaceBranchesKeyFor = (
   worktrees: WorktreeMetadata[],
+  workspaceDirectories: readonly string[],
   gitBranches: ReadonlyMap<string, string | null>,
-): string => worktrees
-  .map((worktree) => {
-    const directory = normalizePath(worktree.path) ?? worktree.path;
+): string => [...new Set([
+  ...worktrees.map((worktree) => normalizePath(worktree.path) ?? worktree.path),
+  ...workspaceDirectories.map((directory) => normalizePath(directory) ?? directory),
+])]
+  .map((directory) => {
     return `${directory}=${gitBranches.get(directory) ?? ''}`;
   })
   .join('\n');
 
 const EMPTY_WORKTREES: WorktreeMetadata[] = [];
+const EMPTY_WORKSPACE_DIRECTORIES: readonly string[] = [];
 
 type Args = {
   normalizedProjects: ProjectItem[];
   getSessionsForProject: (projectId: string) => Session[];
   getArchivedSessionsForProject: (projectId: string) => Session[];
   availableWorktreesByProject: Map<string, WorktreeMetadata[]>;
+  workspaceDirectoriesByProject: ReadonlyMap<string, readonly string[]>;
   projectRepoStatus: Map<string, boolean | null>;
   projectRootBranches: Map<string, string | null>;
   gitBranches: ReadonlyMap<string, string | null>;
@@ -63,6 +69,7 @@ type Args = {
     availableWorktrees: WorktreeMetadata[],
     rootBranch: string | null,
     isRepo: boolean,
+    workspaceDirectories?: readonly string[],
   ) => SessionGroup[];
   hasSessionSearchQuery: boolean;
   normalizedSessionSearchQuery: string;
@@ -70,10 +77,10 @@ type Args = {
   buildGroupSearchText: (group: SessionGroup) => string;
   foldersMap: SessionFoldersMap;
   /**
-   * Groups the sidebar renders outside any project section — today the managed
-   * chats. They search like every other group: a group with no search data
-   * renders its filtered nodes as an empty list, so leaving them out made every
-   * chat vanish the moment a query was typed.
+   * Groups the sidebar renders outside any project section, such as managed
+   * chats and Global sessions. They search like every other group: a group with
+   * no search data renders its filtered nodes as an empty list, so leaving them
+   * out made every chat vanish the moment a query was typed.
    */
   standaloneGroups: SessionGroup[];
 };
@@ -84,6 +91,7 @@ export const useSessionSidebarSections = (args: Args) => {
     getSessionsForProject,
     getArchivedSessionsForProject,
     availableWorktreesByProject,
+    workspaceDirectoriesByProject,
     projectRepoStatus,
     projectRootBranches,
     gitBranches,
@@ -111,11 +119,12 @@ export const useSessionSidebarSections = (args: Args) => {
       const activeSessions = getSessionsForProject(project.id);
       const archivedSessions = getArchivedSessionsForProject(project.id);
       const worktreesForProject = availableWorktreesByProject.get(project.normalizedPath) ?? EMPTY_WORKTREES;
+      const workspaceDirectories = workspaceDirectoriesByProject.get(project.normalizedPath) ?? EMPTY_WORKSPACE_DIRECTORIES;
       const isRepo = projectRepoStatus.has(project.id)
         ? Boolean(projectRepoStatus.get(project.id))
         : lastRepoStatus;
       const rootBranch = projectRootBranches.get(project.id) ?? null;
-      const worktreeBranchesKey = worktreeBranchesKeyFor(worktreesForProject, gitBranches);
+      const workspaceBranchesKey = workspaceBranchesKeyFor(worktreesForProject, workspaceDirectories, gitBranches);
       const cached = previousCache.get(project.id);
       if (
         cached
@@ -123,8 +132,9 @@ export const useSessionSidebarSections = (args: Args) => {
         && sameSessions(cached.activeSessions, activeSessions)
         && sameSessions(cached.archivedSessions, archivedSessions)
         && cached.availableWorktrees === worktreesForProject
+        && cached.workspaceDirectories === workspaceDirectories
         && cached.rootBranch === rootBranch
-        && cached.worktreeBranchesKey === worktreeBranchesKey
+        && cached.workspaceBranchesKey === workspaceBranchesKey
         && cached.isRepo === isRepo
         && cached.buildGroupedSessions === buildGroupedSessions
       ) {
@@ -137,14 +147,24 @@ export const useSessionSidebarSections = (args: Args) => {
       if (cached) {
         // Diagnostic: name what invalidated the cached section so a sidebar
         // that rebuilds on every session switch can be traced to its input.
-        const reason = cached.project !== project ? 'project'
-          : !sameSessions(cached.activeSessions, activeSessions) ? 'sessions'
-          : !sameSessions(cached.archivedSessions, archivedSessions) ? 'archived'
-          : cached.availableWorktrees !== worktreesForProject ? 'worktrees'
-          : cached.rootBranch !== rootBranch ? 'branch'
-          : cached.worktreeBranchesKey !== worktreeBranchesKey ? 'worktreeBranches'
-          : cached.isRepo !== isRepo ? 'repo'
-          : 'builder';
+        let reason = 'builder';
+        if (cached.project !== project) {
+          reason = 'project';
+        } else if (!sameSessions(cached.activeSessions, activeSessions)) {
+          reason = 'sessions';
+        } else if (!sameSessions(cached.archivedSessions, archivedSessions)) {
+          reason = 'archived';
+        } else if (cached.availableWorktrees !== worktreesForProject) {
+          reason = 'worktrees';
+        } else if (cached.workspaceDirectories !== workspaceDirectories) {
+          reason = 'workspaces';
+        } else if (cached.rootBranch !== rootBranch) {
+          reason = 'branch';
+        } else if (cached.workspaceBranchesKey !== workspaceBranchesKey) {
+          reason = 'workspaceBranches';
+        } else if (cached.isRepo !== isRepo) {
+          reason = 'repo';
+        }
         streamPerfCount(`ui.sidebar.project_section.rebuilt_reason.${reason}`);
       }
       const projectSessions = dedupeSessionsById([...activeSessions, ...archivedSessions]);
@@ -154,6 +174,7 @@ export const useSessionSidebarSections = (args: Args) => {
         worktreesForProject,
         rootBranch,
         isRepo,
+        workspaceDirectories,
       );
       const section = { project, groups };
       nextCache.set(project.id, {
@@ -161,8 +182,9 @@ export const useSessionSidebarSections = (args: Args) => {
         activeSessions,
         archivedSessions,
         availableWorktrees: worktreesForProject,
+        workspaceDirectories,
         rootBranch,
-        worktreeBranchesKey,
+        workspaceBranchesKey,
         isRepo,
         buildGroupedSessions,
         section,
@@ -178,6 +200,7 @@ export const useSessionSidebarSections = (args: Args) => {
     getSessionsForProject,
     getArchivedSessionsForProject,
     availableWorktreesByProject,
+    workspaceDirectoriesByProject,
     projectRepoStatus,
     lastRepoStatus,
     buildGroupedSessions,
@@ -185,9 +208,7 @@ export const useSessionSidebarSections = (args: Args) => {
     gitBranches,
   ]);
 
-  const visibleProjectSections = React.useMemo(() => {
-    return projectSections;
-  }, [projectSections]);
+  const visibleProjectSections = projectSections;
 
   const groupSearchDataByGroup = React.useMemo(() => {
     const result = new WeakMap<SessionGroup, GroupSearchData>();

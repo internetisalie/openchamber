@@ -43,14 +43,33 @@ cache. Live busy and retry state comes from `global-session-status`, never from
 the global cache or persisted history. A failed global or directory fetch keeps
 existing data; it is never treated as an authoritative empty list.
 
-Web and desktop show managed Chats before optional Recent activity. Chats use
+OpenCode keeps `time.archived` on a session that receives later activity. The
+sidebar treats that marker as current only while it is at least as new as
+`time.updated`; a later update returns the session to its active workspace.
+
+Web and desktop classify managed Chat directories before an authoritative
+`session.projectID === "global"`, because non-Git managed Chats may carry that
+project ID. Other Global sessions render once in a Global section, outside
+configured projects and Recent, while each record's returned directory remains
+the routing authority for selection and actions. A later
+authoritative update to a real project ID moves the session back through normal
+path ownership. Archived Global sessions remain in the full Archive page under
+one Global filter bucket. Managed Chat directory semantics take precedence in
+that archive too, so a Chat carrying the Global project ID stays out of the
+Global bucket and its bulk-delete action. Global descendants may belong to
+different returned directories; subtree Markdown export loads every descendant
+through its own directory-scoped message loader.
+
+Web, desktop, and hosted mobile show managed Chats and Global outside project
+ownership; desktop surfaces can then show optional Recent activity. Chats use
 their shared managed root for folders and never expose worktree actions. Project
-display can be all projects or one selected project. The mobile sessions sheet
-(`apps/MobileSessionsSheet.tsx`) partitions the same way through
-`partitionSidebarSessions` and lists Chats as a collapsible section above the
-project tree, with no Recent projection. VS Code excludes worktrees and managed
-Chats, while retaining its workspace-scoped grouped list and inline archived
-buckets.
+display can be all projects or one selected project. Hosted mobile renders its
+Global sessions in a dedicated group and selects them through each session's
+returned directory. The Capacitor sessions sheet retains the project/Chats
+partition and does not render the Global section. VS Code does not classify
+Global separately: it continues to exclude worktrees and managed Chats while
+retaining its workspace-scoped directory filter, grouped list, and inline
+archived buckets.
 
 Directory demand always includes known project roots and worktrees. Visibility
 only changes priority. Row mounts must not start bootstrap work. Selection and
@@ -82,9 +101,9 @@ matching and ordering. Search does not fetch sessions or broaden list membership
 
 ## Loading rules
 
-- Always publish every known project root and worktree directory. Collapse/visibility changes priority only; they do not opt a directory out of authoritative refresh.
+- Always publish every known project root and OpenCode workspace directory, including SDK sandboxes that are not Git worktrees. Collapse/visibility changes priority only; they do not opt a directory out of authoritative refresh.
 - Current directory and selected-session directory are `selected` demand and therefore run first.
-- Expanded projects/worktrees outrank merely visible and background groups.
+- Expanded projects/workspaces outrank merely visible and background groups.
 - The sync scheduler deduplicates, promotes, retries, and limits work. Sidebar components must not reproduce that lifecycle with mount effects.
 - Hide speculative work when the sidebar/chat surface is hidden: message prefetch, Git/PR enrichment and subscriptions, search listeners, sticky-header observation, and archived-folder derivation stop. The session row tree unmounts so row-owned status, permission, unseen, and viewport subscriptions do no background work. The outer sidebar remains mounted, preserving UI state and authoritative directory refresh for an immediate reopen; deferred derived work reruns from current state when visibility returns.
 - The sidebar does not subscribe its whole tree to the cross-directory live-session aggregate. Global create/structural/lifecycle snapshots drive rendered session metadata; the cached sync index only fills sessions not yet present globally and provides refresh fallback data. Row activity continues to come from the session-keyed live status index.
@@ -97,9 +116,10 @@ matching and ordering. Search does not fetch sessions or broaden list membership
 - Opening the root-session `Move to worktree` submenu force-refreshes the owning project's worktree topology so externally created worktrees appear without a full reload. While that refresh runs, the menu keeps the last known primary/linked topology visible; if the refresh fails, the stale topology remains and the load failure state stays explicit. Failure cleanup never removes or manages an existing destination worktree.
 - CLI/server-created sessions use the low-frequency OpenChamber control event stream to refresh only the created session directory. The same event retriggers bounded worktree discovery so a newly created external worktree gains ownership without a view reload; it does not re-enable broad session or streaming subscriptions.
 - Recent membership includes active root sessions immediately even when their last committed `time.updated` falls outside the 48-hour window. Children and archived sessions remain excluded, and inactive roots remain timestamp-based. The active-ID subscription is disabled while the sidebar is hidden and ignores retry/status detail changes, avoiding streaming-frequency rerenders.
-- Structural updates rebuild grouped nodes only for projects whose local sessions, worktrees, repository state, or branch changed; unchanged project sections preserve references so memoized group/session descendants skip the update wave.
+- Structural updates rebuild grouped nodes only for projects whose local sessions, workspace membership, worktrees, repository state, or branch changed; unchanged project sections preserve references so memoized group/session descendants skip the update wave.
+- Workspace group identity and session placement use normalized directories from the OpenCode project's `worktree` and `sandboxes` membership. Directory names are the primary labels; branch names are secondary metadata because an independent checkout and a linked worktree may share one branch. A session record's returned directory outranks persisted worktree metadata, which remains only a pre-indexing hint. SDK-only sandboxes do not receive Git-worktree removal or missing-worktree behavior.
 - Empty successful lists, unresolved loads, and failed loads are separate UI states. Failed groups expose Retry and retain prior data.
-- Directory permission failures remain visible even when stale sessions are retained. Flat groups inspect every represented root/worktree directory; local Desktop may open the native picker for the exact failed directory, while other runtimes keep the ordinary Retry action.
+- Directory permission failures remain visible even when stale sessions are retained. Flat groups inspect every represented root/workspace directory; local Desktop may open the native picker for the exact failed directory, while other runtimes keep the ordinary Retry action.
 - Pins and folder assignments are not pruned from the first startup snapshot or from optimistic mutations. Confirmed local deletion and routed external deletion clean immediately; a later authoritative omission after an established baseline covers missed external delete events.
 - Pending-permission/question row badges fade with the same hover/menu-open rule as the date label, except on non-VS Code always-visible-actions rows, which reserve permanent padding and keep the badges shown. VS Code hover-reveals its actions over the row's right edge even under `alwaysShowActions`, so its badges keep fading (`selectRowBadgeVisibilityClass` in `sessions/sessionNodeItemUtils.ts`).
 

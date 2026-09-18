@@ -470,6 +470,7 @@ export const dict = {
   'sessions.sidebar.empty.noMatches.description': 'Farklı bir başlık, branch, klasör veya yol deneyin.',
   'sessions.sidebar.activity.recentTitle': 'son kullanılanlar',
   'sessions.sidebar.activity.chatsTitle': 'sohbetler',
+  'sessions.sidebar.activity.globalTitle': 'genel',
   'chat.chatInput.chooseProject': 'Proje seç',
   'sessions.archivePage.allDirectories': 'Tüm dizinler',
   'sessions.sidebar.header.displayMode.stickyHeaders': 'Yapışkan proje başlıkları',

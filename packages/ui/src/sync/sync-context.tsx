@@ -33,6 +33,7 @@ import { retry } from "./retry"
 import { touchStreamingSession, updateChangedStreamingSessions, updateStreamingState } from "./streaming"
 import { countSyncPerformance } from "./performance-diagnostics"
 import { runBackgroundNetworkTask } from "@/lib/background-network"
+import { isSessionArchived } from "@/lib/sessionArchive"
 import { setActionRefs } from "./session-actions"
 import { setSyncRefs, getAllSyncSessions } from "./sync-refs"
 import { useSessionUIStore } from "./session-ui-store"
@@ -1850,6 +1851,9 @@ export function handleEvent(
   // type will mutate. This preserves reference identity for untouched slices
   // so Zustand selectors skip re-renders for unrelated subscribers.
   const current = getDirectoryEventState(store, batch)
+  const updatedSession = payload.type === "session.updated"
+    ? (payload.properties as { info?: Session }).info
+    : undefined
   const updatedPart = payload.type === "message.part.updated" ? payload.properties.part : undefined
   const previousPart = updatedPart && "messageID" in updatedPart
     ? current.part[updatedPart.messageID]?.find((part) => part.id === updatedPart.id)
@@ -1871,7 +1875,7 @@ export function handleEvent(
       cloneField("permission", (value) => ({ ...value }))
       if (
         payload.type === "session.deleted"
-        || (payload.type === "session.updated" && Boolean((payload.properties as { info?: Session }).info?.time.archived))
+        || (updatedSession ? isSessionArchived(updatedSession) : false)
       ) {
         cloneField("question", (value) => ({ ...value }))
       }
@@ -1962,8 +1966,7 @@ export function handleEvent(
       const heartbeatSessionID = sessionID ?? (messageID ? routingIndex.messageSessionById.get(messageID) : undefined)
       if (heartbeatSessionID) touchStreamingSession(heartbeatSessionID)
     }
-    const archived = payload.type === "session.updated"
-      && Boolean(((payload.properties as { info?: Session }).info)?.time.archived)
+    const archived = updatedSession ? isSessionArchived(updatedSession) : false
     if (sessionID && (payload.type === "session.deleted" || archived)) {
       getImperativeSessionMessageLoader()?.invalidateSession({ directory: resolvedDirectory, sessionID })
     }

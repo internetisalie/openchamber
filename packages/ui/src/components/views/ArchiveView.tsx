@@ -12,9 +12,11 @@ import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { resolveGlobalSessionDirectory, useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
 import { formatSessionDateLabel, normalizePath } from '@/components/session/sidebar/utils';
+import { isChatDirectoryPath } from '@/lib/chatDirectories';
 import { useShallow } from 'zustand/react/shallow';
 
 type DirectoryBucket = {
+  key: string;
   directory: string;
   label: string;
   sessions: Session[];
@@ -33,7 +35,7 @@ export function ArchiveView(): React.ReactNode {
   const homeDirectory = useDirectoryStore((state) => state.homeDirectory);
   const archivedSessions = useGlobalSessionsStore(useShallow((state) => open ? state.archivedSessions : []));
   const [query, setQuery] = React.useState('');
-  const [selectedDirectory, setSelectedDirectory] = React.useState<string | null>(null);
+  const [selectedBucketKey, setSelectedBucketKey] = React.useState<string | null>(null);
   const [visibleCount, setVisibleCount] = React.useState(PAGE_SIZE);
 
   const normalizedQuery = query.trim().toLowerCase();
@@ -47,14 +49,19 @@ export function ArchiveView(): React.ReactNode {
     const byDirectory = new Map<string, DirectoryBucket>();
     for (const session of sortedSessions) {
       const directory = normalizePath(resolveGlobalSessionDirectory(session)) ?? '';
-      const existing = byDirectory.get(directory);
+      const isGlobal = !isChatDirectoryPath(directory) && session.projectID === 'global';
+      const key = isGlobal ? '__global__' : `directory:${directory}`;
+      const existing = byDirectory.get(key);
       if (existing) {
         existing.sessions.push(session);
         continue;
       }
-      byDirectory.set(directory, {
+      byDirectory.set(key, {
+        key,
         directory,
-        label: directory
+        label: isGlobal
+          ? t('sessions.sidebar.activity.globalTitle')
+          : directory
           ? (formatDirectoryName(directory, homeDirectory) || directory)
           : t('sessions.archivePage.otherProjects'),
         sessions: [session],
@@ -72,16 +79,16 @@ export function ArchiveView(): React.ReactNode {
       }
       return rankByQuery(sortedSessions, normalizedQuery, (session) => [session.title]);
     }
-    if (selectedDirectory === null) return sortedSessions;
-    return buckets.find((bucket) => bucket.directory === selectedDirectory)?.sessions ?? [];
-  }, [buckets, normalizedQuery, selectedDirectory, sortedSessions]);
+    if (selectedBucketKey === null) return sortedSessions;
+    return buckets.find((bucket) => bucket.key === selectedBucketKey)?.sessions ?? [];
+  }, [buckets, normalizedQuery, selectedBucketKey, sortedSessions]);
 
   const visibleSessions = filteredSessions.slice(0, visibleCount);
   const remainingCount = filteredSessions.length - visibleSessions.length;
   const totalCount = archivedSessions.length;
 
-  const selectDirectory = React.useCallback((directory: string | null) => {
-    setSelectedDirectory(directory);
+  const selectBucket = React.useCallback((key: string | null) => {
+    setSelectedBucketKey(key);
     setVisibleCount(PAGE_SIZE);
   }, []);
 
@@ -156,16 +163,16 @@ export function ArchiveView(): React.ReactNode {
               '__all__',
               t('sessions.archivePage.allDirectories'),
               totalCount,
-              selectedDirectory === null,
-              () => selectDirectory(null),
+               selectedBucketKey === null,
+               () => selectBucket(null),
             )}
             {buckets.map((bucket) => renderDirectoryItem(
-              bucket.directory || '__none__',
+               bucket.key,
               bucket.label,
               bucket.sessions.length,
-              selectedDirectory === bucket.directory,
-              () => selectDirectory(bucket.directory),
-              bucket.directory || undefined,
+               selectedBucketKey === bucket.key,
+               () => selectBucket(bucket.key),
+               bucket.key === '__global__' ? undefined : bucket.directory || undefined,
               bucket.sessions,
             ))}
           </div>

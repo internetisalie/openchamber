@@ -15,6 +15,7 @@ import {
   RiSearchLine,
 } from '@remixicon/react';
 import type { Session } from '@opencode-ai/sdk/v2/client';
+import { isSessionArchived } from '@/lib/sessionArchive';
 import {
   DndContext,
   type DragEndEvent,
@@ -43,7 +44,6 @@ import { toast } from '@/components/ui';
 import { useThemeSystem } from '@/contexts/useThemeSystem';
 import { getProjectLabel, normalizePath } from './mobilePaths';
 import { CHAT_DRAFT_PROJECT_ID, isChatDirectoryPath } from '@/lib/chatDirectories';
-import { partitionSidebarSessions } from '@/components/session/sidebar/list/sessionCollection';
 import { sortProjectsByOrder } from '@/components/session/sidebar/list/projectSort';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import { useI18n } from '@/lib/i18n';
@@ -79,6 +79,10 @@ import type { WorktreeMetadata } from '@/types/worktree';
 
 import { MobileDeleteWorktreeDialog } from './MobileDeleteWorktreeDialog';
 import { MobileProjectEditSurface } from './MobileProjectEditSurface';
+import {
+  partitionMobileSessions,
+  resolveMobileSessionTarget,
+} from './mobileSessionProjection';
 import { useEdgeSwipe } from './useEdgeSwipe';
 
 type MobileSessionsSheetProps = {
@@ -149,6 +153,7 @@ type ProjectNode = {
 };
 
 const SESSIONS_PER_BUCKET = 7;
+const GLOBAL_SESSIONS_GROUP_ID = 'openchamber:global';
 
 // Left padding for session rows so the title's first letter aligns with its
 // parent label. Root/project-level sessions align with the project label;
@@ -161,11 +166,7 @@ const getParentId = (session: Session): string | null =>
   (session as Session & { parentID?: string | null }).parentID ?? null;
 
 const getSessionDirectory = (session: Session): string => {
-  const sessionWithDirectory = session as Session & {
-    directory?: string | null;
-    project?: { worktree?: string | null } | null;
-  };
-  return normalizePath(sessionWithDirectory.directory ?? sessionWithDirectory.project?.worktree ?? null);
+  return normalizePath(resolveMobileSessionTarget(session).directory);
 };
 
 const getSessionTimestamp = (session: Session): number => {
@@ -924,7 +925,12 @@ const SortableProjectRow: React.FC<{
   );
 };
 
-export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, onOpenChange, variant = 'drawer', footer }) => {
+export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({
+  open,
+  onOpenChange,
+  variant = 'drawer',
+  footer,
+}) => {
   const { t } = useI18n();
   const { git } = useRuntimeAPIs();
   const liveSessions = useAllLiveSessions();
@@ -1105,15 +1111,15 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
     // Archived sessions never show on mobile (no archived view here): the live
     // overlay can carry them for the active directory, and they'd otherwise
     // surface in search and then "disappear" once the overlay refreshes.
-    return merged.filter((session) => !session.time?.archived);
+    return merged.filter((session) => !isSessionArchived(session));
   }, [globalActiveSessions, liveSessions]);
 
   // Managed Chats (sessions under ~/.config/openchamber/chats) are not owned
   // by any registered project; they get their own section above the project
   // tree, the same split the desktop sidebar makes. Temporary /btw forks are
   // dropped here as well.
-  const { projectSessions, chatSessions } = React.useMemo(
-    () => partitionSidebarSessions(sessions, false),
+  const { projectSessions, chatSessions, globalSessions } = React.useMemo(
+    () => partitionMobileSessions(sessions),
     [sessions],
   );
   const chatsBucket = React.useMemo<WorktreeBucket>(() => ({
@@ -1127,6 +1133,22 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
   const chatRootCount = React.useMemo(
     () => chatSessions.filter((session) => !getParentId(session)).length,
     [chatSessions],
+  );
+  const globalBucket = React.useMemo<WorktreeBucket>(() => ({
+    key: GLOBAL_SESSIONS_GROUP_ID,
+    label: '',
+    path: '',
+    worktree: null,
+    sessions: orderSessionsByLifecycleScopes(globalSessions, pinnedSessionIds, sessionOrderRanks),
+  }), [globalSessions, pinnedSessionIds, sessionOrderRanks]);
+  const globalBucketKey = `${GLOBAL_SESSIONS_GROUP_ID}::${GLOBAL_SESSIONS_GROUP_ID}`;
+  const globalRootCount = React.useMemo(
+    () => globalSessions.filter((session) => !getParentId(session)).length,
+    [globalSessions],
+  );
+  const globalSessionIds = React.useMemo(
+    () => new Set(globalSessions.map((session) => session.id)),
+    [globalSessions],
   );
 
   const normalizedQuery = query.trim().toLowerCase();
@@ -1338,7 +1360,8 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
   };
 
   const handleSelectSession = (session: Session) => {
-    const directory = getSessionDirectory(session) || null;
+    const target = resolveMobileSessionTarget(session);
+    const directory = target.directory;
     // Switching session switches the working directory (handled by
     // setCurrentSession) — also move the active project so the rest of the app
     // and the active highlight follow the selected session, not just the draft.
@@ -1352,7 +1375,7 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
       const worktree = findExactWorktreeMatch(project, normalizePath(directory ?? ''));
       if (worktree) setWorktreeExpanded(`${project.id}::${normalizePath(worktree.path)}`, true);
     }
-    void setCurrentSession(session.id, directory);
+    void setCurrentSession(target.sessionId, directory);
     onOpenChange(false);
   };
 
@@ -1453,13 +1476,16 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
     (session: Session): string => {
       const directory = getSessionDirectory(session);
       if (isChatDirectoryPath(directory)) return t('mobile.sessions.section.chats');
+      if (globalSessionIds.has(session.id)) {
+        return t('sessions.sidebar.activity.globalTitle');
+      }
       const project = findExactProjectMatch(projectsMeta, directory);
       if (!project) return getProjectLabel(directory) || directory;
       const matchedWorktree = findExactWorktreeMatch(project, normalizePath(directory));
       if (matchedWorktree?.branch) return `${project.label} · ${matchedWorktree.branch}`;
       return project.label;
     },
-    [projectsMeta, t],
+    [globalSessionIds, projectsMeta, t],
   );
 
   const handleSelectProject = (project: ProjectMeta) => {
@@ -1622,7 +1648,7 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
               ) : null}
             </div>
           </div>
-          {projectsMeta.length === 0 && chatSessions.length === 0 ? (
+          {projectsMeta.length === 0 && chatSessions.length === 0 && globalSessions.length === 0 ? (
             <MobileSessionsEmpty
               title={t('mobile.sessions.empty.noProjectsTitle')}
               description={t('mobile.sessions.empty.noProjectsDescription')}
@@ -1790,6 +1816,49 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
                   </section>
                 );
               })()}
+              {globalSessions.length > 0 ? (() => {
+                const globalExpanded = projectExpandedMap[GLOBAL_SESSIONS_GROUP_ID] ?? true;
+                const globalLabel = t('sessions.sidebar.activity.globalTitle');
+                return (
+                  <section className="border-t border-border/70">
+                    <div className="flex min-h-12 w-full items-center">
+                      <button
+                        type="button"
+                        className="flex min-h-12 min-w-0 flex-1 items-center gap-2 px-3 py-1.5 text-left transition-colors hover:bg-interactive-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-inset"
+                        onClick={() => {
+                          if (revealedRowId) {
+                            handleRowKeyRevealedChange(revealedRowId, false);
+                            return;
+                          }
+                          toggleProject(GLOBAL_SESSIONS_GROUP_ID, globalExpanded);
+                        }}
+                        aria-expanded={globalExpanded}
+                        aria-label={
+                          globalExpanded
+                            ? t('sessions.sidebar.group.collapseAria', { label: globalLabel })
+                            : t('sessions.sidebar.group.expandAria', { label: globalLabel })
+                        }
+                        style={{ touchAction: 'manipulation' }}
+                      >
+                        <span className="flex size-8 shrink-0 items-center justify-center overflow-hidden rounded-lg bg-[var(--surface-muted)] text-muted-foreground">
+                          <Icon name="global" className="size-4" />
+                        </span>
+                        <span className="block min-w-0 flex-1 truncate typography-ui-label font-semibold text-foreground">
+                          {globalLabel}
+                        </span>
+                        <span className="shrink-0 typography-micro text-muted-foreground tabular-nums">
+                          {globalRootCount}
+                        </span>
+                      </button>
+                    </div>
+                    {globalExpanded ? (
+                      <div className="pb-2">
+                        {renderBucketSessions(globalBucketKey, globalBucket, PROJECT_SESSION_INDENT)}
+                      </div>
+                    ) : null}
+                  </section>
+                );
+              })() : null}
               {orderedNodes.map((node) => {
                 const projectExpanded = isProjectExpanded(node);
                 const buckets = normalizedQuery

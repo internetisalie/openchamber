@@ -6,8 +6,12 @@ import { getAllSyncSessions } from '@/sync/sync-refs';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
+import { useGlobalSyncStore } from '@/sync/global-sync-store';
 import { buildSessionBootstrapDemands } from './sessionBootstrapDemands';
-import { buildKnownSessionDirectories } from './sessionListDirectories';
+import {
+  buildKnownSessionDirectories,
+  buildOpenCodeWorkspaceDirectoriesByProject,
+} from './sessionListDirectories';
 import { useAuthoritativeSessionCleanup } from './useAuthoritativeSessionCleanup';
 import { normalizePath } from '../utils';
 
@@ -22,13 +26,21 @@ export const useSessionListSync = ({
 }: UseSessionListSyncOptions) => {
   const childStores = useChildStoreManager();
   const projects = useProjectsStore((state) => state.projects);
+  const openCodeProjects = useGlobalSyncStore((state) => state.projects);
   const activeProjectId = useProjectsStore((state) => state.activeProjectId);
   const currentDirectory = useDirectoryStore((state) => state.currentDirectory);
   const currentSessionDirectory = useSessionUIStore((state) => state.currentSessionDirectory);
   const availableWorktreesByProject = useSessionUIStore((state) => isVSCode ? EMPTY_WORKTREES_BY_PROJECT : state.availableWorktreesByProject);
+  const workspaceDirectoriesByProject = React.useMemo(
+    () => isVSCode ? new Map<string, string[]>() : buildOpenCodeWorkspaceDirectoriesByProject(projects, openCodeProjects),
+    [isVSCode, openCodeProjects, projects],
+  );
   const knownDirectories = React.useMemo(
-    () => buildKnownSessionDirectories(projects, availableWorktreesByProject, { includeWorktrees: !isVSCode }),
-    [availableWorktreesByProject, isVSCode, projects],
+    () => buildKnownSessionDirectories(projects, availableWorktreesByProject, {
+      includeWorktrees: !isVSCode,
+      workspaceDirectoriesByProject,
+    }),
+    [availableWorktreesByProject, isVSCode, projects, workspaceDirectoriesByProject],
   );
   const globalActiveSessions = useGlobalSessionsStore((state) => state.activeSessions);
   const archivedSessions = useGlobalSessionsStore((state) => state.archivedSessions);
@@ -53,7 +65,12 @@ export const useSessionListSync = ({
     const directories = new Set(knownDirectories);
     const previous = knownProjectSessionDirectoriesRef.current;
     knownProjectSessionDirectoriesRef.current = directories;
-    const added = previous ? [...directories].filter((directory) => !previous.has(directory)) : isVSCode ? [...directories] : [];
+    let added: string[] = [];
+    if (previous) {
+      added = [...directories].filter((directory) => !previous.has(directory));
+    } else if (isVSCode) {
+      added = [...directories];
+    }
     if (added.length) void refreshGlobalSessionsForDirectories(added, getAllSyncSessions());
   }, [isVSCode, knownDirectories]);
 

@@ -11,6 +11,7 @@ import { persistManagedChatSessions, readManagedChatSessions } from '@/sync/pers
 import { isVSCodeRuntime } from '@/lib/desktop';
 import { ensureChatsRootDirectory, getChatsRootForHome } from '@/lib/chatDirectories';
 import { countSyncPerformance } from '@/sync/performance-diagnostics';
+import { isSessionArchived } from '@/lib/sessionArchive';
 import {
   applyGlobalSessionStructureMutations,
   buildGlobalSessionStructure,
@@ -121,6 +122,7 @@ const getSessionSignature = (session: Session): string => {
     session.title ?? '',
     record.parentID ?? '',
     record.slug ?? '',
+    session.projectID ?? '',
     session.time?.created ?? 0,
     session.time?.updated ?? 0,
     session.time?.archived ?? 0,
@@ -137,6 +139,7 @@ const getSessionStructuralSignature = (session: Session): string => {
     session.title ?? '',
     record.parentID ?? '',
     record.slug ?? '',
+    session.projectID ?? '',
     session.time?.created ?? 0,
     session.time?.archived ?? 0,
     session.share?.url ?? '',
@@ -241,8 +244,8 @@ const fetchDirectoryPages = async (
         value: {
           directory,
           // One inclusive request per directory: the server has no filter that
-          // returns only active sessions including restored (`time.archived`
-          // falsy-but-present) rows, so fetch everything and split client-side.
+          // returns only active sessions including restored or post-archive
+          // activity, so fetch everything and split client-side.
           sessions: await withDirectorySessionRefreshSlot(() => (
             listGlobalSessionPages(sdk, { directory, archived: true, narrowToArchived: false, pageSize: PAGE_SIZE })
           )),
@@ -439,10 +442,10 @@ const updateSessionsByDirectory = (
   const affectedDirectories = new Set<string>();
   const entityChangedDirectories = new Set<string>();
   for (const mutation of mutations) {
-    const previousDirectory = mutation.previous && !mutation.previous.time?.archived
+    const previousDirectory = mutation.previous && !isSessionArchived(mutation.previous)
       ? resolveGlobalSessionDirectory(mutation.previous)
       : null;
-    const nextDirectory = mutation.next && !mutation.next.time?.archived
+    const nextDirectory = mutation.next && !isSessionArchived(mutation.next)
       ? resolveGlobalSessionDirectory(mutation.next)
       : null;
     if (previousDirectory) affectedDirectories.add(previousDirectory);
@@ -514,7 +517,7 @@ const applySessionMutations = (
       nextEntityById ??= new Map(state.entityById);
       nextEntityById.delete(sessionId);
       structureMutations.push({ sessionId, previous: existingSession, next: null });
-      if (existingSession.time?.archived) {
+      if (isSessionArchived(existingSession)) {
         archivedChanged = true;
         removeMember(archivedIds, archivedAdditions, sessionId);
       } else {
@@ -529,8 +532,8 @@ const applySessionMutations = (
     nextEntityById ??= new Map(state.entityById);
     nextEntityById.set(sessionId, sessionWithMetadata);
     structureMutations.push({ sessionId, previous: existingSession, next: sessionWithMetadata });
-    const isArchived = Boolean(sessionWithMetadata.time?.archived);
-    const wasArchived = Boolean(existingSession?.time?.archived);
+    const isArchived = isSessionArchived(sessionWithMetadata);
+    const wasArchived = existingSession ? isSessionArchived(existingSession) : false;
     if (existingSession) {
       if (wasArchived) archivedChanged = true;
       else activeChanged = true;
@@ -668,9 +671,8 @@ export const useGlobalSessionsStore = create<GlobalSessionsState>((set, get) => 
         set((state) => (state.status === 'loading' ? state : { status: 'loading' }));
         const sdk = opencodeClient.getSdkClient();
         // One inclusive fetch, split client-side. The server's
-        // `time_archived IS NULL` active filter would exclude restored
-        // sessions (`time.archived` falsy-but-present), so an
-        // `archived: false` request cannot produce a truthful active list.
+        // `time_archived IS NULL` excludes restored sessions and sessions with
+        // post-archive activity, so an active-only request is incomplete.
         const allSessions = await listGlobalSessionPages(sdk, {
           archived: true,
           narrowToArchived: false,
@@ -806,7 +808,7 @@ export const useGlobalSessionsStore = create<GlobalSessionsState>((set, get) => 
     const state = get();
     raiseSessionOrderingBaselines(refreshedActiveIds.flatMap((sessionId) => {
       const session = state.entityById.get(sessionId);
-      return session && !session.time?.archived ? [session] : [];
+      return session && !isSessionArchived(session) ? [session] : [];
     }));
     return { activeSessions: state.activeSessions, archivedSessions: state.archivedSessions };
   },
@@ -845,7 +847,7 @@ export const useGlobalSessionsStore = create<GlobalSessionsState>((set, get) => 
       const movedSessions: Session[] = [];
       for (const sessionId of idSet) {
         const session = state.entityById.get(sessionId);
-        if (!session || session.time?.archived) continue;
+        if (!session || isSessionArchived(session)) continue;
         movedSessions.push({
           ...session,
           time: {

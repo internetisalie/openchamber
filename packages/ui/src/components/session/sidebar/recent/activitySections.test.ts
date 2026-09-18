@@ -30,6 +30,12 @@ describe('deriveRecentSessions', () => {
     )).toEqual([]);
   });
 
+  test('includes a root updated after its archive marker', () => {
+    const reused = session('reused', { archived: RECENT, updated: NOW });
+
+    expect(deriveRecentSessions([reused], new Set(), NOW)).toEqual([reused]);
+  });
+
   test('keeps inactive membership timestamp-based', () => {
     const oldSession = session('old');
     const recentSession = session('recent', { updated: RECENT });

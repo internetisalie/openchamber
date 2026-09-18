@@ -1535,11 +1535,9 @@ function commitArchivedSessions(sessions: Session[], directory: string): void {
  * `session.update` only applies the field when the payload carries a finite
  * number (`archived !== undefined`), so omitting the key is a no-op and `null`
  * is silently ignored. Writing `0` is the only value that makes every reader
- * treat the session as active again: the UI, the event reducer, and the
- * OpenCode app/TUI all classify archive state by truthiness of
- * `time.archived`, and `0` is falsy. The one place that still excludes such a
- * session is the server's own `time_archived IS NULL` list filter, so the
- * global session cache loads with the inclusive `archived` flag and splits
+ * treat the session as active again in OpenCode and OpenChamber. The server's
+ * `time_archived IS NULL` list filter still excludes that row, so the global
+ * session cache loads with the inclusive `archived` flag and splits
  * client-side instead of relying on that filter (see
  * `useGlobalSessionsStore.loadSessions`).
  */

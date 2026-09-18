@@ -23,7 +23,7 @@ export type ActivityItem = {
 };
 
 type ActivitySection = {
-  key: 'active-now' | 'chats';
+  key: 'active-now' | 'chats' | 'global';
   title: string;
   items: ActivityItem[];
 };
@@ -259,7 +259,7 @@ export function SidebarActivitySections(props: Props): React.ReactNode {
                 aria-expanded={!isCollapsed}
               >
                 <span className="inline-flex h-3.5 w-3.5 items-center justify-center">
-                  <Icon name={section.key === 'chats' ? 'chat-4' : 'history'} className={cn('h-3.5 w-3.5 text-muted-foreground/80', 'group-hover:hidden')} />
+                  <Icon name={section.key === 'chats' ? 'chat-4' : section.key === 'global' ? 'global' : 'history'} className={cn('h-3.5 w-3.5 text-muted-foreground/80', 'group-hover:hidden')} />
                   <span className="hidden h-3.5 w-3.5 items-center justify-center text-muted-foreground group-hover:inline-flex">
                     {isCollapsed ? <Icon name="arrow-right-s" className="h-3.5 w-3.5" /> : <Icon name="arrow-down-s" className="h-3.5 w-3.5" />}
                   </span>
