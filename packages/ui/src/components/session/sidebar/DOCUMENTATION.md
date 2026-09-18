@@ -16,16 +16,19 @@ kept at this root in `types.ts` and `utils.tsx`.
   target disabled and a separate `New worktree...` action. Opening the submenu
   refreshes the worktree topology. Moving transfers the full idle subtree. Clean
   and non-Git sources move session-only; a dirty Git source prompts to move only
-  the session, move all source changes, or cancel. Descendants move first without
-  changes and roll back session-only if a later descendant fails. The root moves
-  last and carries source changes once, which prevents rollback from replaying the
+  the session, move all source changes, or cancel. Every tree member moves from
+  its own returned directory and rolls back to that captured source if a later
+  move fails. Descendants move first without changes; the root moves last and
+  carries its source changes once, which prevents rollback from replaying the
   transferred patch into the source.
-- Failure cleanup: a worktree created for the move is removed only after a
-  definite failure. When the change-carrying request fails without confirming
-  its outcome, that worktree is KEPT (it may hold the only copy of the user's
-  changes), both directories are refreshed authoritatively because the session
-  may have moved server-side, and the toast points the user at the destination.
-  Existing destinations are never removed; they get the same guidance.
+- Failure cleanup treats session location and source changes separately. Any
+  ambiguously dispatched session move is moved back to its captured source,
+  including descendants and session-only roots. A newly created worktree is
+  removed only after every required rollback succeeds; a failed or ambiguous
+  rollback keeps it. When the change-carrying request has an unknown outcome,
+  the worktree is always kept because it may hold the only copy of the user's
+  changes. Both directories refresh authoritatively and the toast points the
+  user at the destination. Existing destinations are never removed.
 
 `MainLayout` and `VSCodeLayout` call `useSessionListSync({ isVSCode })`
 unconditionally. The hook publishes complete directory bootstrap demand,
