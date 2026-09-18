@@ -150,6 +150,15 @@ Session materialization recency is keyed by runtime and directory. Foreground lo
 
 Use `useGlobalSessionsStore` when the UI needs a **shared global session cache**.
 
+The full-app sidebar projects records whose authoritative `projectID` is
+`global` into its dedicated Global section before path-derived project
+ownership. They are not duplicated in configured project or Recent sections.
+Their returned directory still owns routing, message loads, and session
+actions. If a later refresh or event supplies a real project ID, the same
+projection moves the record through normal path ownership. VS Code keeps its
+existing workspace-directory visibility rules and does not use this Global
+projection.
+
 Each full app root owns one global polling lifecycle through
 `useGlobalSessionsPolling`. The web/desktop root and VS Code chat root load once
 when mounted and refresh every 45 seconds so sessions created by another

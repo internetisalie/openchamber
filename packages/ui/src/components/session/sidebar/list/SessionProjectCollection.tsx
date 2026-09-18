@@ -17,11 +17,12 @@ import { useProjectSessionLists } from '../projects/useProjectSessionLists';
 import { useSessionSidebarSections } from '../projects/useSessionSidebarSections';
 import { SessionPrefetchEffect } from './useSessionPrefetch';
 import { formatProjectLabel, normalizePath } from '../utils';
-import type { SessionGroup } from '../types';
+import type { SessionGroup, SessionNode } from '../types';
 import { SessionProjectScroller } from '../projects/SessionProjectScroller';
 import { useSessionGrouping } from '../projects/useSessionGrouping';
 import { SessionBulkActions } from '../folders/SessionBulkActions';
 import { useSessionFoldersStore } from '@/stores/useSessionFoldersStore';
+import { isSessionArchived } from '@/lib/sessionArchive';
 import type { useSessionProjectViewState } from '../projects/useSessionProjectViewState';
 import { useSessionDisplayStore } from '@/stores/useSessionDisplayStore';
 import type { DeleteSessionConfirmState } from '../sessions/useSessionActions';
@@ -48,6 +49,35 @@ const isRootSession = (session: Session): boolean => {
   return !(session as Session & { parentID?: string | null }).parentID;
 };
 
+const buildStandaloneSessionNodes = (
+  sessions: Session[],
+  childrenMap: ReadonlyMap<string, readonly Session[]>,
+): SessionNode[] => {
+  const memberIds = new Set(sessions.map((session) => session.id));
+  const claimedIds = new Set<string>();
+  const nodes: SessionNode[] = [];
+  const buildNode = (session: Session): SessionNode => {
+    claimedIds.add(session.id);
+    const children: SessionNode[] = [];
+    for (const child of childrenMap.get(session.id) ?? []) {
+      if (!memberIds.has(child.id) || claimedIds.has(child.id)) continue;
+      children.push(buildNode(child));
+    }
+    return { session, children, worktree: null };
+  };
+  const addRoot = (session: Session): void => {
+    if (claimedIds.has(session.id)) return;
+    nodes.push(buildNode(session));
+  };
+  for (const session of sessions) {
+    const parentID = session.parentID;
+    if (!parentID || !memberIds.has(parentID)) addRoot(session);
+  }
+  // Malformed cycles have no root. Expose each remaining component once.
+  sessions.forEach(addRoot);
+  return nodes;
+};
+
 type Project = {
   id: string;
   path: string;
@@ -63,6 +93,7 @@ type SessionProjectCollectionProps = {
   topology: {
     projects: Project[];
     availableWorktreesByProject: Map<string, WorktreeMetadata[]>;
+    workspaceDirectoriesByProject: Map<string, string[]>;
     knownDirectories: Set<string>;
     isVSCode: boolean;
     worktreeMetadata: Map<string, WorktreeMetadata>;
@@ -191,8 +222,15 @@ const VisibleSessionProjects: React.FC<SessionProjectCollectionProps> = ({ topol
     isVSCode: topology.isVSCode,
   });
   const ownership = React.useMemo(
-    () => createSessionOwnershipIndex(collection.sessions, topology.projects, topology.availableWorktreesByProject, topology.isVSCode, collection.archivedSessions),
-    [collection.archivedSessions, collection.sessions, topology.availableWorktreesByProject, topology.isVSCode, topology.projects],
+    () => createSessionOwnershipIndex(
+      collection.sessions,
+      topology.projects,
+      topology.availableWorktreesByProject,
+      topology.isVSCode,
+      collection.archivedSessions,
+      topology.workspaceDirectoriesByProject,
+    ),
+    [collection.archivedSessions, collection.sessions, topology.availableWorktreesByProject, topology.isVSCode, topology.projects, topology.workspaceDirectoriesByProject],
   );
   const { getSessionsForProject, getArchivedSessionsForProject } = useProjectSessionLists({ ownership });
   // Built before the sections hook runs, because that hook owns the search data
@@ -204,11 +242,12 @@ const VisibleSessionProjects: React.FC<SessionProjectCollectionProps> = ({ topol
       ?? collection.chatSessions.map((session) => getChatsRootFromDirectory(session.directory)).find(Boolean)
       ?? null;
     if (!chatsRoot) return null;
-    const folderScopes = Array.from(new Set([
-      chatsRoot,
-      ...collection.chatSessions.map((session) => normalizePath(session.directory ?? null)).filter(Boolean),
-    ])).filter((directory): directory is string => Boolean(directory))
-      .map((directory) => ({ scopeKey: directory, directory }));
+    const chatDirectories = new Set<string>([chatsRoot]);
+    for (const session of collection.chatSessions) {
+      const directory = normalizePath(session.directory ?? null);
+      if (directory) chatDirectories.add(directory);
+    }
+    const folderScopes = [...chatDirectories].map((directory) => ({ scopeKey: directory, directory }));
     return {
       id: 'managed-chats',
       label: '',
@@ -221,19 +260,38 @@ const VisibleSessionProjects: React.FC<SessionProjectCollectionProps> = ({ topol
       folderScopes,
       draftTarget: 'chat',
       sessions: collection.chatSessions
-        .filter((session) => !session.time?.archived && isRootSession(session))
+        .filter((session) => !isSessionArchived(session) && isRootSession(session))
         .map((session) => buildActiveSessionNode(collection.childrenMap, session)),
     };
   }, [collection.chatSessions, collection.childrenMap, topology.isVSCode, view.homeDirectory]);
+  const globalGroup = React.useMemo<SessionGroup | null>(() => {
+    if (topology.isVSCode || collection.globalSessions.length === 0) return null;
+    return {
+      id: 'global-sessions',
+      label: '',
+      branch: null,
+      description: null,
+      isMain: true,
+      worktree: null,
+      directory: null,
+      sessions: buildStandaloneSessionNodes(collection.globalSessions, collection.childrenMap),
+    };
+  }, [collection.childrenMap, collection.globalSessions, topology.isVSCode]);
   const standaloneGroups = React.useMemo<SessionGroup[]>(
-    () => chatGroup ? [chatGroup] : EMPTY_STANDALONE_GROUPS,
-    [chatGroup],
+    () => {
+      if (chatGroup && globalGroup) return [chatGroup, globalGroup];
+      if (chatGroup) return [chatGroup];
+      if (globalGroup) return [globalGroup];
+      return EMPTY_STANDALONE_GROUPS;
+    },
+    [chatGroup, globalGroup],
   );
   const { projectSections, groupSearchDataByGroup, sectionsForRender, flatSectionsForRender } = useSessionSidebarSections({
     normalizedProjects: topology.projects,
     getSessionsForProject,
     getArchivedSessionsForProject,
     availableWorktreesByProject: topology.availableWorktreesByProject,
+    workspaceDirectoriesByProject: topology.workspaceDirectoriesByProject,
     projectRepoStatus: topology.projectRepoStatus,
     projectRootBranches: topology.projectRootBranches,
     gitBranches: topology.gitBranches,
@@ -254,11 +312,16 @@ const VisibleSessionProjects: React.FC<SessionProjectCollectionProps> = ({ topol
 
   const childStores = useChildStoreManager();
   const source = view.useGroupedSections ? sectionsForRender : flatSectionsForRender;
-  const sectionsForSidebarRender = React.useMemo(() => view.showInlineArchived ? source : source.map((section) => (
-    section.groups.some((group) => group.isArchivedBucket)
-      ? { ...section, groups: section.groups.filter((group) => !group.isArchivedBucket) }
-      : section
-  )), [source, view.showInlineArchived]);
+  const sectionsForSidebarRender = React.useMemo(() => {
+    if (view.showInlineArchived) return source;
+    return source.map((section) => {
+      if (!section.groups.some((group) => group.isArchivedBucket)) return section;
+      return {
+        ...section,
+        groups: section.groups.filter((group) => !group.isArchivedBucket),
+      };
+    });
+  }, [source, view.showInlineArchived]);
   const getFolderScopesForProject = React.useCallback((projectId: string) => {
     const section = flatSectionsForRender.find((entry) => entry.project.id === projectId);
     return section?.groups.find((group) => !group.isArchivedBucket)?.folderScopes ?? [];
@@ -496,13 +559,14 @@ const VisibleSessionProjects: React.FC<SessionProjectCollectionProps> = ({ topol
     sessionOrderIndex,
     groupStatusByKey,
     folderAuthorityByOwner,
+    globalGroup,
     activeProjectId: view.activeProjectId,
     singleProjectMode,
     singleProjectId: selectedSingleProjectId,
     showOnlyMainWorkspace: view.showOnlyMainWorkspace,
     hideDirectoryControls: view.hideDirectoryControls,
     sessionBatchSize: singleProjectMode && !view.useGroupedSections ? 20 : undefined,
-  }), [chatGroup, collapsedActivityKeys, collapsedFolderIds, collection.pinnedSessionIds, expandedParents, folderAuthorityByOwner, foldersMap, groupSearchDataByGroup, groupStatusByKey, orderedSectionsForRender, projectSections, projectView.collapsedGroups, projectView.collapsedProjects, recentActivitySections, selectedSingleProjectId, sessionOrderIndex, showRecentSection, singleProjectMode, view.activeProjectId, view.hasSessionSearchQuery, view.hideDirectoryControls, view.normalizedSessionSearchQuery, view.showOnlyMainWorkspace, view.useGroupedSections, visibleCountByContainer]);
+  }), [chatGroup, collapsedActivityKeys, collapsedFolderIds, collection.pinnedSessionIds, expandedParents, folderAuthorityByOwner, foldersMap, globalGroup, groupSearchDataByGroup, groupStatusByKey, orderedSectionsForRender, projectSections, projectView.collapsedGroups, projectView.collapsedProjects, recentActivitySections, selectedSingleProjectId, sessionOrderIndex, showRecentSection, singleProjectMode, view.activeProjectId, view.hasSessionSearchQuery, view.hideDirectoryControls, view.normalizedSessionSearchQuery, view.showOnlyMainWorkspace, view.useGroupedSections, visibleCountByContainer]);
   React.useEffect(() => {
     onSearchMatchCountChange(sidebarRowModel.searchMatchCount);
   }, [onSearchMatchCountChange, sidebarRowModel.searchMatchCount]);

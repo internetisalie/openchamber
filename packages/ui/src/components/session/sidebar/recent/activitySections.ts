@@ -1,5 +1,6 @@
 import type { Session } from '@opencode-ai/sdk/v2';
 import type { SessionNode } from '../types';
+import { isSessionArchived } from '@/lib/sessionArchive';
 
 export type RecentSessionLocation = {
   projectId: string | null;
@@ -22,10 +23,6 @@ const RECENT_SESSION_MAX_AGE_MS = 48 * 60 * 60 * 1000;
 
 const isSubtaskSession = (session: Session): boolean => {
   return Boolean((session as Session & { parentID?: string | null }).parentID);
-};
-
-const isArchivedSession = (session: Session): boolean => {
-  return Boolean(session.time?.archived);
 };
 
 const getSessionUpdatedAt = (session: Session): number => {
@@ -51,7 +48,7 @@ export const deriveRecentSessions = (
 ): Session[] => {
   const minUpdatedAt = now - RECENT_SESSION_MAX_AGE_MS;
   return sessions.filter((session) => {
-    if (isArchivedSession(session) || isSubtaskSession(session)) {
+    if (isSessionArchived(session) || isSubtaskSession(session)) {
       return false;
     }
     return activeSessionIds.has(session.id) || getSessionUpdatedAt(session) >= minUpdatedAt;

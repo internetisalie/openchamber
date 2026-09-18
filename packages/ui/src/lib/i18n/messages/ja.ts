@@ -495,6 +495,7 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.empty.noMatches.description': '別のタイトル、ブランチ、フォルダ、パスをお試しください。',
   'sessions.sidebar.activity.recentTitle': '最近',
   'sessions.sidebar.activity.chatsTitle': 'チャット',
+  'sessions.sidebar.activity.globalTitle': 'グローバル',
   'sessions.sidebar.activity.chatsEmpty': 'まだチャットはありません。',
   'chat.chatInput.chooseProject': 'プロジェクトを選択',
   'sessions.archivePage.allDirectories': 'すべてのディレクトリ',
