@@ -65,6 +65,30 @@ function buildSession(title: string, time: Session["time"]): Session {
 }
 
 describe("applyDirectoryEvent", () => {
+  test("keeps a reused archived session in the live directory store", () => {
+    const previous = buildSession("Planner", { created: 1, updated: 10, archived: 15 })
+    const reused = buildSession("Planner", { created: 1, updated: 20, archived: 15 })
+    const draft = state({ session: [previous] })
+
+    expect(applyDirectoryEvent(draft, {
+      type: "session.updated",
+      properties: { info: reused },
+    } as Event)).toBe(true)
+    expect(draft.session).toEqual([reused])
+  })
+
+  test("removes a session when the archive marker is current", () => {
+    const current = buildSession("Planner", { created: 1, updated: 10 })
+    const archived = buildSession("Planner", { created: 1, updated: 10, archived: 15 })
+    const draft = state({ session: [current] })
+
+    expect(applyDirectoryEvent(draft, {
+      type: "session.updated",
+      properties: { info: archived },
+    } as Event)).toBe(true)
+    expect(draft.session).toEqual([])
+  })
+
   test("inserts post-rollover message events by creation time rather than ID", () => {
     const legacy = {
       id: "msg_ffffffffffffLegacy",

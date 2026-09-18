@@ -34,7 +34,7 @@ export type SessionSidebarOwnerAuthority = {
 type RowBase = { key: string; estimateSize: number };
 
 export type SessionSidebarRow =
-  | (RowBase & { kind: 'activity-header'; activityKey: 'chats' | 'active-now'; collapsed: boolean; forceExpanded: boolean })
+  | (RowBase & { kind: 'activity-header'; activityKey: 'chats' | 'global' | 'active-now'; collapsed: boolean; forceExpanded: boolean })
   | (RowBase & { kind: 'project-header'; section: ProjectSection; collapsed: boolean; forceExpanded: boolean })
   | (RowBase & { kind: 'group-header'; group: SessionGroup; groupKey: string; projectId: string | null; collapsed: boolean; forceExpanded: boolean; allSessions: readonly Session[] })
   | (RowBase & { kind: 'folder-header'; group: SessionGroup; folder: SessionFolder; displayName: string; scopeKey: string; scopeDirectory: string | null; ownerKey: string | null; nodes: readonly SessionNode[]; activityNodes: readonly SessionNode[]; projectId: string | null; archived: boolean; collapsed: boolean; forceExpanded: boolean; deleteSessions: readonly Session[]; subFolderCount: number; dropEnabled: boolean })
@@ -74,6 +74,7 @@ export type SessionSidebarRowModelArgs = {
   sections: readonly ProjectSection[];
   authoritativeSections: readonly ProjectSection[];
   chatGroup: SessionGroup | null;
+  globalGroup: SessionGroup | null;
   recentSections: readonly SessionSidebarActivitySection[];
   showRecentSection: boolean;
   foldersMap: SessionFoldersMap;
@@ -192,6 +193,7 @@ export const buildSessionSidebarRowModel = (args: SessionSidebarRowModelArgs): S
   const authoritativeRoots = [
     ...args.authoritativeSections.flatMap((section) => section.groups.flatMap((group) => group.sessions)),
     ...(args.chatGroup?.sessions ?? []),
+    ...(args.globalGroup?.sessions ?? []),
   ];
   const authorityStack = [...authoritativeRoots];
   while (authorityStack.length > 0) {
@@ -265,7 +267,13 @@ export const buildSessionSidebarRowModel = (args: SessionSidebarRowModelArgs): S
     }
   };
 
-  const appendGroup = (group: SessionGroup, groupKey: string, projectId: string | null, hideHeader: boolean): void => {
+  const appendGroup = (
+    group: SessionGroup,
+    groupKey: string,
+    projectId: string | null,
+    hideHeader: boolean,
+    renderContext: 'project' | 'recent' = 'project',
+  ): void => {
     const searchData = args.groupSearchDataByGroup.get(group);
     if (search && searchData?.hasMatch !== true) return;
     if (search && searchData) {
@@ -370,7 +378,7 @@ export const buildSessionSidebarRowModel = (args: SessionSidebarRowModelArgs): S
       });
       if (ownerKey) folderDropTargets.push(Object.freeze({ rowKey: folderKey, scopeKey: entry.scopeKey, folderId: entry.folder.id, ownerKey, enabled: dropEnabled }));
       if (folderCollapsed) return;
-      appendSessions({ nodes: entry.nodes, containerKey: folderKey, projectId, groupDirectory: entry.scopeDirectory ?? group.directory, ownerKey, selectionScopeKey: ownerKey, archived: group.isArchivedBucket === true, renderContext: 'project', indexedNodes: indexed, selectionPoolOffset });
+      appendSessions({ nodes: entry.nodes, containerKey: folderKey, projectId, groupDirectory: entry.scopeDirectory ?? group.directory, ownerKey, selectionScopeKey: ownerKey, archived: group.isArchivedBucket === true, renderContext, indexedNodes: indexed, selectionPoolOffset });
       for (const child of childFolders.get(identity) ?? []) appendFolder(child, displayName);
     };
     for (const folder of roots) appendFolder(folder, '');
@@ -380,7 +388,7 @@ export const buildSessionSidebarRowModel = (args: SessionSidebarRowModelArgs): S
     const increment = sessionBatchSize ?? 7;
     const requested = Math.max(initialLimit, args.visibleCountByContainer.get(groupKey) ?? initialLimit);
     const visibleUngrouped = group.isArchivedBucket || search ? ungrouped : ungrouped.slice(0, requested);
-    appendSessions({ nodes: visibleUngrouped, containerKey: groupKey, projectId, groupDirectory: group.directory, ownerKey, selectionScopeKey: ownerKey, archived: group.isArchivedBucket === true, renderContext: 'project', indexedNodes: indexed, selectionPoolOffset });
+    appendSessions({ nodes: visibleUngrouped, containerKey: groupKey, projectId, groupDirectory: group.directory, ownerKey, selectionScopeKey: ownerKey, archived: group.isArchivedBucket === true, renderContext, indexedNodes: indexed, selectionPoolOffset });
     const remaining = ungrouped.length - visibleUngrouped.length;
     if (!search && !group.isArchivedBucket && remaining > 0) {
       push({ kind: 'show-control', key: `${groupKey}:more`, estimateSize: STATUS_ESTIMATE, control: 'more', containerKey: groupKey, currentCount: visibleUngrouped.length, increment });
@@ -397,7 +405,7 @@ export const buildSessionSidebarRowModel = (args: SessionSidebarRowModelArgs): S
     }
   };
 
-  const appendActivityHeader = (activityKey: 'chats' | 'active-now'): boolean => {
+  const appendActivityHeader = (activityKey: 'chats' | 'global' | 'active-now'): boolean => {
     const collapsed = !search && args.collapsedActivities.has(activityKey);
     const rowIndex = rows.length;
     push({ kind: 'activity-header', key: `activity:${activityKey}:header`, estimateSize: HEADER_ESTIMATE, activityKey, collapsed, forceExpanded: search });
@@ -410,6 +418,14 @@ export const buildSessionSidebarRowModel = (args: SessionSidebarRowModelArgs): S
     if (!search || chatSearchData?.hasMatch === true) {
       const collapsed = appendActivityHeader('chats');
       if (!collapsed) appendGroup(args.chatGroup, 'activity:chats', null, true);
+    }
+  }
+
+  if (args.globalGroup) {
+    const globalSearchData = args.groupSearchDataByGroup.get(args.globalGroup);
+    if (!search || globalSearchData?.hasMatch === true) {
+      const collapsed = appendActivityHeader('global');
+      if (!collapsed) appendGroup(args.globalGroup, 'activity:global', null, true, 'recent');
     }
   }
 

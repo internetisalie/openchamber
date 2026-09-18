@@ -6,6 +6,7 @@ import { installHookTestDom } from '../test-utils/testDom';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
+import { useGlobalSyncStore } from '@/sync/global-sync-store';
 import type { WorktreeMetadata } from '@/types/worktree';
 
 type Event =
@@ -104,6 +105,7 @@ describe('useSessionListSync', () => {
     useProjectsStore.setState({ projects, activeProjectId: 'project' });
     useDirectoryStore.setState({ currentDirectory: '/project' });
     useSessionUIStore.setState({ currentSessionDirectory: null, availableWorktreesByProject: new Map() });
+    useGlobalSyncStore.setState({ projects: [] });
   });
 
   afterEach(() => {
@@ -122,6 +124,22 @@ describe('useSessionListSync', () => {
     expect(state.directoryRefreshes).toEqual([]);
     expect(state.subscriptions).toBe(1);
     expect(state.cleanupInputs.at(-1)).toEqual({ enabled: true, hasAuthoritativeGlobalSessions: true, sessionCount: 0, sessions: [] });
+  });
+
+  test('refreshes a newly discovered SDK-only sandbox without bootstrapping the topology', () => {
+    act(() => root.render(<LifecycleProbe isVSCode={false} />));
+    act(() => useGlobalSyncStore.setState({
+      projects: [{
+        id: 'opencode-project',
+        worktree: '/project',
+        sandboxes: ['/sandbox/independent'],
+        time: { created: 1, updated: 1, initialized: 1 },
+      }],
+    }));
+
+    expect(state.demands).toHaveLength(1);
+    expect(state.demands[0]?.directories).toEqual(['/project']);
+    expect(state.directoryRefreshes).toEqual([['/sandbox/independent']]);
   });
 
   test('refreshes every VS Code directory on first mount and only topology additions afterward', () => {

@@ -495,6 +495,7 @@ export const dict: Record<I18nKey, string> = {
   "sessions.sidebar.empty.noMatches.description": "Inténtalo con un título, rama, carpeta o ruta diferente.",
   "sessions.sidebar.activity.recentTitle": "reciente",
   "sessions.sidebar.activity.chatsTitle": "chats",
+  "sessions.sidebar.activity.globalTitle": "global",
   "sessions.sidebar.activity.chatsEmpty": "Aún no hay chats.",
   "chat.chatInput.chooseProject": "Elegir proyecto",
   "sessions.archivePage.allDirectories": "Todos los directorios",

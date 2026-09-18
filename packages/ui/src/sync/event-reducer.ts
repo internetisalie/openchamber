@@ -15,6 +15,7 @@ import { dropSessionCaches } from "./session-cache"
 import { stripSessionDiffSnapshots } from "./sanitize"
 import { syncDebug } from "./debug"
 import { shouldSkipStaleSessionEvent } from "./session-event-freshness"
+import { isSessionArchived } from "@/lib/sessionArchive"
 import {
   compareMessagesChronologically,
   findMessageIndex,
@@ -274,7 +275,7 @@ export function applyDirectoryEvent(
         return false
       }
 
-      if (info.time.archived) {
+      if (isSessionArchived(info)) {
         if (result.found) sessions.splice(result.index, 1)
         cleanupSessionCaches(draft, info.id, callbacks?.onSetSessionTodo)
         if (!info.parentID) draft.sessionTotal = Math.max(0, draft.sessionTotal - 1)

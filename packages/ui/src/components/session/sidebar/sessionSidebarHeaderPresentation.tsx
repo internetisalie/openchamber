@@ -4,7 +4,7 @@ import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 
 export const SessionSidebarActivityHeader: React.FC<{
-  activityKey: 'chats' | 'active-now';
+  activityKey: 'chats' | 'global' | 'active-now';
   collapsed: boolean;
   forceExpanded: boolean;
   alwaysShowActions: boolean;
@@ -13,6 +13,7 @@ export const SessionSidebarActivityHeader: React.FC<{
 }> = ({ activityKey, collapsed, forceExpanded, alwaysShowActions, onToggle, onNewChat }) => {
   const { t } = useI18n();
   const chats = activityKey === 'chats';
+  const global = activityKey === 'global';
   return <div className="relative group/chats -ml-2.5 -mr-2">
     <button
       type="button"
@@ -22,13 +23,17 @@ export const SessionSidebarActivityHeader: React.FC<{
       aria-expanded={!collapsed}
     >
       <span className="inline-flex h-3.5 w-3.5 items-center justify-center">
-        <Icon name={chats ? 'chat-4' : 'history'} className={cn('h-3.5 w-3.5 text-muted-foreground/80', !forceExpanded && 'group-hover:hidden')} />
+        <Icon name={chats ? 'chat-4' : global ? 'global' : 'history'} className={cn('h-3.5 w-3.5 text-muted-foreground/80', !forceExpanded && 'group-hover:hidden')} />
         {!forceExpanded ? <span className="hidden h-3.5 w-3.5 items-center justify-center text-muted-foreground group-hover:inline-flex">
           <Icon name={collapsed ? 'arrow-right-s' : 'arrow-down-s'} className="h-3.5 w-3.5" />
         </span> : null}
       </span>
       <span className="typography-ui-label font-semibold lowercase text-foreground">
-        {t(chats ? 'sessions.sidebar.activity.chatsTitle' : 'sessions.sidebar.activity.recentTitle')}
+        {t(chats
+          ? 'sessions.sidebar.activity.chatsTitle'
+          : global
+            ? 'sessions.sidebar.activity.globalTitle'
+            : 'sessions.sidebar.activity.recentTitle')}
       </span>
     </button>
     {chats ? <button

@@ -12,6 +12,7 @@ import { compareSessionsByLifecycleOrder, useSessionOrderingStore } from '@/sync
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { isVSCodeRuntime } from '@/lib/desktop';
 import { isChatDirectoryPath } from '@/lib/chatDirectories';
+import { isSessionArchived } from '@/lib/sessionArchive';
 
 export type SwitcherItem = {
   node: SessionNode;
@@ -76,7 +77,7 @@ export const selectSwitcherParents = (
 ): Session[] => {
   const sessionsById = new Map(activeSessions.map((session) => [session.id, session]));
   const isEligibleParent = (session: Session): boolean => {
-    if (session.time?.archived) return false;
+    if (isSessionArchived(session)) return false;
     if (isExcluded?.(session)) return false;
     // SAFETY: the SDK Session type omits parentID, but the server includes it on child sessions.
     if ((session as Session & { parentID?: string | null }).parentID) return false;
@@ -87,7 +88,7 @@ export const selectSwitcherParents = (
     .sort((a, b) => compareSessionsByLifecycleOrder(a, b, pinnedSessionIds, sessionOrderRanks));
 
   const currentSession = currentSessionId ? sessionsById.get(currentSessionId) ?? null : null;
-  let currentRoot: Session | null = currentSession?.time?.archived ? null : currentSession;
+  let currentRoot: Session | null = currentSession && !isSessionArchived(currentSession) ? currentSession : null;
   const visited = new Set<string>();
   while (currentRoot) {
     // SAFETY: the SDK Session type omits parentID, but the server includes it on child sessions.
@@ -166,7 +167,7 @@ export const useSwitcherItems = (enabled: boolean, options: SwitcherItemsOptions
     for (const session of activeSessions) {
       const parentId = (session as Session & { parentID?: string | null }).parentID;
       if (!parentId) continue;
-      if (session.time?.archived) continue;
+      if (isSessionArchived(session)) continue;
       const bucket = childrenByParent.get(parentId);
       if (bucket) {
         bucket.push(session);

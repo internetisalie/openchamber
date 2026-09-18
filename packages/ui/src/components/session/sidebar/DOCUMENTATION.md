@@ -12,7 +12,7 @@ kept at this root in `types.ts` and `utils.tsx`.
 - `recent/` owns Recent and managed Chats activity projections.
 - `folders/` owns folder DnD, bulk actions, archived folders, and folder UI.
 - `sessionSidebarRowModel.ts` owns the ordered, mode-neutral projection for
-  Chats, Recent, projects, groups, folders, sessions, status notices, empty
+  Chats, Global, Recent, projects, groups, folders, sessions, status notices, empty
   states, and reveal controls. `SessionSidebarRows.tsx` is the shared desktop
   Web, Electron and VS Code sidebar row renderer. Normal and committed-search modes use the same
   model and the same `@tanstack/react-virtual` instance.
@@ -50,14 +50,33 @@ cache. Live busy and retry state comes from `global-session-status`, never from
 the global cache or persisted history. A failed global or directory fetch keeps
 existing data; it is never treated as an authoritative empty list.
 
-Web and desktop show managed Chats before optional Recent activity. Chats use
+OpenCode keeps `time.archived` on a session that receives later activity. The
+sidebar treats that marker as current only while it is at least as new as
+`time.updated`; a later update returns the session to its active workspace.
+
+Web and desktop classify managed Chat directories before an authoritative
+`session.projectID === "global"`, because non-Git managed Chats may carry that
+project ID. Other Global sessions render once in a Global section, outside
+configured projects and Recent, while each record's returned directory remains
+the routing authority for selection and actions. A later
+authoritative update to a real project ID moves the session back through normal
+path ownership. Archived Global sessions remain in the full Archive page under
+one Global filter bucket. Managed Chat directory semantics take precedence in
+that archive too, so a Chat carrying the Global project ID stays out of the
+Global bucket and its bulk-delete action. Global descendants may belong to
+different returned directories; subtree Markdown export loads every descendant
+through its own directory-scoped message loader.
+
+Web, desktop, and hosted mobile show managed Chats and Global outside project
+ownership; desktop surfaces can then show optional Recent activity. Chats use
 their shared managed root for folders and never expose worktree actions. Project
-display can be all projects or one selected project. The mobile sessions sheet
-(`apps/MobileSessionsSheet.tsx`) partitions the same way through
-`partitionSidebarSessions` and lists Chats as a collapsible section above the
-project tree, with no Recent projection. VS Code excludes worktrees and managed
-Chats, while retaining its workspace-scoped grouped list and inline archived
-buckets.
+display can be all projects or one selected project. Hosted mobile renders its
+Global sessions in a dedicated group and selects them through each session's
+returned directory. The Capacitor sessions sheet retains the project/Chats
+partition and does not render the Global section. VS Code does not classify
+Global separately: it continues to exclude worktrees and managed Chats while
+retaining its workspace-scoped directory filter, grouped list, and inline
+archived buckets.
 
 Hosted mobile and Capacitor use their separate `MobileSessionsSheet` renderer.
 The shared directory-cache rules apply there, but this sidebar virtualizer does not.
@@ -128,6 +147,7 @@ matching and ordering. Search does not fetch sessions or broaden list membership
 ## Loading rules
 
 - Publish bootstrap demand only for the current directory and the selected session's directory. Known project roots and worktrees are topology, not demand: rows and sessions come from the global session list, activity from the global status index and the host status seed. Every directory bootstrap makes OpenCode create an instance, so demanding the whole topology created one per project at startup.
+- OpenCode workspace directories, including SDK sandboxes that are not Git worktrees, extend project ownership and targeted session refresh topology without becoming bootstrap demand.
 - Directory demand and refresh requests preserve path case after separator and drive-letter normalization. Case-insensitive sidebar membership keys stay inside the collection projection; sending those keys as paths creates duplicate directory stores and can address a different directory on case-sensitive filesystems.
 - A never-bootstrapped directory shows as ready. Load failures and denied folder access surface when it is selected; the group notice retry still forces a bootstrap.
 - The sync scheduler deduplicates, promotes, retries, and limits work. Sidebar components must not reproduce that lifecycle with mount effects.
@@ -189,10 +209,11 @@ matching and ordering. Search does not fetch sessions or broaden list membership
 - Opening the root-session `Move to worktree` submenu force-refreshes the owning project's worktree topology so externally created worktrees appear without a full reload. While that refresh runs, the menu keeps the last known primary/linked topology visible; if the refresh fails, the stale topology remains and the load failure state stays explicit. Failure cleanup never removes or manages an existing destination worktree.
 - CLI/server-created sessions use the low-frequency OpenChamber control event stream to refresh only the created session directory. The same event retriggers bounded worktree discovery so a newly created external worktree gains ownership without a view reload; it does not re-enable broad session or streaming subscriptions.
 - Recent membership includes active root sessions immediately even when their last committed `time.updated` falls outside the 48-hour window. Children and archived sessions remain excluded, and inactive roots remain timestamp-based. The active-ID subscription is disabled while the sidebar is hidden and ignores retry/status detail changes, avoiding streaming-frequency rerenders.
-- Structural updates rebuild grouped nodes only for projects whose local sessions, worktrees, repository state, or branch changed; unchanged project sections preserve references so memoized group/session descendants skip the update wave.
+- Structural updates rebuild grouped nodes only for projects whose local sessions, workspace membership, worktrees, repository state, or branch changed; unchanged project sections preserve references so memoized group/session descendants skip the update wave.
+- Workspace group identity and session placement use normalized directories from the OpenCode project's `worktree` and `sandboxes` membership. Directory names are the primary labels; branch names are secondary metadata because an independent checkout and a linked worktree may share one branch. A session record's returned directory outranks persisted worktree metadata, which remains only a pre-indexing hint. SDK-only sandboxes do not receive Git-worktree removal or missing-worktree behavior.
 - Empty successful lists, unresolved loads, and failed loads are separate UI states. Failed groups expose Retry and retain prior data.
 - List loading and workspace initialization have separate states. The spinner follows only the list queue; config, MCP, LSP, and live-state recovery cannot keep a successful empty list spinning. A core initialization failure has a separate localized notice and reuses the retry/native-access actions without clearing loaded sessions.
-- Directory permission failures remain visible even when stale sessions are retained. Flat groups inspect every represented root/worktree directory; local Desktop may open the native picker for the exact failed directory, while other runtimes keep the ordinary Retry action.
+- Directory permission failures remain visible even when stale sessions are retained. Flat groups inspect every represented root/workspace directory; local Desktop may open the native picker for the exact failed directory, while other runtimes keep the ordinary Retry action.
 - Pins and folder assignments are not pruned from the first startup snapshot or from optimistic mutations. Confirmed local deletion and routed external deletion clean immediately; a later authoritative omission after an established baseline covers missed external delete events.
 - Pending-permission/question row badges fade with the same hover/menu-open rule as the date label, except on non-VS Code always-visible-actions rows, which reserve permanent padding and keep the badges shown. VS Code hover-reveals its actions over the row's right edge even under `alwaysShowActions`, so its badges keep fading (`selectRowBadgeVisibilityClass` in `sessions/sessionNodeItemUtils.ts`).
 

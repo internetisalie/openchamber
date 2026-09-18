@@ -116,7 +116,7 @@ const isNormalizedPathWithinProject = (normalizedDirectory: string | null, norma
   return normalizedDirectory.startsWith(prefix);
 };
 
-export const normalizeForBranchComparison = (value: string): string => {
+const normalizeForBranchComparison = (value: string): string => {
   return value
     .toLowerCase()
     .replace(/^opencode[/-]?/i, '')
