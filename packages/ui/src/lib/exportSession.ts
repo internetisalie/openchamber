@@ -1,9 +1,10 @@
-import type { Message, Part } from '@opencode-ai/sdk/v2';
+import type { Message, Part, Session } from '@opencode-ai/sdk/v2';
 import { getRegisteredRuntimeAPIs } from '@/contexts/runtimeAPIRegistry';
 import { getCurrentIntlLocale } from '@/lib/i18n';
 import { isVSCodeRuntime, openDesktopPath, revealDesktopPath, saveDesktopMarkdownFile } from '@/lib/desktop';
 import { getRevealLabelKey } from '@/lib/utils';
 import { formatMessageText } from '@/lib/messages/messageMarkdown';
+import { normalizePath } from '@/lib/pathNormalization';
 
 type SessionMessageRecord = { info: Message; parts: Part[] };
 
@@ -13,6 +14,56 @@ export type ChildSessionExport = {
   records: SessionMessageRecord[];
   children: ChildSessionExport[];
 };
+
+type ChildSessionExportNode = {
+  session: Session;
+  children: readonly ChildSessionExportNode[];
+};
+
+type CollectChildSessionExportsArgs = {
+  children: readonly ChildSessionExportNode[];
+  fallbackDirectory: string | null;
+  loadRecords: (input: { directory: string; sessionID: string }) => Promise<SessionMessageRecord[] | null>;
+  untitledSubagentTitle: string;
+};
+
+export async function collectChildSessionExports({
+  children,
+  fallbackDirectory,
+  loadRecords,
+  untitledSubagentTitle,
+}: CollectChildSessionExportsArgs): Promise<{ children: ChildSessionExport[]; skipped: number }> {
+  const countSubtree = (node: ChildSessionExportNode): number => (
+    1 + node.children.reduce((count, child) => count + countSubtree(child), 0)
+  );
+  const collect = async (nodes: readonly ChildSessionExportNode[]): Promise<{ children: ChildSessionExport[]; skipped: number }> => {
+    const results: ChildSessionExport[] = [];
+    let skipped = 0;
+    for (const child of nodes) {
+      try {
+        const directory = normalizePath(child.session.directory ?? null) ?? fallbackDirectory;
+        if (!directory) throw new Error('Session directory is required for export');
+        const records = await loadRecords({ directory, sessionID: child.session.id });
+        if (!records) throw new Error('Session runtime changed during export');
+        const descendants = await collect(child.children);
+        skipped += descendants.skipped;
+        // SAFETY: OpenCode session payloads may carry the optional agent label used by exports.
+        const agent = (child.session as Session & { agent?: string }).agent;
+        results.push({
+          title: child.session.title || untitledSubagentTitle,
+          agent,
+          records,
+          children: descendants.children,
+        });
+      } catch {
+        skipped += countSubtree(child);
+      }
+    }
+    return { children: results, skipped };
+  };
+
+  return collect(children);
+}
 
 function formatTimestamp(timestamp: number | undefined): string {
   if (typeof timestamp !== 'number' || !Number.isFinite(timestamp)) {
