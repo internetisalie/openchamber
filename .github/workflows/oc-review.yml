@@ -4,6 +4,13 @@ on:
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review]
 
+permissions:
+  contents: read
+  packages: read
+
+env:
+  NODE_AUTH_TOKEN: ${{ github.token }}
+
 jobs:
   checks:
     runs-on: ubuntu-latest

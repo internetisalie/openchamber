@@ -1,6 +1,6 @@
 {
   "name": "openchamber-monorepo",
-  "version": "1.23.0",
+  "version": "1.23.0-internetisalie.1",
   "description": "OpenChamber monorepo workspace for web, ui, and desktop runtimes",
   "private": true,
   "type": "module",
@@ -45,7 +45,7 @@
     "changelog-card": "node scripts/changelog-card/generate.mjs",
     "changelog:build": "node scripts/changelog/build.mjs",
     "changelog:check": "node scripts/changelog/build.mjs --check",
-    "postinstall": "node ./fix-deprecation.js && patch-package && node ./packages/electron/scripts/ensure-electron.mjs --best-effort",
+    "postinstall": "node ./fix-deprecation.js && patch-package && node ./packages/electron/scripts/ensure-electron.mjs --best-effort && bun ./packages/electron/scripts/prepare-opencode-pty-plugin.mjs",
     "dev:web": "bun run --cwd packages/web build:watch",
     "dev:web:server": "bun run --cwd packages/web dev:server:watch",
     "dev:web:full": "node ./scripts/dev-web-full.mjs",

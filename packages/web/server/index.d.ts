@@ -31,6 +31,7 @@ export interface StartWebUiServerOptions {
   attachSignals?: boolean;
   exitOnShutdown?: boolean;
   uiPassword?: string | null;
+  openCodePtyPluginPath?: string;
   desktopUpdater?: DesktopUpdater;
 }
 

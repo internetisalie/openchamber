@@ -148,6 +148,12 @@ export const normalizeForwardedDirectoryHeaders = (headers) => {
   return headers;
 };
 
+export const rewriteOpenCodeProxyPath = (requestPath) => {
+  if (/^\/api\/plugins(?:\/|$)/.test(requestPath)) return requestPath;
+  if (/^\/plugins(?:\/|$)/.test(requestPath)) return `/api${requestPath}`;
+  return requestPath.replace(/^\/api/, '');
+};
+
 const waitForSseDrain = (res, signal) => new Promise((resolve) => {
   if (signal?.aborted || res.writableEnded || res.destroyed) {
     resolve();
@@ -913,7 +919,7 @@ export const registerOpenCodeProxy = (app, deps) => {
       return resolveOpenCodeProxyAgent();
     },
     changeOrigin: true,
-    pathRewrite: { '^/api': '' },
+    pathRewrite: rewriteOpenCodeProxyPath,
     timeout: timeoutMs,
     proxyTimeout: timeoutMs,
     // Dynamic target — port can change after restart

@@ -41,6 +41,10 @@ on:
 
 permissions:
   contents: read
+  packages: read
+
+env:
+  NODE_AUTH_TOKEN: ${{ github.token }}
 
 jobs:
   build-macos-electron:
@@ -78,7 +82,7 @@ jobs:
       - name: Get bundled OpenCode CLI version
         id: opencode_cli_version
         run: |
-          VERSION=$(node -p "require('./package.json').dependencies['@opencode-ai/sdk']")
+          VERSION=$(node -e "import('./packages/electron/scripts/opencode-cli-release.mjs').then(({ resolveBundledOpenCodeRelease }) => { const release = resolveBundledOpenCodeRelease(); console.log(release.repository.replace('/', '-') + '-' + release.version); })")
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Cache bundled OpenCode CLI artifact
@@ -122,6 +126,7 @@ jobs:
           bun run build:web-assets
           bun run prepare:opencode-cli
           bun run verify:opencode-cli
+          bun run prepare:opencode-pty-plugin
           bun run bundle:main
           # npmRebuild=false in package.json, so electron-builder won't
           # recompile native deps on its own. Rebuild against the target
@@ -223,7 +228,7 @@ jobs:
         id: opencode_cli_version
         shell: bash
         run: |
-          VERSION=$(node -p "require('./package.json').dependencies['@opencode-ai/sdk']")
+          VERSION=$(node -e "import('./packages/electron/scripts/opencode-cli-release.mjs').then(({ resolveBundledOpenCodeRelease }) => { const release = resolveBundledOpenCodeRelease(); console.log(release.repository.replace('/', '-') + '-' + release.version); })")
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Cache bundled OpenCode CLI artifact
@@ -244,6 +249,7 @@ jobs:
         run: |
           bun run prepare:opencode-cli
           bun run verify:opencode-cli
+          bun run prepare:opencode-pty-plugin
 
       - name: Bundle main process
         working-directory: packages/electron
@@ -327,7 +333,8 @@ jobs:
         id: versions
         shell: bash
         run: |
-          echo "opencode_cli=$(node -p "require('./package.json').dependencies['@opencode-ai/sdk']")" >> "$GITHUB_OUTPUT"
+          VERSION=$(node -e "import('./packages/electron/scripts/opencode-cli-release.mjs').then(({ resolveBundledOpenCodeRelease }) => { const release = resolveBundledOpenCodeRelease(); console.log(release.repository.replace('/', '-') + '-' + release.version); })")
+          echo "opencode_cli=$VERSION" >> "$GITHUB_OUTPUT"
           echo "app=$(node -p "require('./packages/electron/package.json').version")" >> "$GITHUB_OUTPUT"
 
       - name: Cache bundled OpenCode CLI artifact
@@ -353,6 +360,7 @@ jobs:
           bun run build:web-assets
           bun run prepare:opencode-cli
           bun run verify:opencode-cli
+          bun run prepare:opencode-pty-plugin
           bun run bundle:main
           bun run rebuild:native
           node ./scripts/package.mjs --linux --${{ matrix.arch }} --publish=never

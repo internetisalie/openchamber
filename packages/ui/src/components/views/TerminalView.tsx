@@ -30,6 +30,7 @@ import { useInlineCommentDraftStore } from '@/stores/useInlineCommentDraftStore'
 import { applyTerminalModifier, terminalControlCharacter, terminalSequenceForKey, type TerminalModifier as Modifier, type TerminalQuickKey as MobileKey } from '@/lib/terminalInput';
 import { formatShortcutForDisplay } from '@/lib/shortcuts';
 import { observeTerminalSessions } from '@/lib/terminalSessionObserver';
+import { OpenCodePtyView } from './OpenCodePtyView';
 
 type TerminalViewProps = {
     visible?: boolean;
@@ -93,7 +94,7 @@ const resolveTabIconName = (iconKey: string | null): IconName => {
     return matchedIcon?.Icon ?? 'terminal';
 };
 
-export const TerminalView: React.FC<TerminalViewProps> = ({ visible, directory }) => {
+const ManagedTerminalView: React.FC<TerminalViewProps> = ({ visible, directory }) => {
     const { t } = useI18n();
     const { terminal, runtime } = useRuntimeAPIs();
     const { currentTheme } = useThemeSystem();
@@ -1296,6 +1297,43 @@ export const TerminalView: React.FC<TerminalViewProps> = ({ visible, directory }
                     </div>
                 </div>
             ) : null}
+        </div>
+    );
+};
+
+export const TerminalView: React.FC<TerminalViewProps> = ({ visible = true, directory }) => {
+    const { t } = useI18n();
+    const [source, setSource] = React.useState<'terminal' | 'pty'>('terminal');
+    return (
+        <div className="flex h-full min-h-0 flex-col overflow-hidden bg-[var(--surface-background)]">
+            <div className="app-region-no-drag flex shrink-0 items-center gap-1 border-b border-border/50 px-2 py-1">
+                <Button
+                    type="button"
+                    size="xs"
+                    variant="chip"
+                    aria-pressed={source === 'terminal'}
+                    onClick={() => setSource('terminal')}
+                >
+                    {t('terminalView.source.terminal')}
+                </Button>
+                <Button
+                    type="button"
+                    size="xs"
+                    variant="chip"
+                    aria-pressed={source === 'pty'}
+                    onClick={() => setSource('pty')}
+                >
+                    {t('terminalView.source.agentPtys')}
+                </Button>
+            </div>
+            <div className="min-h-0 flex-1">
+                <div className={cn('h-full', source !== 'terminal' && 'hidden')}>
+                    <ManagedTerminalView visible={visible && source === 'terminal'} directory={directory} />
+                </div>
+                <div className={cn('h-full', source !== 'pty' && 'hidden')}>
+                    <OpenCodePtyView visible={visible && source === 'pty'} />
+                </div>
+            </div>
         </div>
     );
 };

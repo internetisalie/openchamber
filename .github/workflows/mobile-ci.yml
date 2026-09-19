@@ -7,6 +7,13 @@ concurrency:
   group: mobile-smoke-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+  packages: read
+
+env:
+  NODE_AUTH_TOKEN: ${{ github.token }}
+
 jobs:
   android-debug:
     name: Android debug APK

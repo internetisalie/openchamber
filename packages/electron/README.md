@@ -28,6 +28,7 @@ The preload bridge exposes desktop-only APIs to the web UI through `window.__OPE
 | `scripts/ensure-electron.mjs` | Verifies the installed Electron binary is complete and repairs it via the postinstall under Bun |
 | `scripts/build-web-assets.mjs` | Builds `packages/web` and stages UI assets into `resources/web-dist` |
 | `scripts/prepare-opencode-cli.mjs` | Downloads and stages the pinned OpenCode CLI into `resources/opencode-cli` |
+| `scripts/prepare-opencode-pty-plugin.mjs` | Bundles the read-only PTY bridge and stages its Bun-native dependency outside `app.asar` |
 | `scripts/bundle-main.mjs` | Bundles Electron main code into `dist-bundle/main.mjs` for packaging |
 | `scripts/rebuild-native.mjs` | Rebuilds native modules against the Electron runtime |
 | `scripts/package.mjs` | Runs `electron-builder`, with unsigned Windows builds when signing env is missing |
@@ -61,9 +62,12 @@ enabled. These rules do not change relay probing or the preload/IPC contract.
 From the repo root:
 
 ```bash
+export NODE_AUTH_TOKEN="$(gh auth token)"
 bun install
 bun run electron:dev
 ```
+
+The token needs `read:packages` so Bun can install the pinned `@internetisalie/opencode-pty-bridge` package from GitHub Packages.
 
 `bun run electron:dev` starts the web dev server with HMR, then launches Electron against `packages/electron/main.mjs`. On Windows, the HMR launcher resolves npm's `bun.cmd` shim to the underlying `bun.exe` before spawning Bun child processes.
 
@@ -101,7 +105,8 @@ That runs, in order:
 2. `prepare:opencode-cli` to download/cache the pinned OpenCode CLI and copy it into `packages/electron/resources/opencode-cli`.
 3. `bundle:main` to create `packages/electron/dist-bundle/main.mjs`.
 4. `rebuild:native` to rebuild native modules for Electron.
-5. `package.mjs` to run `electron-builder`; its `afterPack` hook stages the compiled macOS icon asset catalog.
+5. `prepare:opencode-pty-plugin` to stage the managed OpenCode plugin and `bun-pty` outside `app.asar`.
+6. `package.mjs` to run `electron-builder`; its `afterPack` hook stages the compiled macOS icon asset catalog.
 
 Build output goes to `packages/electron/dist`.
 
@@ -137,7 +142,9 @@ The macOS menu bar item is enabled by default and can be disabled in General set
 
 ## Bundled OpenCode CLI
 
-Packaged Desktop builds include the official OpenCode CLI that matches the pinned `@opencode-ai/sdk` version in the root `package.json`. `prepare:opencode-cli` downloads the platform-specific release artifact, caches it under `packages/electron/.cache/opencode-cli`, stages `opencode` or `opencode.exe` into `resources/opencode-cli`, and verifies `opencode --version` before packaging. Re-running the step is fast when the staged binary already matches the pinned version.
+Packaged Desktop builds include OpenCode `1.18.31-internetisalie.2` from the `internetisalie/opencode` release. This build adds authenticated plugin HTTP routes while resolving OpenCode plugin packages against upstream `1.18.31`. `prepare:opencode-cli` downloads the platform-specific release artifact, caches it under `packages/electron/.cache/opencode-cli`, stages `opencode` or `opencode.exe` into `resources/opencode-cli`, and verifies `opencode --version` before packaging. Re-running the step is fast when the staged binary already matches the pinned version.
+
+The managed OpenCode PTY bridge is also a packaged resource. Its build bundles `@internetisalie/opencode-pty-bridge@0.1.0` and stages `bun-pty` beside it so the separate OpenCode process loads ordinary files rather than Electron's `app.asar` virtual filesystem.
 
 Managed local Desktop startup prefers OpenCode binaries in this order:
 
@@ -160,7 +167,8 @@ Use an explicit override when testing a different OpenCode CLI build or when a u
 | `OPENCHAMBER_HMR_UI_PORT` | Preferred Vite UI port for desktop dev, default `5173` |
 | `OPENCHAMBER_HMR_API_PORT` | Preferred API port for desktop dev, default `3901` |
 | `OPENCHAMBER_RUNTIME=desktop` | Set by Electron before starting the web server |
-| `OPENCHAMBER_OPENCODE_CLI_VERSION` | Optional packaging override for the bundled OpenCode CLI version; defaults to the pinned root `@opencode-ai/sdk` version |
+| `OPENCHAMBER_OPENCODE_CLI_VERSION` | Optional packaging override for the bundled OpenCode CLI version; defaults to `1.18.31-internetisalie.2` |
+| `OPENCHAMBER_OPENCODE_CLI_REPOSITORY` | Optional GitHub `owner/repository` override for the bundled OpenCode release; defaults to `internetisalie/opencode` |
 | `OPENCHAMBER_TARGET_ARCH` | Explicit desktop package architecture (`x64` or `arm64`); Linux requires it to match the native host |
 | `OPENCHAMBER_DESKTOP_NOTIFY=true` | Enables desktop notification flow in the web server |
 | `OPENCHAMBER_SKIP_API_COMPRESSION=true` | Defaulted by Desktop to reduce local CPU overhead |

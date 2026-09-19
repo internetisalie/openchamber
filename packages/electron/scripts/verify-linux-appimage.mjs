@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
+import { resolveBundledOpenCodeRelease } from './opencode-cli-release.mjs';
 import { normalizeTargetArchitecture } from './target-architecture.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -78,6 +79,7 @@ export const verifyExtractedPayload = ({
   root,
   targetArchitecture,
   expectedOpenCodeVersion,
+  expectedOpenCodeRepository,
   runCliVersion = defaultCliVersion,
 }) => {
   const desktopPath = path.join(root, 'openchamber.desktop');
@@ -95,6 +97,27 @@ export const verifyExtractedPayload = ({
   if (actualVersion !== expectedOpenCodeVersion) {
     throw new Error(`OpenCode CLI version mismatch: expected ${expectedOpenCodeVersion}, got ${actualVersion || '(empty)'}`);
   }
+  const cliRelease = readJson(path.join(root, 'resources', 'opencode-cli', 'release.json'));
+  if (cliRelease.version !== expectedOpenCodeVersion || cliRelease.repository !== expectedOpenCodeRepository) {
+    throw new Error('OpenCode CLI release metadata mismatch');
+  }
+
+  const pluginRoot = path.join(root, 'resources', 'opencode-pty-plugin');
+  for (const relativePath of ['plugin.mjs', 'xdg-open', 'node_modules/bun-pty/package.json']) {
+    const filePath = path.join(pluginRoot, relativePath);
+    if (!fs.existsSync(filePath)) throw new Error(`Missing packaged OpenCode PTY plugin file: ${relativePath}`);
+  }
+  if ((fs.statSync(path.join(pluginRoot, 'xdg-open')).mode & 0o111) === 0) {
+    throw new Error('Packaged OpenCode PTY plugin xdg-open helper is not executable');
+  }
+  const pluginNativeModules = collectFiles(pluginRoot, (name) => name.endsWith('.so'));
+  if (!pluginNativeModules.length) throw new Error('Missing packaged OpenCode PTY plugin native library');
+  const selectedPluginNativeModule = path.join(
+    pluginRoot,
+    'node_modules/bun-pty/rust-pty/target/release',
+    targetArchitecture === 'arm64' ? 'librust_pty_arm64.so' : 'librust_pty.so',
+  );
+  assertElfArchitecture(selectedPluginNativeModule, targetArchitecture, 'OpenCode PTY plugin native library');
 
   const unpackedModules = path.join(root, 'resources', 'app.asar.unpacked', 'node_modules');
   if (!fs.existsSync(unpackedModules)) throw new Error(`Missing unpacked native modules: ${unpackedModules}`);
@@ -110,7 +133,11 @@ export const verifyExtractedPayload = ({
     }
   }
   for (const modulePath of nativeModules) assertElfArchitecture(modulePath, targetArchitecture, 'Native module');
-  return { nativeModuleCount: nativeModules.length, openCodeVersion: actualVersion };
+  return {
+    nativeModuleCount: nativeModules.length,
+    openCodePtyNativeModuleCount: pluginNativeModules.length,
+    openCodeVersion: actualVersion,
+  };
 };
 
 const findAppImage = (version, architecture) => {
@@ -142,13 +169,15 @@ const main = () => {
 
   const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'openchamber-appimage-'));
   try {
+    const expectedOpenCodeRelease = resolveBundledOpenCodeRelease();
     const result = verifyExtractedPayload({
       root: extractAppImage(appImagePath, temporaryDirectory),
       targetArchitecture: target,
-      expectedOpenCodeVersion: rootPackage.dependencies?.['@opencode-ai/sdk'],
+      expectedOpenCodeVersion: expectedOpenCodeRelease.version,
+      expectedOpenCodeRepository: expectedOpenCodeRelease.repository,
     });
     console.log(`[electron] verified Linux ${target} AppImage: ${appImagePath}`);
-    console.log(`[electron] verified OpenCode CLI ${result.openCodeVersion} and ${result.nativeModuleCount} native modules`);
+    console.log(`[electron] verified OpenCode CLI ${result.openCodeVersion}, ${result.nativeModuleCount} app native modules, and ${result.openCodePtyNativeModuleCount} PTY plugin native libraries`);
   } finally {
     fs.rmSync(temporaryDirectory, { recursive: true, force: true });
   }

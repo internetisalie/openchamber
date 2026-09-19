@@ -35,6 +35,7 @@ This module provides OpenCode server integration utilities for the web server ru
 - `packages/web/server/lib/agent-tool/runtime.js`: managed OpenCode custom-tool materialization, environment injection, loopback authentication, and fixed CLI action dispatch.
 - `packages/web/server/lib/system-prompt/runtime.js`: opt-in managed OpenCode system-prompt optimizer materialization and plugin injection.
 - `packages/web/server/lib/mcp-reconnect/runtime.js`: always-on managed OpenCode plugin that reconnects MCP servers OpenCode marked `failed`, with per-server backoff.
+- `packages/web/server/lib/opencode-pty-bridge/`: managed plugin config injection for the packaged `@internetisalie/opencode-pty-bridge` entrypoint. Session metadata and bounded output remain in OpenCode and are read through its authenticated plugin HTTP route.
 - `packages/web/server/lib/opencode/managed-plugin-config.js`: the one `OPENCODE_CONFIG_CONTENT` merge every managed plugin (agent tools, system prompt optimizer, MCP reconnect) appends itself through.
 - `packages/web/server/lib/opencode/server-utils-runtime.js`: shared server runtime utilities for OpenCode proxy wiring, OpenCode port/readiness helpers, and snapshot fetchers.
 - `packages/web/server/lib/opencode/openchamber-routes.js`: OpenChamber update and models metadata route registration.
@@ -132,8 +133,9 @@ The runtime maintains active-session count incrementally from idempotent activit
   - `killProcessOnPort(port)`
 
 Managed OpenCode launch also merges the environment returned by the agent-tool
-runtime, the opt-in system prompt optimizer, and the always-on MCP reconnect
-plugin, each appending its `file://` entry to the previous one's config. PATH and `OPENCODE_SERVER_PASSWORD` remain lifecycle-owned and cannot
+runtime, the opt-in system prompt optimizer, the always-on MCP reconnect
+plugin, and the `opencode-pty` bridge, each appending its `file://` entry to the
+previous one's config. PATH and `OPENCODE_SERVER_PASSWORD` remain lifecycle-owned and cannot
 be replaced by injected values. External OpenCode processes receive no
 OpenChamber tool injection. Managed launch env strips AppImage `ARGV0` before
 spawn so zsh-backed OpenCode tools do not rewrite child argv[0] to the AppImage
@@ -421,6 +423,7 @@ within a ten-minute overall deadline.
   - Interactive OAuth forwarder: `POST /api/provider/:providerID/oauth/callback`
     - Upstream blocks inside this call for the whole browser sign-in (device-code polling or a loopback redirect), so it is exempt from the ordinary request deadline and uses a 15-minute proxy timeout instead of `LONG_REQUEST_TIMEOUT_MS`. All other `/api/provider/*` routes, including `oauth/authorize`, keep the ordinary deadline.
   - Generic `/api/*` forwarding with hop-by-hop header filtering
+    - Preserves `/api/plugins/*` because OpenCode's plugin dispatcher owns that prefix; ordinary OpenCode API routes still drop the OpenChamber `/api` prefix.
   - Windows `/session` merge fallback path behavior
   - OpenCode readiness gate for proxied `/api` requests
   - Worktree checkout gate before directory-scoped upstream reads and writes

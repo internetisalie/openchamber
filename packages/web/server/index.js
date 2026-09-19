@@ -6,7 +6,7 @@ import { spawn, spawnSync } from 'child_process';
 import fs from 'fs';
 import http from 'http';
 import net from 'net';
-import { fileURLToPath } from 'url';
+import { fileURLToPath, pathToFileURL } from 'url';
 import os from 'os';
 import crypto from 'crypto';
 import http2 from 'node:http2';
@@ -113,6 +113,7 @@ import { createDevTunnelRuntime } from './lib/dev-tunnel/runtime.js';
 import { registerBrowserControlRoutes } from './lib/browser-control/routes.js';
 import { createSystemPromptRuntime } from './lib/system-prompt/runtime.js';
 import { createMcpReconnectRuntime } from './lib/mcp-reconnect/runtime.js';
+import { createOpenCodePtyBridgeRuntime } from './lib/opencode-pty-bridge/runtime.js';
 import { createOpenChamberSessionService } from './lib/openchamber-sessions/routes.js';
 import { createScheduledTaskService } from './lib/scheduled-tasks/service.js';
 import { createOpenChamberControlService } from './lib/openchamber-control/service.js';
@@ -303,6 +304,7 @@ let notificationTemplateRuntime = null;
 let agentToolRuntime = null;
 let systemPromptRuntime = null;
 let mcpReconnectRuntime = null;
+let ptyBridgeRuntime = null;
 
 const createTimeoutSignal = (...args) => notificationTemplateRuntime.createTimeoutSignal(...args);
 const formatProjectLabel = (...args) => notificationTemplateRuntime.formatProjectLabel(...args);
@@ -1263,7 +1265,8 @@ const openCodeLifecycleRuntime = createOpenCodeLifecycleRuntime({
     }
     // Always on for managed OpenCode: it only retries servers OpenCode gave up on.
     const mcpReconnectEnv = await mcpReconnectRuntime.prepareManagedOpenCodeEnv(configContent);
-    return { ...managedEnv, ...mcpReconnectEnv };
+    const ptyBridgeEnv = ptyBridgeRuntime.prepareManagedOpenCodeEnv(mcpReconnectEnv.OPENCODE_CONFIG_CONTENT);
+    return { ...managedEnv, ...mcpReconnectEnv, ...ptyBridgeEnv };
   },
 });
 
@@ -1541,6 +1544,10 @@ async function main(options = {}) {
     fsPromises,
     path,
     dataDir: OPENCHAMBER_DATA_DIR,
+  });
+  ptyBridgeRuntime = createOpenCodePtyBridgeRuntime({
+    plugin: pathToFileURL(options.openCodePtyPluginPath
+      ?? path.join(__dirname, 'vendor', 'opencode-pty-bridge', 'plugin.mjs')).href,
   });
 
   // Pairing transports advertised to the create-device dialog. LAN reachability is

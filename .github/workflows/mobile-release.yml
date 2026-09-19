@@ -68,6 +68,11 @@ env:
   MOBILE_PACKAGE_DIR: packages/mobile
   IOS_PROJECT_DIR: packages/mobile/ios/App
   ANDROID_PROJECT_DIR: packages/mobile/android
+  NODE_AUTH_TOKEN: ${{ github.token }}
+
+permissions:
+  contents: read
+  packages: read
 
 jobs:
   resolve-version:
@@ -115,6 +120,7 @@ jobs:
     needs: resolve-version
     permissions:
       contents: write
+      packages: read
     steps:
       - uses: actions/checkout@v4
 

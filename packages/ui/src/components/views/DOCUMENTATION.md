@@ -16,6 +16,12 @@ consume another tab's pending navigation request.
 `WalkthroughView` gates discovery and source loading while retaining generated
 results and any explicitly started generation job.
 
+`TerminalView` retains the managed terminal while switching to its read-only
+Agent PTYs source. `OpenCodePtyView` polls only while selected and visible,
+keeps the last successful session list on request failure, and bounds retained
+output to 512 KiB. It uses authenticated `runtimeFetch` routes, so direct and
+relayed runtimes share the same transport.
+
 ## Large text files
 
 The 200,000-character threshold selects an initial code preview, not read-only

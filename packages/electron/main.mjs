@@ -1507,6 +1507,9 @@ const spawnLocalServer = async () => {
   const handle = await startWebUiServer({
     port: chosenPort,
     host: bindHost,
+    openCodePtyPluginPath: app.isPackaged
+      ? path.join(process.resourcesPath, 'opencode-pty-plugin', 'plugin.mjs')
+      : undefined,
     uiPassword: desktopUiPassword || null,
     attachSignals: false,
     exitOnShutdown: false,

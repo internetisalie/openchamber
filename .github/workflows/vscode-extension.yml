@@ -8,6 +8,10 @@ on:
 
 permissions:
   contents: write
+  packages: read
+
+env:
+  NODE_AUTH_TOKEN: ${{ github.token }}
 
 jobs:
   publish:

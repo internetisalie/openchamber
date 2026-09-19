@@ -21,6 +21,15 @@ const createPayload = () => {
   ].join('\n'));
   writeElf(path.join(root, 'openchamber'), 'x64');
   writeElf(path.join(root, 'resources/opencode-cli/opencode'), 'x64');
+  fs.writeFileSync(path.join(root, 'resources/opencode-cli/release.json'), JSON.stringify({
+    repository: 'internetisalie/opencode',
+    version: '1.17.18',
+  }));
+  fs.mkdirSync(path.join(root, 'resources/opencode-pty-plugin/node_modules/bun-pty'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'resources/opencode-pty-plugin/plugin.mjs'), 'export default {}');
+  fs.writeFileSync(path.join(root, 'resources/opencode-pty-plugin/xdg-open'), '#!/bin/sh\n', { mode: 0o755 });
+  fs.writeFileSync(path.join(root, 'resources/opencode-pty-plugin/node_modules/bun-pty/package.json'), '{}');
+  writeElf(path.join(root, 'resources/opencode-pty-plugin/node_modules/bun-pty/rust-pty/target/release/librust_pty.so'), 'x64');
   for (const name of ['pty.node', 'sherpa-onnx.node']) {
     writeElf(path.join(root, 'resources/app.asar.unpacked/node_modules', name), 'x64');
   }
@@ -51,9 +60,27 @@ test('verifies identity, version, and native payload architecture', () => {
       root,
       targetArchitecture: 'x64',
       expectedOpenCodeVersion: '1.17.18',
+      expectedOpenCodeRepository: 'internetisalie/opencode',
       runCliVersion: () => '1.17.18',
     });
     assert.equal(result.nativeModuleCount, 2);
+    assert.equal(result.openCodePtyNativeModuleCount, 1);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test('fails when the packaged PTY plugin native dependency is missing', () => {
+  const root = createPayload();
+  try {
+    fs.rmSync(path.join(root, 'resources/opencode-pty-plugin/node_modules'), { recursive: true });
+    assert.throws(() => verifyExtractedPayload({
+      root,
+      targetArchitecture: 'x64',
+      expectedOpenCodeVersion: '1.17.18',
+      expectedOpenCodeRepository: 'internetisalie/opencode',
+      runCliVersion: () => '1.17.18',
+    }), /Missing packaged OpenCode PTY plugin file: node_modules\/bun-pty\/package\.json/);
   } finally {
     fs.rmSync(root, { recursive: true, force: true });
   }
@@ -67,6 +94,7 @@ test('fails on a missing native module', () => {
       root,
       targetArchitecture: 'x64',
       expectedOpenCodeVersion: '1.17.18',
+      expectedOpenCodeRepository: 'internetisalie/opencode',
       runCliVersion: () => '1.17.18',
     }), /Missing packaged native module: pty\.node/);
   } finally {
@@ -81,6 +109,7 @@ test('fails on wrong CLI version or native architecture', () => {
       root,
       targetArchitecture: 'x64',
       expectedOpenCodeVersion: '1.17.18',
+      expectedOpenCodeRepository: 'internetisalie/opencode',
       runCliVersion: () => '1.17.17',
     }), /OpenCode CLI version mismatch/);
     writeElf(path.join(root, 'resources/app.asar.unpacked/node_modules/pty.node'), 'arm64');
@@ -88,6 +117,7 @@ test('fails on wrong CLI version or native architecture', () => {
       root,
       targetArchitecture: 'x64',
       expectedOpenCodeVersion: '1.17.18',
+      expectedOpenCodeRepository: 'internetisalie/opencode',
       runCliVersion: () => '1.17.18',
     }), /Native module architecture mismatch/);
   } finally {

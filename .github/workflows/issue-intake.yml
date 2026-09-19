@@ -19,6 +19,9 @@ jobs:
     permissions:
       contents: read
       issues: write
+      packages: read
+    env:
+      NODE_AUTH_TOKEN: ${{ github.token }}
     steps:
       - name: Generate bot app token
         id: app-token

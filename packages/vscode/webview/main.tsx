@@ -2,6 +2,7 @@ import { createVSCodeAPIs } from './api';
 import { createRemovalTombstones } from './inlineCommentRemovals';
 import { resolveCommentTarget } from './inlineCommentTarget';
 import { onCommand, onThemeChange, postBridgeNotification, proxyApiRequest, proxySessionMessageRequest, sendBridgeMessage, startSseProxy, stopSseProxy } from './api/bridge';
+import { openCodeProxyPath } from './api/openCodeProxyPath';
 import { vscodeStreamPerfCount, vscodeStreamPerfMeasure, vscodeStreamPerfObserve } from './api/streamPerf';
 import { extractBodyBase64, extractBodyText, extractJsonBody, hasInitBody } from './requestBodyTransport';
 import type { RuntimeAPIs } from '@openchamber/ui/lib/api/types';
@@ -1214,7 +1215,7 @@ window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
       return originalFetch(input as RequestInfo, init);
     }
 
-    const suffixPath = `${targetUrl.pathname.replace(/^\/api/, '')}${targetUrl.search}`;
+    const suffixPath = openCodeProxyPath(targetUrl);
 
     const headersFromRequest = input instanceof Request ? headersToRecord(input.headers) : {};
     const headersFromInit = headersToRecord(init?.headers);

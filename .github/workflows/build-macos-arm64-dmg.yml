@@ -16,6 +16,13 @@ on:
         required: false
         default: ""
 
+permissions:
+  contents: read
+  packages: read
+
+env:
+  NODE_AUTH_TOKEN: ${{ github.token }}
+
 jobs:
   build-macos-dmg-arm64-electron:
     name: Build Electron DMG (arm64, ${{ inputs.macos_version }})
@@ -40,7 +47,7 @@ jobs:
       - name: Get bundled OpenCode CLI version
         id: opencode_cli_version
         run: |
-          VERSION=$(node -p "require('./package.json').dependencies['@opencode-ai/sdk']")
+          VERSION=$(node -e "import('./packages/electron/scripts/opencode-cli-release.mjs').then(({ resolveBundledOpenCodeRelease }) => { const release = resolveBundledOpenCodeRelease(); console.log(release.repository.replace('/', '-') + '-' + release.version); })")
           echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Cache bundled OpenCode CLI artifact
@@ -84,6 +91,7 @@ jobs:
           bun run build:web-assets
           bun run prepare:opencode-cli
           bun run verify:opencode-cli
+          bun run prepare:opencode-pty-plugin
           bun run bundle:main
           bun run rebuild:native
           ./node_modules/.bin/electron-builder --mac --arm64 --publish=never

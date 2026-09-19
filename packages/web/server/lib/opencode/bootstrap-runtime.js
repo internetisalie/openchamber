@@ -93,7 +93,6 @@ export const createBootstrapRuntime = (dependencies) => {
     registerCommonRequestMiddleware(app, { express, verboseRequestLogs });
 
     registerAgentToolRoutes(app, { express, agentToolRuntime });
-
     registerAuthAndAccessRoutes(app, {
       express,
       tunnelAuthController,

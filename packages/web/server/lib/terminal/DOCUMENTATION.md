@@ -44,6 +44,17 @@ HTTP remains the authenticated command plane for create, resize, appearance upda
 
 The WebSocket path must remain in both `isUrlAuthWebSocketPath` and relay `ALLOWED_WS_PATHS`. The client must use `getRuntimeUrlResolver().websocket()` and `openRuntimeWebSocket`; direct local URLs or raw browser WebSockets break relay and URL-token authentication.
 
+## Agent PTY Browser
+
+The Terminal view also has a read-only Agent PTYs source backed by
+`@internetisalie/opencode-pty-bridge`. Managed OpenCode loads the bridge as a
+plugin. OpenChamber preserves `/api/plugins/opencode-pty-bridge/*` while proxying
+the request and adds the active OpenCode server credentials. Browser, Electron,
+VS Code, hosted mobile, and Capacitor therefore use their existing authenticated
+runtime transport. The browser cannot write input, spawn, resize, kill, or clean
+up these PTYs. External OpenCode exposes the source when its owner configures the
+same bridge package.
+
 ## Verification
 
 Run:
