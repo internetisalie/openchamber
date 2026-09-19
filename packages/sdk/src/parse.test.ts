@@ -200,6 +200,50 @@ describe('parseManifest', () => {
     }
   });
 
+  test('accepts exact OpenCode plugin declarations and derives the opencode grant', () => {
+    const result = parseManifest({
+      apiVersion: 1,
+      contributes: {
+        panel: validBlock.contributes.panel,
+        openCode: {
+          plugins: [
+            { id: 'zeta-tools', methods: ['POST', 'GET'] },
+            { id: 'example-plugin', methods: ['GET'] },
+          ],
+        },
+      },
+    });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.manifest.contributes.openCode?.plugins).toEqual([
+        { id: 'zeta-tools', methods: ['POST', 'GET'] },
+        { id: 'example-plugin', methods: ['GET'] },
+      ]);
+      expect(requestedGuestCapabilities(result.manifest.contributes)).toEqual(['opencode']);
+    }
+  });
+
+  test('rejects malformed, duplicate, oversized, or non-strict OpenCode plugin declarations', () => {
+    const attempt = (openCode: unknown) => parseManifestJson(JSON.stringify({
+      apiVersion: 1,
+      contributes: { panel: validBlock.contributes.panel, openCode },
+    }));
+    const cases = [
+      { plugins: [] },
+      { plugins: [{ id: 'Upper', methods: ['GET'] }] },
+      { plugins: [{ id: 'example-plugin', methods: [] }] },
+      { plugins: [{ id: 'example-plugin', methods: ['GET', 'GET'] }] },
+      { plugins: [{ id: 'example-plugin', methods: ['HEAD'] }] },
+      { plugins: [{ id: 'example-plugin', methods: ['GET'], headers: { Authorization: 'x' } }] },
+      { plugins: [{ id: 'example-plugin', methods: ['GET'] }], token: 'secret' },
+      { plugins: [{ id: 'example-plugin', methods: ['GET'] }, { id: 'example-plugin', methods: ['POST'] }] },
+      { plugins: new Array(9).fill(null).map((_, index) => ({ id: `plugin-${index}`, methods: ['GET'] })) },
+    ];
+    for (const openCode of cases) {
+      expect(attempt(openCode)).toMatchObject({ ok: false, code: 'invalid-opencode' });
+    }
+  });
+
   test('rejects filesystem patterns that are relative, escape, or are empty', () => {
     const attempt = (filesystem: unknown) => parseManifest({
       apiVersion: 1,

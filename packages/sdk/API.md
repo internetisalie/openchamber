@@ -144,6 +144,7 @@ Access tokens never appear in `ready` or in request results.
 | `oauthStart`      | —                                 | `Promise<void>`                | Open provider authorize URL (or first-party Linear)                                   |
 | `oauthDisconnect` | —                                 | `Promise<void>`                | Drop guest tokens / Linear connection                                                 |
 | `request`         | `{ method, path, query?, body? }` | `Promise<{ status, body }>`    | HTTPS call on declared `apiOrigin`. Host attaches auth                                |
+| `openCodeRequest` | `{ pluginId, method, path, query?, body? }` | `Promise<{ status, body }>` | Call a manifest-declared OpenCode plugin route. The host keeps OpenCode credentials private |
 | `serviceRequest`    | same shape as `request`           | `Promise<{ status, body }>`    | Proxy to this guest's local service on loopback                                         |
 | `serviceStatus`     | —                                 | `Promise<{ status }>`          | `stopped`                                                                             |
 | `readFile`        | `path: string`                    | `Promise<{ content }>`         | UTF-8 text. Relative = inside the open project (`files`); `/…` or `~/…` = declared `filesystem` pattern |
@@ -215,7 +216,7 @@ Storage belongs to the extension on the connected server and needs no extra capa
 
 **File path rules** (`readFile` / `writeFile` / `listDir` / `stat`): a relative path (`README.md`, `src/x.ts`, `.`) is joined to the project that is open when the call runs and needs the `files` capability; no open project is `NO_DIRECTORY`. A path starting with `/` or `~/` is outside the project, must match one of the package's `contributes.filesystem` globs, and needs the `filesystem` capability. Any `..` segment, a backslash, or a symlink that leads out of the allowed tree is `BAD_PATH`. The host compares canonical (realpath) paths, so `/tmp/x` on macOS is checked as `/private/tmp/x` and a pattern's literal prefix is canonicalized the same way. Content over 2 000 000 characters is `FILE_TOO_LARGE` in both directions; an OS permission refusal is `DENIED`.
 
-`request` **/** `serviceRequest` **rules:** `method` is `GET` | `POST` | `PUT` | `PATCH` | `DELETE`. `path` must start with `/`, no scheme, stay on the declared origin (cloud API or service loopback). Guest parses `body` as JSON when needed.
+`request` **/** `serviceRequest` **/** `openCodeRequest` **rules:** `method` is `GET` | `POST` | `PUT` | `PATCH` | `DELETE`. `path` must start with `/`, contain no scheme or traversal, and stay under the host-selected origin. `openCodeRequest` additionally requires an exact `contributes.openCode.plugins` ID/method declaration and the scoped `opencode` grant. It accepts no headers; OpenCode and OpenChamber credentials remain in the host. Its response body is capped at 4 MiB; the other request APIs keep their 256,000-character cap.
 
 ### Toast buttons
 
@@ -411,6 +412,7 @@ Used by the OpenChamber host and by tools that validate packages. Guests rarely 
       ],
       "commands": [{ "name": "task", "description": "Attach a task by id" }],
       "tools": [{ "match": "mcp.tasks.*", "name": "Tasks", "icon": "checkbox-circle", "title": "{input.id}", "output": "table", "columns": ["id", "title", "status"] }],
+      "openCode": { "plugins": [{ "id": "task-tools", "methods": ["GET", "POST"] }] },
       "integration": { /* oauth | token | host */ },
       "service": { /* optional local process */ }
     }
@@ -433,6 +435,7 @@ Used by the OpenChamber host and by tools that validate packages. Guests rarely 
 | `actions` | Optional, 1–8 entries, unique kebab-case `id`, `label` 1–40 chars, optional `icon` with the `panel.icon` rules, `where: "message" \| "session"`, optional `mode: "open" \| "background"`. Message actions may narrow `roles` to `["user"]` / `["assistant"]`, default both. Session actions may request `payload: ["messages"]`, adding the `conversation` capability. Invalid shape is `invalid-actions`. Default `open` mode opens the guest with `ready.item`, using the attach dialog for `attach: "dialog"` and the rail otherwise. `background` calls `onAction` in a temporary hidden frame; see Background actions above |
 | `commands`            | Optional, 1–8 entries, unique `name` matching `/^[a-z][a-z0-9-]{0,23}$/`, optional `description` 1–80 chars (`invalid-commands`). `/name args` in the chat box calls `onResolve` instead of the model and attaches what it returns. A name the composer already has (built-in, OpenCode command, skill) is ignored with a console warning |
 | `tools`               | Optional, 1–16 entries that say how the extension's tool calls look in the chat. `match` is the full tool name OpenCode reports (`mcp.jira.search`, `jira_search`), 1–128 chars of `[A-Za-z0-9_.:-]`, with `*` allowed once at the end as a suffix wildcard (`mcp.jira.*`). Optional `name` (1–40, the header title when `title` is absent or renders empty), `icon` (Remixicon name or package `.svg` path, same rules as `panel.icon`; the SVG is drawn in the text colour at the glyph size), `title` / `subtitle` templates (1–200, `{input.path}` / `{output.path}` / `{metadata.path}` placeholders, a missing path renders empty, values are cut at 200), `output` `"auto"` (default) \| `"text"` \| `"json"` \| `"markdown"` \| `"code"` \| `"table"`, `language` (code only), `columns` (table only, 1–16 dotted paths; rows are the output array or `output.items`). Bad shape is `invalid-tools`. An exact `match` beats a wildcard from any extension; among equals the first extension wins. Only an enabled, fully approved extension's rules apply |
+| `openCode.plugins` | Optional, 1–8 strict entries `{ id, methods }`. IDs are unique lowercase kebab-case; methods are unique, non-empty subsets of `GET`, `POST`, `PUT`, `PATCH`, `DELETE`. Adds `opencode`; approval scope records sorted exact IDs and methods, so widening requires reapproval (`invalid-opencode`) |
 | `filesystem`          | Optional, 1–16 globs, each 1–256 chars, starting with `/` or `~/`; `**` spans folders, `*` / `?` stay in one segment; no `..`, empty segment, or backslash (`invalid-filesystem`). Declaring it adds the `filesystem` capability and the dialog lists the globs |
 | `integration`         | Optional. Exactly one of `oauth`, `token`, or `host` (`provider: "linear"` only)                                                                                                     |
 | `service`               | Optional. `entry` must be a built `.js` file on disk. `provides: ["browser"]` makes it the agent's browser when the user selects it; `surface: true` gives it a host-drawn live panel the user can take over (no `panel.entry` then). Neither needs a panel or background entry. See [GUEST_SERVICES.md](https://github.com/openchamber/openchamber/blob/main/packages/sdk/GUEST_SERVICES.md) |
@@ -476,7 +479,7 @@ Extra keys are dropped, not forwarded.
 
 Constants: `OPENCHAMBER_SDK_CHANNEL`, `OPENCHAMBER_SDK_API_VERSION`, `HOST_LINEAR_API_ORIGIN`, `GUEST_*_MAX`, `GUEST_REQUEST_TIMEOUT_MS`, `GUEST_ACTIONS_MAX`, `GUEST_COMMANDS_MAX`, `GUEST_COMMAND_NAME`, `GUEST_TOOLS_MAX`, `GUEST_TOOL_MATCH`, `GUEST_TOOL_OUTPUTS`, `HOST_REQUEST_ERROR_CODES`, `SERVICE_STATUS_VALUES`, `SESSION_LIFECYCLE_PHASES`, `START_SESSION_SENT`.
 
-Wire messages added for these: host → guest `resolve` (`{ id, payload: { command, args } }`), guest → host `resolve-result` (`{ id, payload: { item } | { error } }`, no `result` comes back) and `badge` (`{ count }`).
+Wire messages include guest → host `opencode-request` (`{ pluginId, method, path, query?, body? }`), host → guest `resolve` (`{ id, payload: { command, args } }`), guest → host `resolve-result` (`{ id, payload: { item } | { error } }`, no `result` comes back), and `badge` (`{ count }`).
 
 ---
 

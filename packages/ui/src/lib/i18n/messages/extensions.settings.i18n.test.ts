@@ -78,6 +78,8 @@ const requiredKeys = [
   'settings.extensions.capability.filesystem.detail',
   'settings.extensions.capability.conversation',
   'settings.extensions.capability.conversation.detail',
+  'settings.extensions.capability.opencode',
+  'settings.extensions.capability.opencode.detail',
   'settings.extensions.toast.approved',
   'settings.extensions.toast.approveFailed',
   'settings.extensions.service.warning',

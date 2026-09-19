@@ -70,6 +70,9 @@ Git installs also accept SSH addresses such as `git@github.com:owner/extension.g
       ],
       "commands": [{ "name": "task", "description": "Attach a task by id" }],
       "tools": [{ "match": "mcp.tasks.*", "name": "Tasks", "icon": "checkbox-circle", "title": "{input.id}", "output": "table", "columns": ["id", "title", "status"] }],
+      "openCode": {
+        "plugins": [{ "id": "task-tools", "methods": ["GET", "POST"] }]
+      },
       "integration": {
         "name": "Acme",
         "description": "Tasks from Acme",
@@ -94,6 +97,7 @@ Git installs also accept SSH addresses such as `git@github.com:owner/extension.g
 - `actions` is optional: menu entries on messages (`where: "message"`, optionally only `roles: ["assistant"]`) and on sessions (`where: "session"`). By default, picking one opens your page with that message or session in `ctx.item` (`kind: "message"` with the text, or `kind: "session"`; add `payload: ["messages"]` to get the conversation too). Set `mode: "background"` to call `onAction` without opening UI, as shown below. Up to 8.
 - `commands` is optional: slash commands for the chat box, up to 8. `/task DEMO-2` calls your `host.onResolve` handler instead of the model; return a chip to attach it, or `null` for nothing. A name the app already has is ignored.
 - `tools` is optional: how your tool calls look in the chat, up to 16, no code. `match` is the tool name OpenCode reports (`mcp.tasks.*` matches every tool under that prefix); `name` and `icon` (a Remixicon name or an SVG inside the folder, like `panel.icon`) set the header, `title` and `subtitle` are templates like `{input.id}` or `{output.total} open`, and `output` picks the body: `text`, `json`, `markdown`, `code` (with `language`), or `table` (with `columns`, rows from the output array or `output.items`). Leave `output` out to keep the app's own detection.
+- `openCode.plugins` is optional: up to 8 OpenCode plugin IDs with the exact HTTP methods this extension may call through `host.openCodeRequest`. IDs are unique lowercase kebab-case; methods are non-empty and unique. Declaring it adds the `opencode` approval capability, and widening either list requires approval again.
 - `capabilities` lists what needs the user's approval: `prompt` to send messages, `sessions` to create sessions and worktrees, `files` to read and write inside the open project, `model` for one-off text generation with the user's Small Model (`host.generate`, no session involved). An `integration` adds `network`, a `service` adds `service`, `filesystem` patterns (like `["~/.config/opencode/opencode.json"]`) add `filesystem`, which lets `readFile`, `writeFile`, `listDir`, and `stat` reach those paths outside the project, and a session action with `payload: ["messages"]` adds `conversation`. The user approves the whole list once at install. Calls outside it fail with `NOT_GRANTED`.
 - `integration` is optional. It adds a card at Settings → Integrations. `token` takes a pasted API token (`scheme: "bearer"` for `Authorization: Bearer`, `"basic"` for a username and token pair as Jira Cloud wants), `oauth` runs an authorize flow with a pasted client id, and `host: { "provider": "linear" }` reuses the Linear account already connected in OpenChamber. The page never sees the token; OpenChamber makes the calls through `host.request`.
 - `service` is optional. It declares a local process OpenChamber starts next to the extension. It runs with the user's full access and no sandbox, so declare one only when the page cannot do the job. See [GUEST_SERVICES.md](./GUEST_SERVICES.md). With `provides: ["browser"]` the service can stand in for the agent's browser, so agents browse on the server with no desktop app open; the user picks it in Settings → OpenChamber Tools. With `surface: true` it shows a live picture in the rail that the user can watch and take over, and hand back to the agent; add `panel.entry` (with `panel.dock` and `panel.size`) for your own controls docked beside it.
@@ -181,6 +185,13 @@ try {
     await host.oauthStart();
   }
 }
+
+const snapshot = await host.openCodeRequest({
+  pluginId: 'task-tools',
+  method: 'GET',
+  path: '/snapshot',
+  query: { session: 'current' },
+});
 
 await host.toast({ kind: 'info', message: 'Hello' });
 await host.compose({ text: 'Ask about the latest diff' });

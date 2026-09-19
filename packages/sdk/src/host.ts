@@ -31,6 +31,7 @@ import {
   type GuestItem,
   type GuestMessage,
   type GuestRequest,
+  type OpenCodeRequest,
   type GuestRequestResult,
   type GuestSettings,
   type HostReadyContext,
@@ -129,6 +130,7 @@ export type HostClient = {
   oauthStart: () => Promise<void>;
   oauthDisconnect: () => Promise<void>;
   request: (request: GuestRequest) => Promise<GuestRequestResult>;
+  openCodeRequest: (request: OpenCodeRequest) => Promise<GuestRequestResult>;
   serviceRequest: (request: GuestRequest) => Promise<GuestRequestResult>;
   serviceStatus: () => Promise<ServiceStatusResult>;
   /**
@@ -661,6 +663,18 @@ export const connectHost = (options: HostClientOptions = {}): HostClient => {
     }) : rejectBadPath()).then((result) => {
       if (!isGuestRequestResult(result)) {
         throw new HostRequestError('HOST_REJECTED', 'Host request result was empty.');
+      }
+      return result;
+    }),
+    openCodeRequest: (payload) => (isGuestRequestPath(payload.path) ? send({
+      channel: OPENCHAMBER_SDK_CHANNEL,
+      v: OPENCHAMBER_SDK_API_VERSION,
+      type: 'opencode-request',
+      id: nextId(ids),
+      payload,
+    }) : rejectBadPath()).then((result) => {
+      if (!isGuestRequestResult(result)) {
+        throw new HostRequestError('HOST_REJECTED', 'Host OpenCode request result was empty.');
       }
       return result;
     }),

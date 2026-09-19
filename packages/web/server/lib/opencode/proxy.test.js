@@ -8,7 +8,22 @@ import {
   createDirectoryQueryCanonicalizer,
   createOpenCodeProxyAgent,
   normalizeForwardedDirectoryHeaders,
+  rewriteOpenCodeProxyPath,
 } from './proxy.js';
+
+describe('rewriteOpenCodeProxyPath', () => {
+  it('preserves and normalizes OpenCode plugin routes', () => {
+    expect(rewriteOpenCodeProxyPath('/api/plugins/example-plugin/snapshot?full=true')).toBe('/api/plugins/example-plugin/snapshot?full=true');
+    expect(rewriteOpenCodeProxyPath('/plugins/example-plugin/snapshot?full=true')).toBe('/api/plugins/example-plugin/snapshot?full=true');
+    expect(rewriteOpenCodeProxyPath('/plugins')).toBe('/api/plugins');
+  });
+
+  it('keeps stripping the API prefix from ordinary routes', () => {
+    expect(rewriteOpenCodeProxyPath('/api/config/providers')).toBe('/config/providers');
+    expect(rewriteOpenCodeProxyPath('/api')).toBe('/');
+    expect(rewriteOpenCodeProxyPath('/session')).toBe('/session');
+  });
+});
 
 describe('createDirectoryQueryCanonicalizer', () => {
   it('canonicalizes directory query params and preserves other params', async () => {

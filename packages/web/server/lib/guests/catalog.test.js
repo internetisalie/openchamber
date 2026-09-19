@@ -339,6 +339,7 @@ describe('actions and commands on the public row', () => {
     pkg.openchamber.contributes.tools = [
       { match: 'mcp.tasks.*', name: 'Tasks', icon: 'checkbox-circle', title: '{input.id}', output: 'table', columns: ['id', 'title'] },
     ];
+    pkg.openchamber.contributes.openCode = { plugins: [{ id: 'example-plugin', methods: ['GET', 'POST'] }] };
     await fs.writeFile(path.join(root, 'package.json'), JSON.stringify(pkg));
 
     const inspected = await inspectGuestPackage(root);
@@ -348,7 +349,8 @@ describe('actions and commands on the public row', () => {
       expect(row.actions).toEqual(pkg.openchamber.contributes.actions);
       expect(row.commands).toEqual(pkg.openchamber.contributes.commands);
       expect(row.tools).toEqual(pkg.openchamber.contributes.tools);
-      expect(row.capabilities).toEqual({ requested: ['conversation'], granted: [] });
+      expect(row.openCode).toEqual(pkg.openchamber.contributes.openCode);
+      expect(row.capabilities).toEqual({ requested: ['conversation', 'opencode'], granted: [] });
     }
 
     pkg.openchamber.contributes.actions = [{ id: 'x', label: 'X', where: 'message', payload: ['messages'] }];

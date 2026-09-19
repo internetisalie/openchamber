@@ -45,6 +45,7 @@ import { useGuestFrameUrl } from '@/lib/guests/useGuestFrameUrl';
 import { useGuestItemStore } from '@/lib/guests/item-store';
 import { fetchHostLinearIssueGet } from '@/lib/guests/host-linear-request';
 import { loadGuestServiceStatus, proxyGuestServiceRequest } from '@/lib/guests/service';
+import { proxyGuestOpenCodeRequest } from '@/lib/guests/opencode-request';
 import {
   AUTHORIZATION_POLL_MS,
   AUTHORIZATION_WATCH_MS,
@@ -524,6 +525,7 @@ export const PluginPane: React.FC<PluginPaneProps> = ({
           }
           return result;
         },
+        openCodeRequest: (request) => proxyGuestOpenCodeRequest(guestRef.current, request),
         serviceRequest: (request) => {
           if (!guestEnabledRef.current) {
             return Promise.resolve({
