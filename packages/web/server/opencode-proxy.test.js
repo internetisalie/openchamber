@@ -3,7 +3,7 @@ import { EventEmitter } from 'node:events';
 import express from 'express';
 import path from 'path';
 
-import { createSseBoundaryTracker, registerOpenCodeProxy, writeSseChunkWithBackpressure } from './lib/opencode/proxy.js';
+import { createSseBoundaryTracker, registerOpenCodeProxy, rewriteOpenCodeProxyPath, writeSseChunkWithBackpressure } from './lib/opencode/proxy.js';
 
 const listen = (app, host = '127.0.0.1') => new Promise((resolve, reject) => {
   const server = app.listen(0, host, () => resolve(server));
@@ -265,6 +265,59 @@ describe('OpenCode proxy SSE forwarding', () => {
     const pluginResponse = await fetch(`http://127.0.0.1:${proxyPort}/api/plugins/example-plugin/status`);
     expect(pluginResponse.status).toBe(206);
     expect(await pluginResponse.text()).toBe('plugin-ok');
+  });
+
+  it('preserves plugin API path, query, status, headers, body, and authentication', async () => {
+    let seenQuery = null;
+    let seenAuthorization = null;
+    const upstream = express();
+    upstream.get('/api/plugins/opencode-pty-bridge/sessions/:id/output', (req, res) => {
+      seenQuery = req.query;
+      seenAuthorization = req.headers.authorization ?? null;
+      res.status(206).setHeader('X-Bridge-Revision', '14').json({
+        schemaVersion: 1,
+        revision: 14,
+        reset: false,
+        data: 'ready\n',
+      });
+    });
+    upstreamServer = await listen(upstream);
+    const upstreamPort = upstreamServer.address().port;
+    const externalBaseUrl = `http://127.0.0.1:${upstreamPort}`;
+
+    const app = express();
+    registerOpenCodeProxy(app, {
+      fs: {},
+      os: {},
+      path,
+      OPEN_CODE_READY_GRACE_MS: 0,
+      getRuntime: () => ({
+        openCodePort: upstreamPort,
+        openCodeBaseUrl: externalBaseUrl,
+        isOpenCodeReady: true,
+        openCodeNotReadySince: 0,
+        isRestartingOpenCode: false,
+      }),
+      getOpenCodeAuthHeaders: () => ({ Authorization: 'Bearer bridge-token' }),
+      buildOpenCodeUrl: (requestPath) => `${externalBaseUrl}${requestPath}`,
+      ensureOpenCodeApiPrefix: () => {},
+    });
+    proxyServer = await listen(app);
+    const proxyPort = proxyServer.address().port;
+
+    const response = await fetch(`http://127.0.0.1:${proxyPort}/api/plugins/opencode-pty-bridge/sessions/pty-1/output?after=12`);
+
+    expect(response.status).toBe(206);
+    expect(response.headers.get('x-bridge-revision')).toBe('14');
+    expect(seenQuery).toEqual({ after: '12' });
+    expect(seenAuthorization).toBe('Bearer bridge-token');
+    expect(await response.json()).toEqual({ schemaVersion: 1, revision: 14, reset: false, data: 'ready\n' });
+  });
+
+  it('rewrites only ordinary OpenCode API paths', () => {
+    expect(rewriteOpenCodeProxyPath('/api/session?directory=%2Frepo')).toBe('/session?directory=%2Frepo');
+    expect(rewriteOpenCodeProxyPath('/api/plugins/opencode-pty-bridge/sessions')).toBe('/api/plugins/opencode-pty-bridge/sessions');
+    expect(rewriteOpenCodeProxyPath('/plugins/opencode-pty-bridge/sessions')).toBe('/api/plugins/opencode-pty-bridge/sessions');
   });
 
   it('replays parsed urlencoded bodies to generic API proxy requests', async () => {
