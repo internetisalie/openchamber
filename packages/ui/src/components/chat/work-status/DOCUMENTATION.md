@@ -101,6 +101,7 @@ which requests only providers enabled for this panel.
 | Changed files | `useGitStore` status `files` + `diffStats` | working tree, not session-authored edits |
 | PR + checks | `useFreshestPrVisualSummaryForBranch` | **read-only**; follows the freshest remote-keyed entry for the branch |
 | Subagents | child sessions from `useAllLiveSessions` (`parentID`) + `useAllSessionStatuses`; per-row cost from `useSubagentCostRollup`'s `perChildCost` (each child's own subtree total, so nested subagent-of-subagent cost rolls up under its immediate parent row) | |
+| Agent PTYs | `opencode-pty-bridge` schema v1 through `runtimeFetch` | Exact `parentSessionId` match; read-only output |
 | Subagent blockers | directory `permission` / `question` maps | one subscription covers every child |
 | Usage | `components/usage/usageGroups.ts` over `useQuotaStore` | grouping shared with the mobile popover; presentation is not |
 | Linked threads | `lib/linkedIssues.ts` over session metadata | written by the flows that attach an issue or PR |
@@ -234,7 +235,7 @@ Ordering is by durability, not category:
    throughput, duration, TTFT, cache hit rate) — true for as long as the session
    is open. Usage sits here rather than lower down because a spent quota stops the
    work outright;
-2. **Subagents**, **Tasks** — what is happening right now;
+2. **Subagents**, **Agent PTYs**, **Tasks** — what is happening right now;
 3. **MCP**, **Pinned messages**, **Context sources** — supporting material.
 
 ## Switching it off
@@ -281,6 +282,26 @@ just collapsed it.
 Its expanded list is capped at eight rows and scrolls independently, so a
 session with many subagents does not crowd every section below it out of the
 panel.
+
+## Agent PTYs
+
+The PTYs section probes `GET /api/plugins/opencode-pty-bridge` and renders only
+sessions whose authoritative `parentSessionId` equals the selected OpenCode
+session. It does not infer ownership from command, working directory, or title.
+Only a capability `404` means the bridge is absent; authentication, network,
+server, and malformed-response failures stay visible and cannot clear the last
+successful list.
+
+Session polling runs only while the Work Status panel is visible. Output polling
+runs only while a PTY's read-only dialog is open. Both loops are single-flight,
+pause while the page is hidden or offline, reject stale responses after a
+runtime switch, and preserve successful state during transient failures. A
+runtime switch clears all PTY state before the new runtime is queried.
+
+The dialog reuses `TerminalViewport` for ANSI rendering, selection, links, and
+scrolling. Its read-only mode suppresses terminal input and exposes no spawn,
+write, resize, kill, or cleanup action. OpenChamber never logs PTY output,
+commands, arguments, or working directories.
 
 ## Tasks
 

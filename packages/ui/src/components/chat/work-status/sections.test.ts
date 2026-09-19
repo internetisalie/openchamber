@@ -111,6 +111,10 @@ describe('sanitizeWorkStatusHiddenSections', () => {
     expect(sanitizeWorkStatusHiddenSections(['usage', 'usage'])).toEqual(['usage']);
   });
 
+  test('accepts the PTY section as a persisted visibility choice', () => {
+    expect(sanitizeWorkStatusHiddenSections(['ptys'])).toEqual(['ptys']);
+  });
+
   test('treats a non-array payload as default hidden preference', () => {
     expect(sanitizeWorkStatusHiddenSections(undefined)).toEqual([]);
     expect(sanitizeWorkStatusHiddenSections('usage')).toEqual([]);

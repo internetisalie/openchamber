@@ -252,4 +252,38 @@ describe('TerminalViewport chunk replay integration', () => {
     expect(terminalEvents.at(-1)).toEqual({ type: 'dispose' });
     root = createRoot(host);
   });
+
+  test('suppresses terminal input in read-only mode', async () => {
+    let emitData: (data: string) => void = () => {
+      throw new Error('terminal surface was not created');
+    };
+    const input: string[] = [];
+    const readOnlySurface: TerminalSurfaceFactory = (_mount, options) => {
+      emitData = options.onData;
+      return Promise.resolve(new TerminalSurfaceDouble());
+    };
+
+    await act(async () => {
+      root.render(
+        <I18nProvider>
+          <TerminalViewport
+            sessionKey="read-only"
+            chunks={[]}
+            onInput={(data) => input.push(data)}
+            onResize={() => undefined}
+            theme={theme}
+            monoFont="system-mono"
+            fontFamily="Menlo"
+            fontSize={14}
+            readOnly
+            createSurface={readOnlySurface}
+          />
+        </I18nProvider>,
+      );
+    });
+    await flushSurfaceLoad();
+    emitData('blocked');
+
+    expect(input).toEqual([]);
+  });
 });

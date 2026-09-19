@@ -112,6 +112,7 @@ type Props = {
   enableTouchScroll?: boolean;
   autoFocus?: boolean;
   isVisible?: boolean;
+  readOnly?: boolean;
   /** Surface construction, injectable for tests. */
   createSurface?: TerminalSurfaceFactory;
 };
@@ -119,6 +120,7 @@ type Props = {
 const TerminalViewport = React.forwardRef<TerminalController, Props>(({
   sessionKey, chunks, onInput, onResize, onProvisionalSize, theme, monoFont, fontFamily, fontSize, className,
   enableTouchScroll = false, autoFocus = true, isVisible = true, createSurface = createGhosttySurface,
+  readOnly = false,
 }, ref) => {
   const { t } = useI18n();
   const containerRef = React.useRef<HTMLDivElement>(null);
@@ -128,12 +130,14 @@ const TerminalViewport = React.forwardRef<TerminalController, Props>(({
   const provisionalSizeCallbackRef = React.useRef(onProvisionalSize);
   const lastChunkRef = React.useRef<number | null>(null);
   const visibleRef = React.useRef(isVisible);
+  const readOnlyRef = React.useRef(readOnly);
   const labelsRef = React.useRef({ input: '', scrollbar: '' });
   const [ready, setReady] = React.useState(0);
   inputRef.current = onInput;
   resizeRef.current = onResize;
   provisionalSizeCallbackRef.current = onProvisionalSize;
   visibleRef.current = isVisible;
+  readOnlyRef.current = readOnly;
   labelsRef.current = {
     input: t('terminalView.viewport.inputAria'),
     scrollbar: t('terminalView.viewport.scrollbarAria'),
@@ -171,7 +175,7 @@ const TerminalViewport = React.forwardRef<TerminalController, Props>(({
           },
           labels: labelsRef.current,
           handleTouchPointer: ownsTouch,
-          onData: (data) => inputRef.current(data),
+          onData: (data) => { if (!readOnlyRef.current) inputRef.current(data); },
           onResize: (cols, rows) => resizeRef.current(cols, rows),
           onLinkActivate: (text) => {
             void openExternalUrl(text);
@@ -323,7 +327,7 @@ const TerminalViewport = React.forwardRef<TerminalController, Props>(({
     };
     const finish = (event: PointerEvent, focusOnTap: boolean) => {
       if (pointerId !== event.pointerId) return;
-      const shouldFocus = focusOnTap && gesture === 'pending';
+      const shouldFocus = !readOnlyRef.current && focusOnTap && gesture === 'pending';
       clearLongPress();
       if (container.hasPointerCapture(event.pointerId)) container.releasePointerCapture(event.pointerId);
       pointerId = null;
