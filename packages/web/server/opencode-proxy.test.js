@@ -225,10 +225,13 @@ describe('OpenCode proxy SSE forwarding', () => {
     expect(tracker.observe(Buffer.from('data: next\r\n\r\n'))).toBe(true);
   });
 
-  it('routes generic API requests through external OpenCode base URL', async () => {
+  it('routes ordinary and plugin API requests through the external OpenCode base URL', async () => {
     const upstream = express();
     upstream.get('/config/providers', (_req, res) => {
       res.json({ ok: true, source: 'external-host' });
+    });
+    upstream.get('/api/plugins/example-plugin/status', (_req, res) => {
+      res.status(206).send('plugin-ok');
     });
     upstreamServer = await listen(upstream);
     const upstreamPort = upstreamServer.address().port;
@@ -258,6 +261,10 @@ describe('OpenCode proxy SSE forwarding', () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual({ ok: true, source: 'external-host' });
+
+    const pluginResponse = await fetch(`http://127.0.0.1:${proxyPort}/api/plugins/example-plugin/status`);
+    expect(pluginResponse.status).toBe(206);
+    expect(await pluginResponse.text()).toBe('plugin-ok');
   });
 
   it('replays parsed urlencoded bodies to generic API proxy requests', async () => {

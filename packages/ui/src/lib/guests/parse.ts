@@ -3,6 +3,8 @@ import {
   GUEST_CAPABILITIES,
   GUEST_COMMANDS_MAX,
   GUEST_COMMAND_NAME,
+  GUEST_OPENCODE_PLUGINS_MAX,
+  GUEST_REQUEST_METHODS,
   GUEST_SERVICE_PROVIDES,
   GUEST_TOOLS_MAX,
   GUEST_TOOL_MATCH,
@@ -76,6 +78,15 @@ const guestToolSchema = z.object({
   columns: z.array(z.string().trim().min(1)).optional(),
 });
 
+const openCodeSchema = z.object({
+  plugins: z.array(z.object({
+    id: z.string().regex(PANEL_ID),
+    methods: z.array(z.enum(GUEST_REQUEST_METHODS)).min(1).max(GUEST_REQUEST_METHODS.length)
+      .refine((methods) => new Set(methods).size === methods.length),
+  }).strict()).min(1).max(GUEST_OPENCODE_PLUGINS_MAX)
+    .refine((plugins) => new Set(plugins.map((plugin) => plugin.id)).size === plugins.length),
+}).strict();
+
 export const guestUpdateSchema = z.object({
   version: z.string().trim().min(1).max(64),
 });
@@ -97,6 +108,7 @@ const installedGuestSchema = z.object({
   actions: z.array(guestActionSchema).max(GUEST_ACTIONS_MAX).optional(),
   commands: z.array(guestCommandSchema).max(GUEST_COMMANDS_MAX).optional(),
   tools: z.array(guestToolSchema).max(GUEST_TOOLS_MAX).optional(),
+  openCode: openCodeSchema.optional(),
   capabilities: z.object({
     requested: z.array(z.enum(GUEST_CAPABILITIES)),
     granted: z.array(z.enum(GUEST_CAPABILITIES)),

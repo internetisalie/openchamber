@@ -9,8 +9,8 @@ import { resolveIntegrationApi } from '@openchamber/sdk';
 const sortedUnique = (values) => [...new Set(values)].sort();
 
 /**
- * @param {{ filesystem?: string[], integration?: object, service?: { permissions?: { exec?: string[], sockets?: Array<{ id: string }> } } }} guest
- * @returns {{ filesystem?: string[], apiOrigin?: string, service?: { exec: string[], sockets: string[] } }}
+ * @param {{ filesystem?: string[], integration?: object, service?: { permissions?: { exec?: string[], sockets?: Array<{ id: string }> } }, openCode?: { plugins?: Array<{ id: string, methods: string[] }> } }} guest
+ * @returns {{ filesystem?: string[], apiOrigin?: string, service?: { exec: string[], sockets: string[] }, opencode?: Array<{ id: string, methods: string[] }> }}
  */
 export const guestGrantScope = (guest) => {
   const scope = {};
@@ -37,6 +37,11 @@ export const guestGrantScope = (guest) => {
       sockets: sortedUnique((guest.service.permissions?.sockets ?? []).map((binding) => binding.id)),
     };
   }
+  if (Array.isArray(guest.openCode?.plugins) && guest.openCode.plugins.length > 0) {
+    scope.opencode = guest.openCode.plugins
+      .map((plugin) => ({ id: plugin.id, methods: sortedUnique(plugin.methods) }))
+      .sort((a, b) => a.id.localeCompare(b.id));
+  }
   return scope;
 };
 
@@ -54,6 +59,10 @@ export const sameCredentialTarget = (stored, current) => (
 );
 
 const sameList = (a, b) => a.length === b.length && a.every((value, index) => value === b[index]);
+
+const sameOpenCode = (a, b) => a.length === b.length && a.every((plugin, index) => (
+  plugin.id === b[index]?.id && sameList(plugin.methods, b[index].methods)
+));
 
 /**
  * The grants that still hold for the package as it is now. A scoped
@@ -76,6 +85,9 @@ export const effectiveGrants = (granted, stored, current) => granted.filter((cap
     return Boolean(stored?.service)
       && sameList(stored.service.exec, current.service?.exec ?? [])
       && sameList(stored.service.sockets, current.service?.sockets ?? []);
+  }
+  if (capability === 'opencode') {
+    return Boolean(stored?.opencode) && sameOpenCode(stored.opencode, current.opencode ?? []);
   }
   return true;
 });
