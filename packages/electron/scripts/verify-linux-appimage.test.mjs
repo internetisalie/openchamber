@@ -70,6 +70,24 @@ test('verifies identity, version, and native payload architecture', () => {
   }
 });
 
+test('verifies an unpacked directory without AppImage desktop metadata', () => {
+  const root = createPayload();
+  try {
+    fs.rmSync(path.join(root, 'openchamber.desktop'));
+    const result = verifyExtractedPayload({
+      root,
+      targetArchitecture: 'x64',
+      expectedOpenCodeVersion: '1.17.18',
+      expectedOpenCodeRepository: 'internetisalie/opencode',
+      runCliVersion: () => '1.17.18',
+      verifyAppImageDesktop: false,
+    });
+    assert.equal(result.openCodeVersion, '1.17.18');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('fails when the packaged PTY plugin native dependency is missing', () => {
   const root = createPayload();
   try {
