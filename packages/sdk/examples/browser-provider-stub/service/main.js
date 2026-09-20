@@ -3,6 +3,7 @@ import http from "node:http";
 import { deflateSync } from "node:zlib";
 // packages/sdk/src/contract.ts
 var GUEST_FILE_STAT_KINDS = ["file", "directory", "other", "missing"];
+var GUEST_OPENCODE_RESPONSE_MAX = 4 * 1024 * 1024;
 var HOST_REQUEST_ERROR_CODES = [
   "HOST_UNAVAILABLE",
   "HOST_TIMEOUT",
