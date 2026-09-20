@@ -1,18 +1,23 @@
-name: Linux Electron Tarball
+name: Modular Linux Release
 
 on:
   push:
     branches:
       - linux-electron
+    tags:
+      - 'v*-internetisalie.*'
   workflow_dispatch:
 
 permissions:
   contents: read
 
 jobs:
-  build-linux-electron:
-    name: Build Linux Electron (x64 tarball)
+  build-linux-release:
+    name: Build Linux desktop and web packages
     runs-on: ubuntu-24.04
+    outputs:
+      archive_name: ${{ steps.archive.outputs.name }}
+      version: ${{ steps.version.outputs.app }}
     steps:
       - name: Checkout linux-electron
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
@@ -37,7 +42,15 @@ jobs:
       - name: Read application version
         id: version
         run: |
+          set -euo pipefail
           APP_VERSION=$(node -p "require('./packages/electron/package.json').version")
+          SDK_VERSION=$(node -p "require('./packages/sdk/package.json').version")
+          WEB_VERSION=$(node -p "require('./packages/web/package.json').version")
+          test "$SDK_VERSION" = "$APP_VERSION"
+          test "$WEB_VERSION" = "$APP_VERSION"
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            test "$GITHUB_REF_NAME" = "v$APP_VERSION"
+          fi
           echo "app=$APP_VERSION" >> "$GITHUB_OUTPUT"
 
       - name: Run focused Electron release tests
@@ -45,6 +58,45 @@ jobs:
         run: |
           bun run test:architecture
           bun run test:updater
+
+      - name: Build installable SDK and web packages
+        env:
+          PACKAGE_VERSION: ${{ steps.version.outputs.app }}
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts/npm
+          bun run --cwd packages/sdk build
+          bun run build:web
+          bun pm pack --cwd packages/sdk --destination "$GITHUB_WORKSPACE/artifacts/npm"
+          bun pm pack --cwd packages/web --destination "$GITHUB_WORKSPACE/artifacts/npm"
+          test -f "artifacts/npm/openchamber-sdk-$PACKAGE_VERSION.tgz"
+          test -f "artifacts/npm/openchamber-web-$PACKAGE_VERSION.tgz"
+
+      - name: Verify packed SDK and web installation
+        env:
+          PACKAGE_VERSION: ${{ steps.version.outputs.app }}
+        run: |
+          set -euo pipefail
+          CONSUMER=$(mktemp -d "$RUNNER_TEMP/openchamber-web-consumer.XXXXXX")
+          npm install --prefix "$CONSUMER" --no-audit --no-fund \
+            "$GITHUB_WORKSPACE/artifacts/npm/openchamber-sdk-$PACKAGE_VERSION.tgz" \
+            "$GITHUB_WORKSPACE/artifacts/npm/openchamber-web-$PACKAGE_VERSION.tgz"
+          cd "$CONSUMER"
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { readFileSync } from 'node:fs';
+          await import('@openchamber/sdk');
+          await import('@openchamber/sdk/ui');
+          await import('@openchamber/sdk/schemas');
+          const sdk = JSON.parse(readFileSync('node_modules/@openchamber/sdk/package.json', 'utf8'));
+          const web = JSON.parse(readFileSync('node_modules/@openchamber/web/package.json', 'utf8'));
+          assert.equal(sdk.version, process.env.PACKAGE_VERSION);
+          assert.equal(web.version, process.env.PACKAGE_VERSION);
+          assert.equal(web.dependencies['@openchamber/sdk'], process.env.PACKAGE_VERSION);
+          NODE
+          test "$(./node_modules/.bin/openchamber --version)" = "$PACKAGE_VERSION"
+          cd "$GITHUB_WORKSPACE/artifacts/npm"
+          sha256sum *.tgz > "openchamber-npm-packages-$PACKAGE_VERSION.sha256"
 
       - name: Build unpacked Linux application
         working-directory: packages/electron
@@ -84,3 +136,40 @@ jobs:
           if-no-files-found: error
           compression-level: 0
           retention-days: 14
+
+      - name: Upload SDK and web packages
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: OpenChamber-${{ steps.version.outputs.app }}-npm-packages
+          path: artifacts/npm/*
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
+
+  publish-custom-release:
+    name: Publish custom release assets
+    if: ${{ startsWith(github.ref, 'refs/tags/v') }}
+    needs: build-linux-release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download Linux tarball
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: ${{ needs.build-linux-release.outputs.archive_name }}
+          path: release-assets
+
+      - name: Download SDK and web packages
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: OpenChamber-${{ needs.build-linux-release.outputs.version }}-npm-packages
+          path: release-assets
+
+      - name: Upload custom release assets
+        uses: softprops/action-gh-release@3bb12739c298aeb8a4eeaf626c5b8d85266b0e65 # v2.6.2
+        with:
+          tag_name: ${{ github.ref_name }}
+          prerelease: true
+          files: release-assets/*
+          fail_on_unmatched_files: true
