@@ -110,9 +110,23 @@ Drawing a panel and reading the current session need no permission. Anything tha
 | `files` | read and write files inside the open project (`readFile`, `writeFile`, `listDir`, `stat` with a relative path) |
 | `model` | one-off text generation with the user's Small Model (`generate`), outside any session |
 
-Four more are added for you: `network` when you declare an `integration`, `service` when you declare a `service`, `filesystem` when you declare `filesystem` patterns, and `conversation` when a session action asks for the messages (see [Actions, commands, and the badge](#actions-commands-and-the-badge)).
+Five more are added for you: `network` when you declare an `integration`, `service` when you declare a `service`, `filesystem` when you declare `filesystem` patterns, `opencode` when you declare OpenCode plugin routes, and `conversation` when a session action asks for the messages (see [Actions, commands, and the badge](#actions-commands-and-the-badge)).
 
 The user sees the full list once, when they install the extension, and approves it or removes the extension. If a new version asks for more, the dialog appears again. A call that needs a capability the user has not approved fails with `NOT_GRANTED`.
+
+### OpenCode plugin routes
+
+Declare each OpenCode plugin ID and HTTP method the extension needs. OpenChamber rejects undeclared plugins and methods before forwarding a request.
+
+```json
+"openCode": {
+  "plugins": [
+    { "id": "acme-tasks", "methods": ["GET", "POST"] }
+  ]
+}
+```
+
+Call the plugin with `host.openCodeRequest({ pluginId: "acme-tasks", method: "GET", path: "/tasks" })`. The request goes through the selected OpenCode runtime and never exposes its credentials to the iframe. Check `ctx.features.includes("openCodeRequest")` first. A host that omits the feature does not implement this transport.
 
 ## Generate text
 

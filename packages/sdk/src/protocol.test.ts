@@ -66,6 +66,7 @@ const readyPayload = {
       radius: '0.5625rem',
     },
   },
+  features: ['openCodeRequest'],
   locale: 'uk',
   directory: '/repo',
   session: { id: 'ses-1', title: 'Hello', busy: false },
@@ -102,6 +103,23 @@ describe('parseHostMessage', () => {
       type: 'ready',
       payload: readyPayload,
     });
+  });
+
+  test('defaults missing host features and rejects unknown features', () => {
+    const withoutFeatures = { ...readyPayload };
+    delete withoutFeatures.features;
+    expect(hostMessageSchema.parse({
+      channel: OPENCHAMBER_SDK_CHANNEL,
+      v: 1,
+      type: 'ready',
+      payload: withoutFeatures,
+    }).payload.features).toEqual([]);
+    expect(hostMessageSchema.safeParse({
+      channel: OPENCHAMBER_SDK_CHANNEL,
+      v: 1,
+      type: 'ready',
+      payload: { ...readyPayload, features: ['unknown'] },
+    }).success).toBe(false);
   });
 
   test('accepts a null directory', () => {

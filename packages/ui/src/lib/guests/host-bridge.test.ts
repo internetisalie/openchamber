@@ -1,8 +1,19 @@
 import { describe, expect, test } from 'bun:test';
 
-import { OPENCHAMBER_SDK_CHANNEL, type GuestMessage, type ResolveResultPayload, type StartSessionRequest, type ToastRequest } from '@openchamber/sdk';
+import {
+  connectHost,
+  OPENCHAMBER_SDK_CHANNEL,
+  type GuestMessage,
+  type HostFrame,
+  type ResolveResultPayload,
+  type StartSessionRequest,
+  type ToastRequest,
+} from '@openchamber/sdk';
+import { guestMessageSchema } from '@openchamber/sdk/schemas';
 import type { GuestFileProxyResult, GuestFileRequest } from './files.ts';
 import type { GuestGenerateProxyResult } from './generate.ts';
+import { proxyGuestOpenCodeRequest } from './opencode-request.ts';
+import type { InstalledGuest } from './types.ts';
 
 import {
   answerGuestMessage,
@@ -49,6 +60,71 @@ const effects = (overrides: Partial<BridgeEffects> = {}): BridgeEffects => ({
 });
 
 describe('answerGuestMessage', () => {
+  test('carries an SDK OpenCode request through the approved host boundary', async () => {
+    const events = new EventTarget();
+    const fetches: Array<{ url: string; init?: RequestInit }> = [];
+    const guest: InstalledGuest = {
+      id: 'agent-memory',
+      name: 'Agent Memory',
+      icon: 'brain',
+      entry: 'dist/index.html',
+      openCode: { plugins: [{ id: 'opencode-simple-memory', methods: ['PATCH'] }] },
+      capabilities: { requested: ['opencode'], granted: ['opencode'] },
+    };
+    const frame: HostFrame = {
+      addEventListener: (type: string, listener: EventListenerOrEventListenerObject, options?: boolean | AddEventListenerOptions) => {
+        events.addEventListener(type, listener, options);
+      },
+      removeEventListener: (type: string, listener: EventListenerOrEventListenerObject, options?: boolean | EventListenerOptions) => {
+        events.removeEventListener(type, listener, options);
+      },
+      parent: {
+        postMessage: (message) => {
+          void Promise.resolve().then(async () => {
+            const parsed = guestMessageSchema.parse(message);
+            const reply = await answerGuestMessage(parsed, effects({
+              openCodeRequest: (request) => proxyGuestOpenCodeRequest(guest, request, async (input, init) => {
+                fetches.push({ url: String(input), init });
+                return new Response('{"memory":{"id":"mem_1"}}', { status: 200 });
+              }),
+            }));
+            if (!reply) return;
+            events.dispatchEvent(new MessageEvent('message', { data: reply }));
+          });
+        },
+      },
+    };
+    const host = connectHost({ target: frame, acceptSource: () => true, requestTimeoutMs: 1_000 });
+
+    const updated = await host.openCodeRequest({
+      pluginId: 'opencode-simple-memory',
+      method: 'PATCH',
+      path: '/memories/mem_1',
+      query: { directory: '/repo with space' },
+      body: '{"scope":"project","title":"Updated"}',
+    });
+    expect(updated).toEqual({ status: 200, body: '{"memory":{"id":"mem_1"}}' });
+    try {
+      await host.openCodeRequest({
+        pluginId: 'opencode-simple-memory',
+        method: 'DELETE',
+        path: '/memories/mem_1',
+      });
+      throw new Error('Expected the undeclared method to be rejected.');
+    } catch (error) {
+      expect(error).toMatchObject({ code: 'NOT_GRANTED' });
+    }
+    expect(fetches).toEqual([{
+      url: '/api/plugins/opencode-simple-memory/memories/mem_1?directory=%2Frepo+with+space',
+      init: {
+        method: 'PATCH',
+        body: '{"scope":"project","title":"Updated"}',
+      },
+    }]);
+
+    host.dispose();
+  });
+
   test('forwards toast buttons and persistence to the host without awaiting a click', async () => {
     const request: ToastRequest = { kind: 'info', message: 'Summary', copy: { text: 'Source' }, dismiss: true, persistent: true };
     const seen: ToastRequest[] = [];

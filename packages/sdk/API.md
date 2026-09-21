@@ -81,6 +81,7 @@ Each returns an unsubscribe function. Late subscribers get the last known value 
 
 | Field          | Type                     | Meaning                                                                                  |
 | -------------- | ------------------------ | ---------------------------------------------------------------------------------------- |
+| `features`     | `HostFeature[]`          | Host operations available to this guest. Check for `openCodeRequest` before using that method |
 | `theme.mode`   | `'light'                 | 'dark'`                                                                                  |
 | `theme.tokens` | surfaces, text, interaction states, `primary`, status colors, `font`, `mono`, `radius` | Pass to `applyHostReady` before mounting UI |
 | `locale`       | `string`                 | Host language tag                                                                        |

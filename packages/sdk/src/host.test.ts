@@ -44,6 +44,7 @@ const ready: HostMessage = {
   v: OPENCHAMBER_SDK_API_VERSION,
   type: 'ready',
   payload: {
+    features: ['openCodeRequest'],
     theme: {
       mode: 'dark',
       tokens: {
@@ -241,6 +242,23 @@ describe('connectHost', () => {
       locale = context.locale;
     });
     expect(locale).toBe('en');
+    host.dispose();
+  });
+
+  test('normalizes a legacy ready message without host features', () => {
+    const parent = createFrame();
+    const guest = createFrame();
+    guest.parent = parent.parent;
+    const host = connectHost({ target: guest, acceptSource: () => true });
+    const legacyPayload = { ...ready.payload };
+    delete legacyPayload.features;
+    guest.dispatch(new MessageEvent('message', { data: { ...ready, payload: legacyPayload } }));
+
+    let features: string[] | undefined;
+    host.onReady((context) => {
+      features = context.features;
+    });
+    expect(features).toEqual([]);
     host.dispose();
   });
 

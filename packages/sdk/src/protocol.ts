@@ -26,6 +26,7 @@ import {
   GUEST_GENERATE_PROMPT_MAX,
   GUEST_GENERATE_SYSTEM_MAX,
   GUEST_GENERATE_TEXT_MAX,
+  HOST_FEATURES,
   GUEST_FILE_PATH_MAX,
   GUEST_FILE_STAT_KINDS,
   GUEST_REQUEST_BODY_MAX,
@@ -206,6 +207,7 @@ const sessionItemSchema = z.object({
 const guestItemSchema = z.union([messageItemSchema, sessionItemSchema, attachPayloadSchema]).nullable();
 
 const readyPayloadSchema = z.object({
+  features: z.array(z.enum(HOST_FEATURES)).max(HOST_FEATURES.length).default([]),
   theme: z.object({
     mode: z.enum(['light', 'dark']),
     tokens: themeTokensSchema,
