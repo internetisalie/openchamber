@@ -175,6 +175,9 @@ directory as a `.tar.gz` with a SHA-256 file. Run it manually or push a
 directory build; the upstream AppImage release and updater still use the
 default Electron targets. The tarball can be launched from its extracted
 `openchamber` executable, but it does not use the AppImage updater path.
+The same fork release attaches installable `@openchamber/sdk` and
+`@openchamber/web` npm archives with checksums after testing them in a clean
+consumer directory.
 
 ## Platform Notes
 
