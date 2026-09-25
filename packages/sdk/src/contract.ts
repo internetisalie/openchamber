@@ -71,13 +71,19 @@ export type GuestConnection = {
 
 export type GuestSettings = Record<string, string>;
 
-export type GuestRequestMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+export const GUEST_REQUEST_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE'] as const;
+
+export type GuestRequestMethod = (typeof GUEST_REQUEST_METHODS)[number];
 
 export type GuestRequest = {
   method: GuestRequestMethod;
   path: string;
   query?: Record<string, string>;
   body?: string;
+};
+
+export type OpenCodeRequest = GuestRequest & {
+  pluginId: string;
 };
 
 export type GuestRequestResult = {
@@ -186,7 +192,12 @@ export const EMPTY_GUEST_CONNECTION: GuestConnection = {
   account: '',
 };
 
+export const HOST_FEATURES = ['openCodeRequest'] as const;
+export type HostFeature = typeof HOST_FEATURES[number];
+
 export type HostReadyContext = {
+  /** Host operations this OpenChamber build implements. */
+  features: HostFeature[];
   theme: HostTheme;
   locale: string;
   directory: string | null;
@@ -364,6 +375,8 @@ export const GUEST_SETTING_VALUE_MAX = 2_000;
 export const GUEST_REQUEST_PATH_MAX = 2_000;
 export const GUEST_REQUEST_BODY_MAX = 64_000;
 export const GUEST_REQUEST_RESPONSE_MAX = 256_000;
+/** OpenCode plugins may return large JSON-escaped payloads. */
+export const GUEST_OPENCODE_RESPONSE_MAX = 4 * 1024 * 1024;
 export const GUEST_REQUEST_TIMEOUT_MS = 20_000;
 /** Guest file path, in characters. */
 export const GUEST_FILE_PATH_MAX = 1_024;
@@ -612,6 +625,7 @@ export type GuestCloseMessage = GuestCall<'close'>;
 export type GuestOauthStartMessage = GuestCall<'oauth-start'>;
 export type GuestOauthDisconnectMessage = GuestCall<'oauth-disconnect'>;
 export type GuestRequestMessage = GuestCall<'request', GuestRequest>;
+export type GuestOpenCodeRequestMessage = GuestCall<'opencode-request', OpenCodeRequest>;
 export type GuestServiceRequestMessage = GuestCall<'service-request', GuestRequest>;
 export type GuestServiceStatusMessage = GuestCall<'service-status'>;
 export type GuestFileReadMessage = GuestCall<'file-read', FileReadRequest>;
@@ -647,6 +661,7 @@ export type GuestMessage =
   | GuestOauthStartMessage
   | GuestOauthDisconnectMessage
   | GuestRequestMessage
+  | GuestOpenCodeRequestMessage
   | GuestServiceRequestMessage
   | GuestServiceStatusMessage
   | GuestFileReadMessage

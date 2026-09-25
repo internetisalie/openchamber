@@ -27,7 +27,13 @@ export type DirectoryOwner = {
   projectId: string;
   projectRoot: string;
   scopeDirectory: string;
-  kind: 'project' | 'worktree';
+  kind: 'project' | 'worktree' | 'sandbox';
+};
+
+const ownerKindRank: Record<DirectoryOwner['kind'], number> = {
+  project: 2,
+  worktree: 1,
+  sandbox: 0,
 };
 
 export type SessionOwnershipIndex = {
@@ -41,7 +47,7 @@ export type SessionOwnershipIndex = {
 const shouldReplaceOwner = (existing: DirectoryOwner | undefined, candidate: DirectoryOwner): boolean => {
   if (!existing) return true;
   if (candidate.kind !== existing.kind) {
-    return candidate.kind === 'project';
+    return ownerKindRank[candidate.kind] > ownerKindRank[existing.kind];
   }
   if (candidate.projectRoot.length !== existing.projectRoot.length) {
     return candidate.projectRoot.length > existing.projectRoot.length;
@@ -70,6 +76,7 @@ export const createSessionOwnershipIndex = (
   isVSCode: boolean,
   archivedSessions: SessionOwnershipRecord[] = [],
   authoritativeProjects: readonly AuthoritativeOpenCodeProject[] = [],
+  workspaceDirectoriesByProject: ReadonlyMap<string, readonly string[]> = new Map(),
 ): SessionOwnershipIndex => {
   const ownerByDirectory = new Map<string, DirectoryOwner>();
   const projectByRoot = new Map<string, Project>();
@@ -90,6 +97,21 @@ export const createSessionOwnershipIndex = (
   }
 
   if (!isVSCode) {
+    for (const [projectPath, workspaceDirectories] of workspaceDirectoriesByProject) {
+      const projectRoot = normalizePath(projectPath);
+      const project = projectRoot ? projectByRoot.get(projectRoot) : undefined;
+      if (!project || !projectRoot) continue;
+      for (const workspaceDirectory of workspaceDirectories) {
+        const directory = normalizePath(workspaceDirectory);
+        if (!directory) continue;
+        setOwner(ownerByDirectory, directory, {
+          projectId: project.id,
+          projectRoot,
+          scopeDirectory: directory,
+          kind: 'sandbox',
+        });
+      }
+    }
     for (const [projectPath, worktrees] of availableWorktreesByProject) {
       const projectRoot = normalizePath(projectPath);
       const project = projectRoot ? projectByRoot.get(projectRoot) : undefined;
@@ -187,6 +209,7 @@ export const createSessionOwnershipIndex = (
     scopeTarget?: Map<string, Set<string>>,
   ): void => {
     for (const session of input) {
+      if (!isVSCode && session.projectID === 'global') continue;
       const exactOwner = resolveOwner(resolveSessionDirectory(session));
       const owner = exactOwner ?? (!isVSCode
         ? canonicalOwnerByOpenCodeProjectId.get(getOpenCodeProjectId(session) ?? '') ?? null

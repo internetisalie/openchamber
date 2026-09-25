@@ -14,6 +14,12 @@ const guest = {
     runtime: 'host',
     permissions: { exec: ['docker'], sockets: [{ id: 'docker', candidatesByPlatform: {} }] },
   },
+  openCode: {
+    plugins: [
+      { id: 'zeta', methods: ['POST', 'GET'] },
+      { id: 'example-plugin', methods: ['GET'] },
+    ],
+  },
 };
 
 describe('guestGrantScope', () => {
@@ -22,6 +28,10 @@ describe('guestGrantScope', () => {
       filesystem: ['~/.config/opencode/opencode.json', '~/notes/**'],
       apiOrigin: 'https://api.acme.example',
       service: { exec: ['docker'], sockets: ['docker'] },
+      opencode: [
+        { id: 'example-plugin', methods: ['GET'] },
+        { id: 'zeta', methods: ['GET', 'POST'] },
+      ],
     });
     expect(guestGrantScope({})).toEqual({});
     expect(guestGrantScope({ integration: { name: 'L', description: 'x', host: { provider: 'linear' } } }))
@@ -30,7 +40,7 @@ describe('guestGrantScope', () => {
 });
 
 describe('effectiveGrants', () => {
-  const granted = ['prompt', 'filesystem', 'network', 'service'];
+  const granted = ['prompt', 'filesystem', 'network', 'service', 'opencode'];
 
   test('keeps every grant while the scope is what the user approved', () => {
     const scope = guestGrantScope(guest);
@@ -40,11 +50,15 @@ describe('effectiveGrants', () => {
   test('drops a scoped grant when the package widened it', () => {
     const approved = guestGrantScope(guest);
     const wider = guestGrantScope({ ...guest, filesystem: ['~/**'] });
-    expect(effectiveGrants(granted, approved, wider)).toEqual(['prompt', 'network', 'service']);
+    expect(effectiveGrants(granted, approved, wider)).toEqual(['prompt', 'network', 'service', 'opencode']);
     const moved = guestGrantScope({ ...guest, integration: { ...guest.integration, token: { apiOrigin: 'https://evil.example' } } });
-    expect(effectiveGrants(granted, approved, moved)).toEqual(['prompt', 'filesystem', 'service']);
+    expect(effectiveGrants(granted, approved, moved)).toEqual(['prompt', 'filesystem', 'service', 'opencode']);
     const moreExec = guestGrantScope({ ...guest, service: { ...guest.service, permissions: { exec: ['docker', 'kubectl'], sockets: guest.service.permissions.sockets } } });
-    expect(effectiveGrants(granted, approved, moreExec)).toEqual(['prompt', 'filesystem', 'network']);
+    expect(effectiveGrants(granted, approved, moreExec)).toEqual(['prompt', 'filesystem', 'network', 'opencode']);
+    const moreMethods = guestGrantScope({ ...guest, openCode: { plugins: [{ id: 'example-plugin', methods: ['GET', 'POST'] }, { id: 'zeta', methods: ['POST', 'GET'] }] } });
+    expect(effectiveGrants(granted, approved, moreMethods)).toEqual(['prompt', 'filesystem', 'network', 'service']);
+    const morePlugins = guestGrantScope({ ...guest, openCode: { plugins: [...guest.openCode.plugins, { id: 'other', methods: ['GET'] }] } });
+    expect(effectiveGrants(granted, approved, morePlugins)).toEqual(['prompt', 'filesystem', 'network', 'service']);
   });
 
   test('never counts a scoped grant without a recorded scope', () => {

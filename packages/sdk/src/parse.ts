@@ -11,6 +11,7 @@ import {
   GUEST_COMMAND_NAME,
   GUEST_FILESYSTEM_PATTERNS_MAX,
   GUEST_FILESYSTEM_PATTERN_MAX,
+  GUEST_OPENCODE_PLUGINS_MAX,
   GUEST_SERVICE_PROVIDES,
   GUEST_TOOLS_MAX,
   GUEST_TOOL_COLUMNS_MAX,
@@ -40,6 +41,7 @@ import {
   GUEST_STATUS_SECTION_HEIGHT_MIN,
   GUEST_STATUS_SECTION_TITLE_MAX,
 } from './manifest.ts';
+import { GUEST_REQUEST_METHODS } from './contract.ts';
 
 const isPanelIcon = (value: string): boolean => (
   PANEL_ID.test(value) || isGuestPackageSvgIcon(value)
@@ -257,6 +259,17 @@ const toolSchema = z.object({
 
 const toolsSchema = z.array(toolSchema).min(1).max(GUEST_TOOLS_MAX);
 
+const openCodePluginSchema = z.object({
+  id: z.string().trim().regex(PANEL_ID).max(64),
+  methods: z.array(z.enum(GUEST_REQUEST_METHODS)).min(1).max(GUEST_REQUEST_METHODS.length)
+    .refine((methods) => new Set(methods).size === methods.length, { message: 'methods must be unique' }),
+}).strict();
+
+const openCodeSchema = z.object({
+  plugins: z.array(openCodePluginSchema).min(1).max(GUEST_OPENCODE_PLUGINS_MAX)
+    .refine((plugins) => uniqueBy(plugins, (plugin) => plugin.id), { message: 'plugin ids must be unique' }),
+}).strict();
+
 const contributesSchema = z.object({
   panel: panelSchema,
   background: z.object({
@@ -281,6 +294,7 @@ const contributesSchema = z.object({
   actions: actionsSchema.optional(),
   commands: commandsSchema.optional(),
   tools: toolsSchema.optional(),
+  openCode: openCodeSchema.optional(),
 });
 
 /**
@@ -299,6 +313,7 @@ const runtimeContributions = (contributes: z.output<typeof contributesSchema>): 
   if (contributes.filesystem !== undefined) declared.push('filesystem');
   if (contributes.actions !== undefined) declared.push('actions');
   if (contributes.commands !== undefined) declared.push('commands');
+  if (contributes.openCode !== undefined) declared.push('openCode');
   return declared;
 };
 
@@ -475,6 +490,12 @@ const failureFromIssue = (issue: { path: ReadonlyArray<PropertyKey>; code: strin
     return fail(
       'invalid-tools',
       'contributes.tools lists up to 16 entries with a match of 1 to 128 characters ([A-Za-z0-9_.:-], "*" only at the end), optional name (1 to 40), icon (Remixicon name or package .svg path), title and subtitle templates (1 to 200), output "auto" | "text" | "json" | "markdown" | "code" | "table", language (code only), and columns (table only, 1 to 16).',
+    );
+  }
+  if (path.startsWith('contributes.openCode')) {
+    return fail(
+      'invalid-opencode',
+      'contributes.openCode.plugins lists 1 to 8 strict entries with a unique lowercase kebab-case id and unique non-empty HTTP methods.',
     );
   }
   if (path.startsWith('contributes.integration')) {

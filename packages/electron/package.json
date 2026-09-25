@@ -41,6 +41,7 @@
     "verify:opencode-cli": "node ./scripts/verify-opencode-cli.mjs --staged",
     "verify:opencode-cli:packaged": "node ./scripts/verify-opencode-cli.mjs --packaged",
     "verify:linux-appimage": "node ./scripts/verify-linux-appimage.mjs",
+    "verify:linux-directory": "node ./scripts/verify-linux-appimage.mjs --directory",
     "bundle:main": "bun ./scripts/bundle-main.mjs",
     "generate:macos-icon": "node ./scripts/generate-macos-icon-assets.cjs",
     "rebuild:native": "node ./scripts/rebuild-native.mjs",

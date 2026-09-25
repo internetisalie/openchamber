@@ -25,10 +25,10 @@ beforeEach(() => {
 describe('issue #3175 browser capture while the agent works in the background', () => {
   test('an agent browser.open creates the tab without revealing the panel', () => {
     expect(contextPanelSource).toContain(
-      'openContextBrowser(effectiveDirectory, url, { reveal: false })',
+      'openAgentBrowserTab(effectiveDirectory, url)',
     );
 
-    useUIStore.getState().openContextBrowser(DIRECTORY, 'https://example.com', { reveal: false });
+    useUIStore.getState().openAgentBrowserTab(DIRECTORY, 'https://example.com');
 
     const panel = useUIStore.getState().contextPanelByDirectory[DIRECTORY];
     expect(panel.isOpen).toBe(false);

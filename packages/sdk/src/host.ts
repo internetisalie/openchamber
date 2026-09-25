@@ -33,6 +33,7 @@ import {
   type GuestItem,
   type GuestMessage,
   type GuestRequest,
+  type OpenCodeRequest,
   type GuestRequestResult,
   type GuestSettings,
   type HostReadyContext,
@@ -138,6 +139,7 @@ export type HostClient = {
   oauthStart: () => Promise<void>;
   oauthDisconnect: () => Promise<void>;
   request: (request: GuestRequest) => Promise<GuestRequestResult>;
+  openCodeRequest: (request: OpenCodeRequest) => Promise<GuestRequestResult>;
   serviceRequest: (request: GuestRequest) => Promise<GuestRequestResult>;
   serviceStatus: () => Promise<ServiceStatusResult>;
   /**
@@ -270,17 +272,21 @@ export const connectHost = (options: HostClientOptions = {}): HostClient => {
     }
 
     if (message.type === 'ready') {
-      lastReady = message.payload;
-      lastLifecycle = lifecycleFromSession(message.payload.session);
-      emit(readyListeners, message.payload);
-      emit(directoryListeners, message.payload.directory);
-      emit(sessionListeners, message.payload.session);
+      const context = {
+        ...message.payload,
+        features: Array.isArray(message.payload.features) ? message.payload.features : [],
+      };
+      lastReady = context;
+      lastLifecycle = lifecycleFromSession(context.session);
+      emit(readyListeners, context);
+      emit(directoryListeners, context.directory);
+      emit(sessionListeners, context.session);
       if (lastLifecycle) {
         emit(lifecycleListeners, lastLifecycle);
       }
-      emit(connectionListeners, message.payload.connection);
-      emit(settingsListeners, message.payload.settings);
-      emit(itemListeners, message.payload.item);
+      emit(connectionListeners, context.connection);
+      emit(settingsListeners, context.settings);
+      emit(itemListeners, context.item);
       return;
     }
 
@@ -685,6 +691,18 @@ export const connectHost = (options: HostClientOptions = {}): HostClient => {
     }) : rejectBadPath()).then((result) => {
       if (!isGuestRequestResult(result)) {
         throw new HostRequestError('HOST_REJECTED', 'Host request result was empty.');
+      }
+      return result;
+    }),
+    openCodeRequest: (payload) => (isGuestRequestPath(payload.path) ? send({
+      channel: OPENCHAMBER_SDK_CHANNEL,
+      v: OPENCHAMBER_SDK_API_VERSION,
+      type: 'opencode-request',
+      id: nextId(ids),
+      payload,
+    }) : rejectBadPath()).then((result) => {
+      if (!isGuestRequestResult(result)) {
+        throw new HostRequestError('HOST_REJECTED', 'Host OpenCode request result was empty.');
       }
       return result;
     }),

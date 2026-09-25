@@ -71,6 +71,18 @@ export const createOpenCodeProxyAgent = (target) => (
     : new http.Agent(OPENCODE_AGENT_OPTIONS)
 );
 
+/** Keep native plugin routes under /api while preserving legacy API stripping. */
+export const rewriteOpenCodeProxyPath = (requestPath) => {
+  if (requestPath === '/plugins' || requestPath.startsWith('/plugins/')) {
+    return `/api${requestPath}`;
+  }
+  if (requestPath === '/api/plugins' || requestPath.startsWith('/api/plugins/')) {
+    return requestPath;
+  }
+  if (requestPath === '/api') return '/';
+  return requestPath.startsWith('/api/') ? requestPath.slice(4) : requestPath;
+};
+
 /**
  * Lazily resolves the proxy agent, memoized per scheme.
  *

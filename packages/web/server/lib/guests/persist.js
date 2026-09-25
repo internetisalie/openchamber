@@ -41,9 +41,13 @@ const capabilityScopeSchema = z.object({
     exec: z.array(z.string().min(1)),
     sockets: z.array(z.string().min(1)),
   }).optional(),
+  opencode: z.array(z.object({
+    id: z.string().min(1),
+    methods: z.array(z.string().min(1)),
+  })).optional(),
 });
 
-/** @returns {Record<string, { filesystem?: string[], apiOrigin?: string, service?: { exec: string[], sockets: string[] } }>} */
+/** @returns {Record<string, { filesystem?: string[], apiOrigin?: string, service?: { exec: string[], sockets: string[] }, opencode?: Array<{ id: string, methods: string[] }> }>} */
 const knownScopesOnly = (scopes) => {
   const cleaned = {};
   for (const [guestId, raw] of Object.entries(scopes)) {

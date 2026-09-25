@@ -44,6 +44,7 @@ const ready: HostMessage = {
   v: OPENCHAMBER_SDK_API_VERSION,
   type: 'ready',
   payload: {
+    features: ['openCodeRequest'],
     theme: {
       mode: 'dark',
       tokens: {
@@ -241,6 +242,23 @@ describe('connectHost', () => {
       locale = context.locale;
     });
     expect(locale).toBe('en');
+    host.dispose();
+  });
+
+  test('normalizes a legacy ready message without host features', () => {
+    const parent = createFrame();
+    const guest = createFrame();
+    guest.parent = parent.parent;
+    const host = connectHost({ target: guest, acceptSource: () => true });
+    const legacyPayload = { ...ready.payload };
+    delete legacyPayload.features;
+    guest.dispatch(new MessageEvent('message', { data: { ...ready, payload: legacyPayload } }));
+
+    let features: string[] | undefined;
+    host.onReady((context) => {
+      features = context.features;
+    });
+    expect(features).toEqual([]);
     host.dispose();
   });
 
@@ -697,6 +715,33 @@ describe('connectHost', () => {
       status: 200,
       body: '{"user":{"username":"ada"}}',
     });
+    host.dispose();
+  });
+
+  test('posts an OpenCode plugin request and resolves its payload', async () => {
+    const parent = createFrame();
+    const guest = createFrame();
+    guest.parent = parent.parent;
+    const host = connectHost({ target: guest, acceptSource: () => true });
+    const pending = host.openCodeRequest({ pluginId: 'example-plugin', method: 'GET', path: '/snapshot', query: { full: 'true' } });
+    const posted = parent.posted[1];
+    expect(posted).toMatchObject({
+      type: 'opencode-request',
+      payload: { pluginId: 'example-plugin', method: 'GET', path: '/snapshot', query: { full: 'true' } },
+    });
+    if (posted?.type !== 'opencode-request') throw new Error('expected opencode-request');
+    guest.dispatch(new MessageEvent('message', {
+      data: {
+        channel: OPENCHAMBER_SDK_CHANNEL,
+        v: 1,
+        type: 'result',
+        id: posted.id,
+        ok: true,
+        payload: { status: 206, body: '{"snapshot":"ok"}' },
+      },
+    }));
+    await expect(pending).resolves.toEqual({ status: 206, body: '{"snapshot":"ok"}' });
+    await expect(host.openCodeRequest({ pluginId: 'example-plugin', method: 'GET', path: '/../config' })).rejects.toMatchObject({ code: 'BAD_PATH' });
     host.dispose();
   });
 

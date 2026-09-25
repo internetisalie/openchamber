@@ -50,14 +50,25 @@ const installMinimalDom = () => {
   };
 };
 
-const session = (id: string, directory: string | null): Session => {
+const session = (id: string, directory: string | null, projectID = 'project'): Session => {
   // SAFETY: Sidebar projection reads only id, directory, and time from session fixtures.
   return {
     id,
     directory,
+    projectID,
     time: { created: 1, updated: 1 },
   } as Session;
 };
+
+const managedChatSession = (id: string): Session => ({
+  id,
+  projectID: 'global',
+  directory: `/home/.config/openchamber/chats/2026-08-24/${id}`,
+  title: 'Managed chat',
+  time: { created: 1, updated: 1 },
+  cost: 0,
+  tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
+});
 
 describe('projectSidebarActiveSessions', () => {
   test('keeps case-insensitive membership local to projection without rewriting request paths', () => {
@@ -142,6 +153,40 @@ describe('projectSidebarActiveSessions', () => {
       isVSCode: true,
     })).toEqual([]);
   });
+
+  test('classifies authoritative global-project sessions outside configured project ownership', () => {
+    const global = session('global', '/workspace/known', 'global');
+    const regular = session('regular', '/workspace/known');
+
+    const partition = partitionSidebarSessions([global, regular], false, true);
+
+    expect(partition.globalSessions.map((entry) => entry.id)).toEqual(['global']);
+    expect(partition.projectSessions.map((entry) => entry.id)).toEqual(['regular']);
+    expect(projectSidebarActiveSessions({
+      globalActiveSessions: [global, regular],
+      liveSessions: [],
+      knownDirectories: new Set(['/workspace/known']),
+      isVSCode: false,
+    }).map((entry) => entry.id)).toEqual(['regular']);
+  });
+
+  test('keeps VS Code global-project records under existing workspace filtering', () => {
+    const known = session('known-global', '/workspace/known', 'global');
+    const unknown = session('unknown-global', '/workspace/unknown', 'global');
+
+    expect(partitionSidebarSessions([known], true)).toEqual({
+      projectSessions: [known],
+      chatSessions: [],
+      globalSessions: [],
+    });
+    expect(projectSidebarActiveSessions({
+      globalActiveSessions: [known, unknown],
+      liveSessions: [],
+      knownDirectories: new Set(['/workspace/known']),
+      isVSCode: true,
+    }).map((entry) => entry.id)).toEqual(['known-global']);
+    expect(partitionSidebarSessions([known], false, false).projectSessions).toEqual([known]);
+  });
 });
 
 describe('projectSidebarCollection', () => {
@@ -195,26 +240,31 @@ describe('projectSidebarCollection', () => {
     expect(recentAfter.map((entry) => entry.id)).toEqual(['old-root']);
   });
 
-  test('keeps managed Chats in a dedicated projection and out of project and Recent ownership', () => {
-    const managed = session('managed', '/home/.config/openchamber/chats/2026-08-24/session-managed');
+  test('keeps a global-project managed Chat in Chats without duplicating it into Global, projects, or Recent', () => {
+    const managed = managedChatSession('session-managed');
     const project = session('project', '/workspace/a');
-    const projects = projectSidebarCollection({
+    const projection = buildSidebarSessionProjection({
       globalActiveSessions: [managed, project],
       liveSessions: [],
       knownDirectories: new Set(['/workspace/a']),
       isVSCode: false,
+      pinnedSessionIds: new Set(),
+      sessionOrderRanks: new Map(),
     });
 
-    expect(projects.map((entry) => entry.id)).toEqual(['project']);
-    expect(partitionSidebarSessions([managed, project], false).chatSessions.map((entry) => entry.id)).toEqual(['managed']);
-    expect(deriveRecentSessions(projects, new Set(['managed', 'project']), 200_000_000)
+    expect(projection.chatSessions.map((entry) => entry.id)).toEqual(['session-managed']);
+    expect(projection.globalSessions).toEqual([]);
+    expect(projection.projectSessions.map((entry) => entry.id)).toEqual(['project']);
+    expect(projection.orderedSessions.map((entry) => entry.id).sort()).toEqual(['project', 'session-managed']);
+    expect(new Set(projection.orderedSessions.map((entry) => entry.id)).size).toBe(2);
+    expect(deriveRecentSessions(projection.projectSessions, new Set(['session-managed', 'project']), 200_000_000)
       .map((entry) => entry.id)).toEqual(['project']);
   });
 
   test('keeps managed Chats out of the VS Code sidebar', () => {
-    const managed = session('managed', '/home/.config/openchamber/chats/2026-08-24/session-managed');
+    const managed = managedChatSession('session-managed');
 
-    expect(partitionSidebarSessions([managed], true)).toEqual({ projectSessions: [], chatSessions: [] });
+    expect(partitionSidebarSessions([managed], true)).toEqual({ projectSessions: [], chatSessions: [], globalSessions: [] });
     expect(projectSidebarCollection({
       globalActiveSessions: [managed],
       liveSessions: [],
@@ -280,6 +330,64 @@ describe('projectSidebarCollection', () => {
     expect(projection.chatSessions.map((entry) => entry.id)).toEqual(['managed-root', 'managed-child']);
     expect(projection.orderedSessions.map((entry) => entry.id)).toEqual(['managed-root', 'managed-child', 'project-root']);
     expect(projection.childrenMap.get('managed-root')?.map((entry) => entry.id)).toEqual(['managed-child']);
+  });
+
+  test('keeps Global hierarchy ordered and out of project and Recent projections', () => {
+    const globalRoot = { ...session('global-root', '/outside/root', 'global'), time: { created: 3, updated: 3 } };
+    const globalChild = {
+      ...session('global-child', '/outside/child', 'global'),
+      parentID: 'global-root',
+      time: { created: 2, updated: 2 },
+    };
+    const globalGrandchild = {
+      ...session('global-grandchild', '/outside/grandchild', 'global'),
+      parentID: 'global-child',
+      time: { created: 1, updated: 1 },
+    };
+    const projectRoot = { ...session('project-root', '/workspace/a'), time: { created: 4, updated: 4 } };
+
+    const projection = buildSidebarSessionProjection({
+      globalActiveSessions: [globalGrandchild, projectRoot, globalChild, globalRoot],
+      liveSessions: [],
+      knownDirectories: new Set(['/workspace/a']),
+      isVSCode: false,
+      pinnedSessionIds: new Set(),
+      sessionOrderRanks: new Map(),
+    });
+
+    expect(projection.globalSessions.map((entry) => entry.id)).toEqual([
+      'global-root',
+      'global-child',
+      'global-grandchild',
+    ]);
+    expect(projection.childrenMap.get('global-root')?.map((entry) => entry.id)).toEqual(['global-child']);
+    expect(projection.childrenMap.get('global-child')?.map((entry) => entry.id)).toEqual(['global-grandchild']);
+    expect(projection.projectSessions.map((entry) => entry.id)).toEqual(['project-root']);
+    expect(deriveRecentSessions(projection.projectSessions, new Set(['global-root', 'project-root']), 5)
+      .map((entry) => entry.id)).toEqual(['project-root']);
+  });
+
+  test('moves a session from Global to configured project ownership after authoritative migration', () => {
+    const input = {
+      liveSessions: [],
+      knownDirectories: new Set(['/workspace/a']),
+      isVSCode: false,
+      pinnedSessionIds: new Set<string>(),
+      sessionOrderRanks: new Map<string, number>(),
+    };
+    const before = buildSidebarSessionProjection({
+      ...input,
+      globalActiveSessions: [session('migrating', '/workspace/a', 'global')],
+    });
+    const after = buildSidebarSessionProjection({
+      ...input,
+      globalActiveSessions: [session('migrating', '/workspace/a', 'project-a')],
+    });
+
+    expect(before.globalSessions.map((entry) => entry.id)).toEqual(['migrating']);
+    expect(before.projectSessions).toEqual([]);
+    expect(after.globalSessions).toEqual([]);
+    expect(after.projectSessions.map((entry) => entry.id)).toEqual(['migrating']);
   });
 
 });

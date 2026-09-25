@@ -61,6 +61,7 @@ function installGuestScrollbarActivity(doc) {
 var GUEST_SCROLLBAR_SCRIPT = `(${installGuestScrollbarActivity.toString()})(document);`;
 // packages/sdk/src/contract.ts
 var GUEST_FILE_STAT_KINDS = ["file", "directory", "other", "missing"];
+var GUEST_OPENCODE_RESPONSE_MAX = 4 * 1024 * 1024;
 var HOST_REQUEST_ERROR_CODES = [
   "HOST_UNAVAILABLE",
   "HOST_TIMEOUT",

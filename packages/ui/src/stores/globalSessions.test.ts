@@ -162,14 +162,15 @@ describe('listGlobalSessionPages', () => {
 })
 
 describe('splitGlobalSessionsByArchived', () => {
-  test('classifies restored (falsy archived) records as active', () => {
+  test('classifies restored and post-archive activity as active', () => {
     const { active, archived } = splitGlobalSessionsByArchived([
       makeSession({ id: 'ses_active', time: { created: 1, updated: 20 } }),
       makeSession({ id: 'ses_archived', time: { created: 1, updated: 10, archived: 15 } }),
       makeSession({ id: 'ses_restored', time: { created: 1, updated: 5, archived: 0 } }),
+      makeSession({ id: 'ses_reused', time: { created: 1, updated: 20, archived: 15 } }),
     ])
 
-    expect(active.map((session) => session.id)).toEqual(['ses_active', 'ses_restored'])
+    expect(active.map((session) => session.id)).toEqual(['ses_active', 'ses_restored', 'ses_reused'])
     expect(archived.map((session) => session.id)).toEqual(['ses_archived'])
   })
 })

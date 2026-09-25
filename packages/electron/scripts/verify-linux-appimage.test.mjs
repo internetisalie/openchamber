@@ -59,6 +59,23 @@ test('verifies identity, version, and native payload architecture', () => {
   }
 });
 
+test('verifies an unpacked directory without AppImage desktop metadata', () => {
+  const root = createPayload();
+  try {
+    fs.rmSync(path.join(root, 'openchamber.desktop'));
+    const result = verifyExtractedPayload({
+      root,
+      targetArchitecture: 'x64',
+      expectedOpenCodeVersion: '1.17.18',
+      runCliVersion: () => '1.17.18',
+      verifyAppImageDesktop: false,
+    });
+    assert.equal(result.openCodeVersion, '1.17.18');
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+});
+
 test('fails on a missing native module', () => {
   const root = createPayload();
   try {

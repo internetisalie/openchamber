@@ -5,6 +5,7 @@ import { retry } from "@/sync/retry";
 import { stripSessionListDetails } from "@/sync/sanitize";
 import { startSessionLoadPerformanceEvent } from "@/sync/session-load-performance";
 import { isChatDirectoryPath } from '@/lib/chatDirectories';
+import { isSessionArchived } from '@/lib/sessionArchive';
 
 export type GlobalSessionRecord = Session & {
     project?: {
@@ -20,9 +21,6 @@ export const filterManagedChatsForRuntime = (sessions: Session[], vscode: boolea
         : sessions
 );
 
-/** OpenChamber owns archive state; a session is archived when it carries a timestamp. */
-const isArchivedSession = (session: GlobalSessionRecord): boolean => Boolean(session.time?.archived);
-
 /**
  * Split a session list into active and archived buckets. Restored sessions
  * carry `time.archived === 0` (see `UNARCHIVED_TIMESTAMP` in
@@ -35,7 +33,7 @@ export const splitGlobalSessionsByArchived = <T extends GlobalSessionRecord>(
     const active: T[] = [];
     const archived: T[] = [];
     for (const session of sessions) {
-        if (isArchivedSession(session)) archived.push(session);
+        if (isSessionArchived(session)) archived.push(session);
         else active.push(session);
     }
     return { active, archived };

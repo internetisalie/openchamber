@@ -23,6 +23,7 @@ It is not a one-time mount callback. Mount your UI and register subscriptions on
 
 | Field | What it is |
 | --- | --- |
+| `features` | host operations available to this extension. Check for `openCodeRequest` before calling that method. |
 | `theme.mode` | `light` or `dark` |
 | `theme.tokens` | the app's colours (surfaces, text, interaction states, primary, success/warning/error/info), `font`, `mono`, and `radius`. Pass this to `applyHostReady` before you mount UI. |
 | `locale` | the app language tag |
@@ -56,6 +57,7 @@ Access tokens never appear here or in a `request` result.
 | `oauthStart()` | open the provider's authorize page, or the Linear one for a `host: { provider: "linear" }` integration |
 | `oauthDisconnect()` | forget the stored token, or the Linear connection |
 | `request({ method, path, query?, body? })` | call your integration's `apiOrigin` with the user's token attached |
+| `openCodeRequest({ pluginId, method, path, query?, body? })` | call an approved route from an exact OpenCode plugin declared in your manifest |
 | `serviceRequest({ method, path, query?, body? })` | call your extension's local service (see `GUEST_SERVICES.md`) |
 | `serviceStatus()` | `stopped`, `starting`, `ready`, or `failed` |
 | `readFile(path)` | read a text file. Returns `{ content }`. |
