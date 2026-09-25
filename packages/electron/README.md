@@ -169,6 +169,13 @@ Build output goes to `packages/electron/dist`.
 
 macOS builds produce `dmg` and `zip` artifacts. Windows builds produce an NSIS installer. Linux builds produce an AppImage for the native x64 or arm64 host.
 
+The fork's `linux-tarball.yml` workflow also packages an x64 `linux-unpacked`
+directory as a `.tar.gz` with a SHA-256 file. Run it manually or push a
+`v<package-version>-internetisalie.<revision>` tag. The tarball is a portable
+directory build; the upstream AppImage release and updater still use the
+default Electron targets. The tarball can be launched from its extracted
+`openchamber` executable, but it does not use the AppImage updater path.
+
 ## Platform Notes
 
 macOS packaging needs Xcode/build tools for notarized builds and icon asset compilation.
