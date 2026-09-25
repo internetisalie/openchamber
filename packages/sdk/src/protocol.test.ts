@@ -34,6 +34,7 @@ test('background action messages round-trip and reject invalid payloads', () => 
 });
 
 const readyPayload = {
+  features: ['openCodeRequest'],
   theme: {
     mode: 'dark',
     tokens: {
@@ -102,6 +103,13 @@ describe('parseHostMessage', () => {
       type: 'ready',
       payload: readyPayload,
     });
+  });
+
+  test('defaults missing host features and rejects unknown features', () => {
+    const envelope = { channel: OPENCHAMBER_SDK_CHANNEL, v: 1, type: 'ready' };
+    expect(parseHostMessage({ ...envelope, payload: { ...readyPayload, features: undefined } }))
+      .toMatchObject({ type: 'ready', payload: { features: [] } });
+    expect(parseHostMessage({ ...envelope, payload: { ...readyPayload, features: ['unknown'] } })).toBeNull();
   });
 
   test('accepts a null directory', () => {

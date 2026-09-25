@@ -192,7 +192,12 @@ export const EMPTY_GUEST_CONNECTION: GuestConnection = {
   account: '',
 };
 
+export const HOST_FEATURES = ['openCodeRequest'] as const;
+export type HostFeature = (typeof HOST_FEATURES)[number];
+
 export type HostReadyContext = {
+  /** Host operations this OpenChamber build implements. */
+  features: HostFeature[];
   theme: HostTheme;
   locale: string;
   directory: string | null;

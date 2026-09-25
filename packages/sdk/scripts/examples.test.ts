@@ -76,7 +76,9 @@ describe('checked-in SDK examples', () => {
       });
       if (result.status !== 0) throw new Error(`${entry}: ${result.stderr}`);
       // Bun's unminified source comments are relative to the command's working directory.
-      const normalize = (source: string) => source.replace(/^\/\/ (?:packages\/sdk\/)?examples\//gm, '// examples/');
+      const normalize = (source: string) => source
+        .replace(/^\/\/ (?:packages\/sdk\/)?examples\//gm, '// examples/')
+        .replace(/^\/\/ (?:.*\/)?node_modules\/\.bun\//gm, '// node_modules/.bun/');
       expect(Bun.hash(normalize(await readFile(output, 'utf8')))).toBe(Bun.hash(normalize(await readFile(new URL(`${entry}.js`, examples), 'utf8'))));
     }
     } finally { await rm(temporary, { recursive: true, force: true }); }

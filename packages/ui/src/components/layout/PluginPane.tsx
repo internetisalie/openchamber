@@ -5,6 +5,7 @@ import {
   OPENCHAMBER_SDK_API_VERSION,
   EMPTY_GUEST_CONNECTION,
   GUEST_REQUEST_TIMEOUT_MS,
+  HOST_FEATURES,
   guestFileScope,
   type AttachIssueRequest,
   type GuestHostSurface,
@@ -185,6 +186,7 @@ export const PluginPane: React.FC<PluginPaneProps> = ({
 
   const readableColors = React.useMemo(() => getReadableThemeColors(currentTheme), [currentTheme]);
   const ready = React.useMemo<HostReadyContext>(() => ({
+    features: [...HOST_FEATURES],
     theme: {
       mode: currentTheme.metadata.variant === 'dark' ? 'dark' : 'light',
       tokens: {

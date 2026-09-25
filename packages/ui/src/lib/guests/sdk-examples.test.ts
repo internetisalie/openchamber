@@ -9,6 +9,7 @@ const examples = new URL('../../../../sdk/examples/', import.meta.url);
 const windows: Window[] = [];
 const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
 const context: HostReadyContext = {
+  features: ['openCodeRequest'],
   locale: 'en', directory: '/repo', session: null, surface: 'panel', connection: { connected: false, account: '' }, settings: {}, item: null,
   theme: { mode: 'light', tokens: {
     background: '#fff', elevated: '#fff', foreground: '#111', muted: '#666', subtle: '#eee', border: '#ccc', hover: '#eee',

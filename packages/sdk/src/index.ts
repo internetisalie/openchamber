@@ -223,6 +223,7 @@ export type {
   GuestHostSurface,
   HostConnectionMessage,
   HostDirectoryMessage,
+  HostFeature,
   HostItemMessage,
   HostMessage,
   HostReadyContext,
@@ -240,6 +241,7 @@ export type {
 } from './contract.ts';
 export {
   EMPTY_GUEST_CONNECTION,
+  HOST_FEATURES,
   GUEST_BADGE_MAX,
   GUEST_FRAME_HEIGHT_MAX,
   GUEST_ITEM_MESSAGE_TEXT_MAX,
