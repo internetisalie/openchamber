@@ -269,6 +269,53 @@ describe('OpenCode proxy SSE forwarding', () => {
     expect(await pluginResponse.text()).toBe('plugin-ok');
   });
 
+  it('preserves plugin API path, query, status, headers, body, and authentication', async () => {
+    let seenQuery = null;
+    let seenAuthorization = null;
+    const upstream = express();
+    upstream.get('/api/plugins/opencode-pty-bridge/sessions/:id/output', (req, res) => {
+      seenQuery = req.query;
+      seenAuthorization = req.headers.authorization ?? null;
+      res.status(206).setHeader('X-Bridge-Revision', '14').json({
+        schemaVersion: 1,
+        revision: 14,
+        reset: false,
+        data: 'ready\n',
+      });
+    });
+    upstreamServer = await listen(upstream);
+    const upstreamPort = upstreamServer.address().port;
+    const externalBaseUrl = `http://127.0.0.1:${upstreamPort}`;
+
+    const app = express();
+    registerOpenCodeProxy(app, {
+      fs: {},
+      os: {},
+      path,
+      OPEN_CODE_READY_GRACE_MS: 0,
+      getRuntime: () => ({
+        openCodePort: upstreamPort,
+        openCodeBaseUrl: externalBaseUrl,
+        isOpenCodeReady: true,
+        openCodeNotReadySince: 0,
+        isRestartingOpenCode: false,
+      }),
+      getOpenCodeAuthHeaders: () => ({ Authorization: 'Bearer bridge-token' }),
+      buildOpenCodeUrl: (requestPath) => `${externalBaseUrl}${requestPath}`,
+      ensureOpenCodeApiPrefix: () => {},
+    });
+    proxyServer = await listen(app);
+    const proxyPort = proxyServer.address().port;
+
+    const response = await fetch(`http://127.0.0.1:${proxyPort}/api/plugins/opencode-pty-bridge/sessions/pty-1/output?after=12`);
+
+    expect(response.status).toBe(206);
+    expect(response.headers.get('x-bridge-revision')).toBe('14');
+    expect(seenQuery).toEqual({ after: '12' });
+    expect(seenAuthorization).toBe('Bearer bridge-token');
+    expect(await response.json()).toEqual({ schemaVersion: 1, revision: 14, reset: false, data: 'ready\n' });
+  });
+
   it('replays parsed urlencoded bodies to generic API proxy requests', async () => {
     const upstream = express();
     upstream.post('/api/form', express.urlencoded({ extended: true }), (req, res) => {
