@@ -20,6 +20,7 @@ import {
   type GuestConnection,
   type GuestMessage,
   type GuestRequest,
+  type OpenCodeRequest,
   type GuestSettings,
   type HostMessage,
   type HostReadyContext,
@@ -67,6 +68,7 @@ type HostBridgeEffects = {
   oauthStart: () => Promise<boolean>;
   oauthDisconnect: () => Promise<boolean>;
   request: (request: GuestRequest) => Promise<GuestRequestProxyResult>;
+  openCodeRequest: (request: OpenCodeRequest) => Promise<GuestRequestProxyResult>;
   serviceRequest: (request: GuestRequest) => Promise<GuestRequestProxyResult>;
   serviceStatus: () => Promise<
     | { ok: true; result: { status: import('@openchamber/sdk').ServiceStatus } }
@@ -323,6 +325,13 @@ export const answerGuestMessage = async (
     }
     case 'request': {
       const result = await effects.request(message.payload);
+      if (!result.ok) {
+        return errorResult(message.id, result.message, result.code);
+      }
+      return okResult(message.id, result.result);
+    }
+    case 'opencode-request': {
+      const result = await effects.openCodeRequest(message.payload);
       if (!result.ok) {
         return errorResult(message.id, result.message, result.code);
       }

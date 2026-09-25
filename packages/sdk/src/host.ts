@@ -11,6 +11,7 @@ import {
   GUEST_GENERATE_SYSTEM_MAX,
   GUEST_GENERATE_TIMEOUT_MS,
   GUEST_REQUEST_TIMEOUT_MS,
+  GUEST_REQUEST_RESPONSE_MAX,
   GUEST_RESOLVE_ERROR_MAX,
   isGuestFilePath,
   isGuestRequestPath,
@@ -33,6 +34,7 @@ import {
   type GuestItem,
   type GuestMessage,
   type GuestRequest,
+  type OpenCodeRequest,
   type GuestRequestResult,
   type GuestSettings,
   type HostReadyContext,
@@ -138,6 +140,7 @@ export type HostClient = {
   oauthStart: () => Promise<void>;
   oauthDisconnect: () => Promise<void>;
   request: (request: GuestRequest) => Promise<GuestRequestResult>;
+  openCodeRequest: (request: OpenCodeRequest) => Promise<GuestRequestResult>;
   serviceRequest: (request: GuestRequest) => Promise<GuestRequestResult>;
   serviceStatus: () => Promise<ServiceStatusResult>;
   /**
@@ -686,6 +689,21 @@ export const connectHost = (options: HostClientOptions = {}): HostClient => {
       if (!isGuestRequestResult(result)) {
         throw new HostRequestError('HOST_REJECTED', 'Host request result was empty.');
       }
+      if (result.body.length > GUEST_REQUEST_RESPONSE_MAX) {
+        throw new HostRequestError('HOST_REJECTED', 'Host request result was too large.');
+      }
+      return result;
+    }),
+    openCodeRequest: (payload) => (isGuestRequestPath(payload.path) ? send({
+      channel: OPENCHAMBER_SDK_CHANNEL,
+      v: OPENCHAMBER_SDK_API_VERSION,
+      type: 'opencode-request',
+      id: nextId(ids),
+      payload,
+    }) : rejectBadPath()).then((result) => {
+      if (!isGuestRequestResult(result)) {
+        throw new HostRequestError('HOST_REJECTED', 'Host OpenCode request result was empty.');
+      }
       return result;
     }),
     serviceRequest: (payload) => (isGuestRequestPath(payload.path) ? send({
@@ -697,6 +715,9 @@ export const connectHost = (options: HostClientOptions = {}): HostClient => {
     }) : rejectBadPath()).then((result) => {
       if (!isGuestRequestResult(result)) {
         throw new HostRequestError('HOST_REJECTED', 'Host service request result was empty.');
+      }
+      if (result.body.length > GUEST_REQUEST_RESPONSE_MAX) {
+        throw new HostRequestError('HOST_REJECTED', 'Host service request result was too large.');
       }
       return result;
     }),

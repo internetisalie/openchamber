@@ -270,6 +270,27 @@ describe('concurrent store changes', () => {
     }
   });
 
+  test('round-trips exact OpenCode plugin grant scope', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'oc-guest-persist-'));
+    const file = extensionsPersistPath(dir);
+    const scope = {
+      opencode: [
+        { id: 'alpha-plugin', methods: ['GET', 'POST'] },
+        { id: 'zeta-plugin', methods: ['DELETE'] },
+      ],
+    };
+    try {
+      await writeExtensionStore(file, { paths: ['/a'] });
+      await setCapabilityGrants('alpha', file, ['opencode'], scope);
+      expect(await readExtensionStore(file)).toMatchObject({
+        capabilityGrants: { alpha: ['opencode'] },
+        capabilityScopes: { alpha: scope },
+      });
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
   test('drops a malformed scope entry on read instead of refusing the store', async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'oc-guest-persist-'));
     const file = extensionsPersistPath(dir);

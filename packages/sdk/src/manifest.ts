@@ -357,7 +357,7 @@ export const serviceProvides = (
  * and `contributes.filesystem`. `model` is one-off text generation with the
  * user's Small Model (`host.generate`), outside any session.
  */
-export const GUEST_CAPABILITIES = ['prompt', 'sessions', 'files', 'model', 'conversation', 'service', 'network', 'filesystem'] as const;
+export const GUEST_CAPABILITIES = ['prompt', 'sessions', 'files', 'model', 'conversation', 'service', 'network', 'filesystem', 'opencode'] as const;
 
 export type GuestCapability = (typeof GUEST_CAPABILITIES)[number];
 
@@ -365,6 +365,18 @@ export const DECLARED_GUEST_CAPABILITIES = ['prompt', 'sessions', 'files', 'mode
 
 /** The capabilities a manifest may ask for directly. */
 export type DeclaredGuestCapability = (typeof DECLARED_GUEST_CAPABILITIES)[number];
+
+/** How many OpenCode plugins one extension may call. */
+export const GUEST_OPENCODE_PLUGINS_MAX = 8;
+
+export type OpenCodePluginContribution = {
+  id: string;
+  methods: import('./contract.ts').GuestRequestMethod[];
+};
+
+export type OpenCodeContribution = {
+  plugins: OpenCodePluginContribution[];
+};
 
 /** How many `contributes.filesystem` patterns a package may declare. */
 export const GUEST_FILESYSTEM_PATTERNS_MAX = 16;
@@ -408,6 +420,8 @@ export type OpenChamberContributes = {
   commands?: GuestCommandContribution[];
   /** How the extension's tool calls look in the chat. */
   tools?: GuestToolContribution[];
+  /** Exact OpenCode plugin routes and HTTP methods this extension may call. */
+  openCode?: OpenCodeContribution;
 };
 
 /** Whether any declared action asks for a session's messages, which needs `conversation`. */
@@ -422,13 +436,14 @@ export type PublicGuestCapabilities = {
 };
 
 export const requestedGuestCapabilities = (
-  contributes: Pick<OpenChamberContributes, 'capabilities' | 'integration' | 'service' | 'filesystem' | 'actions'>,
+  contributes: Pick<OpenChamberContributes, 'capabilities' | 'integration' | 'service' | 'filesystem' | 'actions' | 'openCode'>,
 ): GuestCapability[] => {
   const declared = new Set<GuestCapability>(contributes.capabilities ?? []);
   if (guestActionsNeedConversation(contributes.actions)) declared.add('conversation');
   if (contributes.service) declared.add('service');
   if (contributes.integration) declared.add('network');
   if (contributes.filesystem && contributes.filesystem.length > 0) declared.add('filesystem');
+  if (contributes.openCode?.plugins.length) declared.add('opencode');
   return GUEST_CAPABILITIES.filter((capability) => declared.has(capability));
 };
 
@@ -530,7 +545,8 @@ export type ParseManifestErrorCode =
   | 'invalid-filesystem'
   | 'invalid-actions'
   | 'invalid-commands'
-  | 'invalid-tools';
+  | 'invalid-tools'
+  | 'invalid-opencode';
 
 export type ParseManifestFailure = {
   ok: false;

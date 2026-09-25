@@ -4,6 +4,7 @@ import type {
   GuestCommandContribution,
   GuestSurfaceDock,
   GuestToolContribution,
+  OpenCodeContribution,
   PublicService,
   PublicGuestCapabilities,
   PublicIntegration,
@@ -45,6 +46,8 @@ export type InstalledGuest = {
   commands?: GuestCommandContribution[];
   /** Declared `contributes.tools`; the chat applies them only for an active guest. */
   tools?: GuestToolContribution[];
+  /** Declared OpenCode plugin IDs and HTTP methods, used for host-side authorization. */
+  openCode?: OpenCodeContribution;
   /** What the package asks for and what the user approved at install. */
   capabilities: PublicGuestCapabilities;
   source?: GuestSource;

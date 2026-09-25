@@ -219,6 +219,16 @@ describe('parseGuestCatalogJson', () => {
     expect(parseGuestCatalogJson(JSON.stringify({ guests: [{ ...row, statusEntry: 'status/index.html', statusHeight: 4000 }] }))).toBeNull();
   });
 
+  test('keeps public OpenCode plugin declarations', () => {
+    const openCode = { plugins: [{ id: 'example-plugin', methods: ['GET', 'POST'] }] };
+    const guest = {
+      id: 'hello', name: 'Hello', icon: 'window', entry: 'panel/index.html',
+      capabilities: { requested: ['opencode'], granted: ['opencode'] }, openCode,
+    };
+    expect(parseGuestCatalogJson(JSON.stringify({ guests: [guest] }))).toEqual([guest]);
+    expect(parseGuestCatalogJson(JSON.stringify({ guests: [{ ...guest, openCode: { plugins: [{ ...openCode.plugins[0], token: 'secret' }] } }] }))).toBeNull();
+  });
+
   test('rejects junk instead of returning an empty catalog', () => {
     expect(parseGuestCatalogJson('null')).toBeNull();
     expect(parseGuestCatalogJson('{"guests":[{"id":"Nope"}]}')).toBeNull();

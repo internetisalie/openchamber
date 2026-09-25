@@ -31,8 +31,9 @@ import {
   GUEST_FILE_PATH_MAX,
   GUEST_FILE_STAT_KINDS,
   GUEST_REQUEST_BODY_MAX,
+  GUEST_OPENCODE_RESPONSE_MAX,
+  GUEST_REQUEST_METHODS,
   GUEST_REQUEST_PATH_MAX,
-  GUEST_REQUEST_RESPONSE_MAX,
   GUEST_SESSION_AGENT_MAX,
   GUEST_SESSION_MODEL_MAX,
   GUEST_SETTING_VALUE_MAX,
@@ -102,7 +103,7 @@ const guestSettingsSchema = z.record(
 
 const requestResultPayloadSchema = z.object({
   status: z.number().int().min(100).max(599),
-  body: z.string().max(GUEST_REQUEST_RESPONSE_MAX),
+  body: z.string().max(GUEST_OPENCODE_RESPONSE_MAX),
 });
 
 const resultWorktree = z.object({ directory: z.string(), name: z.string(), branch: z.string(), status: z.enum(['ready', 'pending', 'invalid', 'missing']) });
@@ -333,6 +334,13 @@ export const hostMessageSchema = z.union([
 
 const filePathSchema = z.string().min(1).max(GUEST_FILE_PATH_MAX).refine(isGuestFilePath);
 
+const guestRequestPayloadSchema = z.object({
+  method: z.enum(GUEST_REQUEST_METHODS),
+  path: z.string().trim().min(1).max(GUEST_REQUEST_PATH_MAX).refine(isGuestRequestPath),
+  query: z.record(z.string().min(1).max(128), z.string().max(2_000)).optional(),
+  body: z.string().max(GUEST_REQUEST_BODY_MAX).optional(),
+});
+
 export const guestMessageSchema = z.discriminatedUnion('type', [
   z.object({
     ...envelope,
@@ -447,23 +455,21 @@ export const guestMessageSchema = z.discriminatedUnion('type', [
     ...envelope,
     type: z.literal('request'),
     id: z.string().min(1),
-    payload: z.object({
-      method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
-      path: z.string().trim().min(1).max(GUEST_REQUEST_PATH_MAX).refine(isGuestRequestPath),
-      query: z.record(z.string().min(1).max(128), z.string().max(2_000)).optional(),
-      body: z.string().max(GUEST_REQUEST_BODY_MAX).optional(),
-    }),
+    payload: guestRequestPayloadSchema,
+  }),
+  z.object({
+    ...envelope,
+    type: z.literal('opencode-request'),
+    id: z.string().min(1),
+    payload: guestRequestPayloadSchema.extend({
+      pluginId: z.string().regex(/^[a-z][a-z0-9-]*$/).max(64),
+    }).strict(),
   }),
   z.object({
     ...envelope,
     type: z.literal('service-request'),
     id: z.string().min(1),
-    payload: z.object({
-      method: z.enum(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']),
-      path: z.string().trim().min(1).max(GUEST_REQUEST_PATH_MAX).refine(isGuestRequestPath),
-      query: z.record(z.string().min(1).max(128), z.string().max(2_000)).optional(),
-      body: z.string().max(GUEST_REQUEST_BODY_MAX).optional(),
-    }),
+    payload: guestRequestPayloadSchema,
   }),
   z.object({
     ...envelope,
