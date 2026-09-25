@@ -2344,6 +2344,7 @@ export const settingsDict = {
   "settings.openchamber.visual.option.enterToSend.enter.label": "Enviar com Enter",
   "settings.openchamber.visual.option.enterToSend.modifier.label": "Enviar com Ctrl/Cmd+Enter",
   ...linearIntegrationI18n['pt-BR'],
+  ...giteaIntegrationI18n.en,
   ...giteaIntegrationI18n['pt-BR'],
   ...guestIntegrationsI18n['pt-BR'],
   ...extensionsSettingsI18n['pt-BR'],

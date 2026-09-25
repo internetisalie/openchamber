@@ -3,20 +3,29 @@ import { giteaApiUrl } from './instance.js';
 export class GiteaRequestError extends Error {
   constructor(status) {
     const message = status === 401 ? 'Gitea token is invalid or expired. Reconnect in Integrations.'
-      : status === 403 ? 'This Gitea account does not have access to the repository or item.'
+      : status === 403 ? 'The Gitea token lacks permission or this account cannot access the repository.'
       : status === 404 ? 'The Gitea repository or item was not found or is inaccessible.'
+      : status === 409 ? 'Gitea reports a pull request conflict.'
+      : status === 422 ? 'Gitea rejected the pull request. Check that both branches exist and no pull request already uses them.'
       : `Gitea request failed (${status})`;
     super(message);
     this.status = status;
   }
 }
 
-async function requestGiteaResponse({ instanceUrl, token }, apiPath, accept) {
-  const response = await fetch(giteaApiUrl(instanceUrl, apiPath), {
-    headers: { Authorization: `token ${token}`, Accept: accept },
+async function requestGiteaResponse({ instanceUrl, token }, apiPath, accept, options = {}) {
+  const headers = { Authorization: `token ${token}`, Accept: accept };
+  const request = {
+    method: options.method ?? 'GET',
+    headers,
     redirect: 'manual',
     signal: AbortSignal.timeout(10_000),
-  });
+  };
+  if (options.body !== undefined) {
+    headers['Content-Type'] = 'application/json';
+    request.body = JSON.stringify(options.body);
+  }
+  const response = await fetch(giteaApiUrl(instanceUrl, apiPath), request);
   if (!response.ok) throw new GiteaRequestError(response.status);
   const limit = 4_000_000;
   if (Number(response.headers.get('content-length')) > limit) throw new Error('Gitea response is too large');
@@ -49,8 +58,8 @@ async function requestGiteaResponse({ instanceUrl, token }, apiPath, accept) {
   }
 }
 
-export async function requestGitea(connection, apiPath, { accept = 'application/json' } = {}) {
-  const { data } = await requestGiteaResponse(connection, apiPath, accept);
+export async function requestGitea(connection, apiPath, { accept = 'application/json', ...options } = {}) {
+  const { data } = await requestGiteaResponse(connection, apiPath, accept, options);
   return data;
 }
 

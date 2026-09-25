@@ -2369,6 +2369,7 @@ export const settingsDict = {
   'settings.mcp.page.advanced.oauthMetadataUrlHint': 'OAuth veya OpenID Connect yetkilendirme sunucusu meta veri belgesi. MCP sunucusu, yetkilendirme sunucusunu belirten korumalı kaynak meta verisi yayımlamıyorsa bunu ayarlayın.',
   'settings.mcp.page.advanced.oauthMetadataUrlPlaceholder': 'https://example.com/.well-known/oauth-authorization-server',
   'settings.mcp.page.advanced.oauthMetadataUrlInvalid': 'Tam bir http:// veya https:// adresi girin.',
+  ...giteaIntegrationI18n.en,
   ...giteaIntegrationI18n.tr,
   ...guestIntegrationsI18n.tr,
   ...extensionsSettingsI18n.tr,

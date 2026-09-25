@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { after, test } from 'node:test';
+import { afterAll, test } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import { normalizeInstanceUrl } from './instance.js';
@@ -15,7 +15,7 @@ const previousDataDir = process.env.OPENCHAMBER_DATA_DIR;
 const previousFetch = globalThis.fetch;
 process.env.OPENCHAMBER_DATA_DIR = directory;
 
-after(() => {
+afterAll(() => {
   globalThis.fetch = previousFetch;
   if (previousDataDir === undefined) delete process.env.OPENCHAMBER_DATA_DIR;
   else process.env.OPENCHAMBER_DATA_DIR = previousDataDir;
@@ -116,7 +116,72 @@ test('read routes keep repo identity and distinguish API failure from an empty p
   globalThis.fetch = async () => Response.json({ message: 'hidden' }, { status: 403 });
   const denied = await request(app).get('/api/gitea/items')
     .query({ directory: '/repo', kind: 'issue' }).expect(403);
-  assert.match(denied.body.error, /does not have access/);
+  assert.match(denied.body.error, /lacks permission/);
+});
+
+test('creating a pull request posts only to the selected instance and source fork', async () => {
+  const connection = { instanceUrl: 'https://git.example.com/team', token: 'write-token' };
+  const target = { connection, repo: { owner: 'upstream', name: 'project' }, remote: 'upstream' };
+  const source = { connection, repo: { owner: 'alice', name: 'project' }, remote: 'origin' };
+  const app = express();
+  registerGiteaRoutes(app, { resolveRepository: async (_directory, remote) =>
+    remote === 'upstream' ? target : remote === 'origin' ? source : null });
+  let posts = 0;
+  globalThis.fetch = async (url, options) => {
+    posts++;
+    assert.equal(String(url), 'https://git.example.com/team/api/v1/repos/upstream/project/pulls');
+    assert.equal(options.method, 'POST');
+    assert.equal(options.headers.Authorization, 'token write-token');
+    assert.equal(options.headers['Content-Type'], 'application/json');
+    assert.equal(options.redirect, 'manual');
+    assert.deepEqual(JSON.parse(options.body), {
+      title: 'WIP: Fix login', head: 'alice:feature/login', base: 'feature/login', body: 'Details',
+    });
+    return Response.json({ number: 9, title: 'WIP: Fix login', body: 'Details', state: 'open',
+      html_url: 'https://attacker.example/steal' }, { status: 201 });
+  };
+  const created = await request(app).post('/api/gitea/pr/create').send({
+    directory: '/repo', remote: 'upstream', headRemote: 'origin', head: 'feature/login',
+    base: 'feature/login', title: 'Fix login', body: 'Details', draft: true,
+  }).expect(201);
+  assert.equal(posts, 1);
+  assert.deepEqual(created.body, {
+    kind: 'pr', number: 9, title: 'WIP: Fix login', body: 'Details',
+    url: 'https://git.example.com/team/upstream/project/pulls/9', state: 'open', author: null,
+  });
+
+  await request(app).post('/api/gitea/pr/create').send({ directory: '/repo', remote: 'upstream',
+    headRemote: 'missing', head: 'feature/login', base: 'main', title: 'Fix login' }).expect(400);
+  await request(app).post('/api/gitea/pr/create').send({ directory: '/repo', remote: 'origin',
+    head: 'main', base: 'main', title: 'Fix login' }).expect(400);
+  assert.equal(posts, 1);
+});
+
+test('pull request status identifies the source repository and preserves lookup failures', async () => {
+  const connection = { instanceUrl: 'https://git.example.com', token: 'read-token' };
+  const target = { connection, repo: { owner: 'upstream', name: 'project' }, remote: 'upstream' };
+  const source = { connection, repo: { owner: 'alice', name: 'project' }, remote: 'origin' };
+  const app = express();
+  registerGiteaRoutes(app, { resolveRepository: async (_directory, remote) =>
+    remote === 'upstream' ? target : remote === 'origin' ? source : null });
+  globalThis.fetch = async (url) => {
+    const page = new URL(url).searchParams.get('page');
+    if (page === '1') return Response.json([], { headers: { Link: '<https://bad.example>; rel="next"' } });
+    return Response.json([{ number: 12, title: 'Ready', state: 'open', head: {
+      ref: 'feature/login', repo: { owner: { login: 'alice' }, name: 'project' },
+    } }]);
+  };
+  const result = await request(app).get('/api/gitea/pr/status').query({
+    directory: '/repo', remote: 'upstream', headRemote: 'origin', branch: 'feature/login',
+  }).expect(200);
+  assert.equal(result.body.item.number, 12);
+  assert.equal(result.body.repo.owner, 'upstream');
+
+  globalThis.fetch = async () => Response.json({ message: 'forbidden' }, { status: 403 });
+  const denied = await request(app).get('/api/gitea/pr/status').query({
+    directory: '/repo', remote: 'upstream', headRemote: 'origin', branch: 'feature/login',
+  }).expect(403);
+  assert.equal('item' in denied.body, false);
 });
 
 test('comment pages and pull diff stay with the matched instance', async () => {
@@ -141,10 +206,50 @@ test('comment pages and pull diff stay with the matched instance', async () => {
   assert.equal(detail.body.comments.length, 51);
   assert.equal(detail.body.commentsTruncated, false);
   assert.equal(detail.body.item.url, 'https://git.example.com/team/alice/project/pulls/7');
+  assert.deepEqual(detail.body.pull, {
+    draft: null, merged: null, sourceBranch: null, targetBranch: null, sourceOwner: null,
+  });
   const diff = await request(app).get('/api/gitea/pull-diff')
     .query({ directory: '/repo', number: 7 }).expect(200);
   assert.equal(diff.text, 'diff --git a/file b/file');
   assert.ok(requested.every((url) => url.startsWith('https://git.example.com/team/api/v1/')));
+});
+
+test('pull detail and comments retain the matched repository and report write failures', async () => {
+  const resolved = {
+    connection: { instanceUrl: 'https://git.example.com/team', token: 'write-token' },
+    repo: { owner: 'alice', name: 'project' }, remote: 'origin',
+  };
+  const app = appFor(resolved);
+  globalThis.fetch = async (url, options) => {
+    const address = String(url);
+    assert.ok(address.startsWith('https://git.example.com/team/api/v1/repos/alice/project/'));
+    assert.equal(options.headers.Authorization, 'token write-token');
+    if (options.method === 'POST') {
+      assert.equal(address.endsWith('/issues/7/comments'), true);
+      assert.deepEqual(JSON.parse(options.body), { body: 'Looks good' });
+      return Response.json({ body: 'Looks good', user: { login: 'alice' } }, { status: 201 });
+    }
+    if (address.includes('/comments?')) return Response.json([]);
+    return Response.json({ number: 7, title: 'Fix login', body: 'Details', state: 'closed',
+      draft: false, merged: true, user: { login: 'alice' },
+      head: { ref: 'feature', repo: { owner: { login: 'alice' } } }, base: { ref: 'main' } });
+  };
+  const detail = await request(app).get('/api/gitea/item')
+    .query({ directory: '/repo', remote: 'origin', kind: 'pr', number: 7 }).expect(200);
+  assert.deepEqual(detail.body.pull, {
+    draft: false, merged: true, sourceBranch: 'feature', targetBranch: 'main', sourceOwner: 'alice',
+  });
+  const input = { directory: '/repo', remote: 'origin', kind: 'pr', number: 7,
+    body: 'Looks good', instanceUrl: 'https://git.example.com/team', owner: 'alice', repo: 'project' };
+  const created = await request(app).post('/api/gitea/comment').send(input).expect(201);
+  assert.deepEqual(created.body, { author: 'alice', body: 'Looks good' });
+  await request(app).post('/api/gitea/comment').send({ ...input, body: ' ' }).expect(400);
+  await request(app).post('/api/gitea/comment').send({ ...input, instanceUrl: 'https://other.example' }).expect(409);
+
+  globalThis.fetch = async () => Response.json({ message: 'forbidden' }, { status: 403 });
+  const denied = await request(app).post('/api/gitea/comment').send(input).expect(403);
+  assert.match(denied.body.error, /lacks permission/);
 });
 
 test('short pages use Gitea pagination links without following their URLs', async () => {

@@ -1,10 +1,11 @@
 import express from 'express';
+import { z } from 'zod';
 import { GiteaRequestError, requestGitea, requestGiteaPage, verifyConnection } from './client.js';
 import { normalizeInstanceUrl } from './instance.js';
 import { resolveGiteaRepo } from './repo.js';
 import { publicConnections, removeConnection, saveConnection } from './storage.js';
 
-const parseBody = express.json({ limit: '16kb' });
+const parseBody = express.json({ limit: '256kb' });
 const PAGE_SIZE = 30;
 const COMMENT_PAGE_SIZE = 50;
 const MAX_COMMENTS = 100;
@@ -12,7 +13,7 @@ const MAX_COMMENT_PAGES = 10;
 
 function fail(res, error) {
   if (error instanceof GiteaRequestError) {
-    const status = [401, 403, 404].includes(error.status) ? error.status : 502;
+    const status = [401, 403, 404, 409, 422].includes(error.status) ? error.status : 502;
     return res.status(status).json({ error: error.message });
   }
   return res.status(502).json({ error: error instanceof Error ? error.message : 'Gitea request failed' });
@@ -23,18 +24,48 @@ function directoryFromRequest(req) {
 }
 
 async function repositoryForRequest(req, res, resolveRepository) {
-  const directory = directoryFromRequest(req);
+  const directory = typeof req.body?.directory === 'string' ? req.body.directory.trim() : directoryFromRequest(req);
   if (!directory) {
     res.status(400).json({ error: 'directory is required' });
     return null;
   }
-  const resolved = await resolveRepository(directory);
+  const remote = typeof req.body?.remote === 'string' ? req.body.remote.trim()
+    : typeof req.query.remote === 'string' ? req.query.remote.trim() : '';
+  const resolved = await resolveRepository(directory, remote || undefined);
   if (!resolved) {
     res.status(404).json({ error: 'No connected Gitea instance matches a Git remote in this directory' });
     return null;
   }
   return resolved;
 }
+
+const branchSchema = z.string().min(1).max(255)
+  .regex(/^[^\x00-\x1f\x7f:]+$/)
+  .refine((value) => value.trim() === value && !value.includes('..'));
+const createPullRequestSchema = z.object({
+  directory: z.string().trim().min(1),
+  remote: z.string().trim().min(1).optional(),
+  headRemote: z.string().trim().min(1).optional(),
+  title: z.string().trim().min(1).max(300),
+  head: branchSchema,
+  base: branchSchema,
+  body: z.string().max(60_000).optional(),
+  draft: z.boolean().optional(),
+});
+const pullRequestStatusSchema = z.object({
+  branch: branchSchema,
+  headRemote: z.string().trim().min(1).optional(),
+});
+const commentSchema = z.object({
+  directory: z.string().trim().min(1),
+  remote: z.string().trim().min(1),
+  kind: z.enum(['issue', 'pr']),
+  number: z.number().int().positive(),
+  body: z.string().trim().min(1).max(60_000),
+  instanceUrl: z.string().url(),
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+});
 
 function publicRepo({ connection, repo, remote }) {
   return { instanceUrl: connection.instanceUrl, owner: repo.owner, name: repo.name, remote };
@@ -59,6 +90,16 @@ function commentsFromApi(raw) {
     author: typeof entry?.user?.login === 'string' ? entry.user.login : null,
     body: typeof entry?.body === 'string' ? entry.body : '',
   }));
+}
+
+function pullDetailFromApi(raw) {
+  return {
+    draft: typeof raw?.draft === 'boolean' ? raw.draft : null,
+    merged: typeof raw?.merged === 'boolean' ? raw.merged : null,
+    sourceBranch: typeof raw?.head?.ref === 'string' ? raw.head.ref : null,
+    targetBranch: typeof raw?.base?.ref === 'string' ? raw.base.ref : null,
+    sourceOwner: typeof raw?.head?.repo?.owner?.login === 'string' ? raw.head.repo.owner.login : null,
+  };
 }
 
 export function registerGiteaRoutes(app, { resolveRepository = resolveGiteaRepo } = {}) {
@@ -99,6 +140,65 @@ export function registerGiteaRoutes(app, { resolveRepository = resolveGiteaRepo 
       const resolved = await repositoryForRequest(req, res, resolveRepository);
       if (resolved) res.json({ repo: publicRepo(resolved) });
     } catch (error) { fail(res, error); }
+  });
+
+  app.post('/api/gitea/pr/create', parseBody, async (req, res) => {
+    const parsed = createPullRequestSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({ error: 'Invalid pull request details' });
+    }
+    const { directory, headRemote, title, head, base, body, draft } = parsed.data;
+    try {
+      const resolved = await repositoryForRequest(req, res, resolveRepository);
+      if (!resolved) return;
+      const source = headRemote && headRemote !== resolved.remote
+        ? await resolveRepository(directory.trim(), headRemote.trim()) : resolved;
+      if (!source || source.connection.instanceUrl !== resolved.connection.instanceUrl ||
+          source.repo.name !== resolved.repo.name) {
+        return res.status(400).json({ error: 'The source remote must be a fork on the same Gitea instance' });
+      }
+      if (source.repo.owner === resolved.repo.owner && head === base) {
+        return res.status(400).json({ error: 'The source and target branches must differ' });
+      }
+      const headRef = source.repo.owner === resolved.repo.owner ? head : `${source.repo.owner}:${head}`;
+      const prTitle = draft && !/^(?:WIP:|\[WIP\])/i.test(title.trim()) ? `WIP: ${title.trim()}` : title.trim();
+      const { connection, repo } = resolved;
+      const raw = await requestGitea(connection,
+        `/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}/pulls`,
+        { method: 'POST', body: { title: prTitle, head: headRef, base, body: body ?? '' } });
+      const publicItem = itemFromApi(raw, 'pr', publicRepo(resolved));
+      return res.status(201).json(publicItem);
+    } catch (error) { return fail(res, error); }
+  });
+
+  app.get('/api/gitea/pr/status', async (req, res) => {
+    const parsed = pullRequestStatusSchema.safeParse(req.query);
+    if (!parsed.success) return res.status(400).json({ error: 'Invalid branch' });
+    const { branch, headRemote } = parsed.data;
+    try {
+      const resolved = await repositoryForRequest(req, res, resolveRepository);
+      if (!resolved) return;
+      const source = headRemote && headRemote !== resolved.remote
+        ? await resolveRepository(directoryFromRequest(req), headRemote) : resolved;
+      if (!source || source.connection.instanceUrl !== resolved.connection.instanceUrl ||
+          source.repo.name !== resolved.repo.name) {
+        return res.status(400).json({ error: 'The source remote must be a fork on the same Gitea instance' });
+      }
+      const { connection, repo } = resolved;
+      const root = `/repos/${encodeURIComponent(repo.owner)}/${encodeURIComponent(repo.name)}`;
+      for (let page = 1; page <= 10; page++) {
+        const { data, hasNext } = await requestGiteaPage(connection,
+          `${root}/pulls?state=open&limit=50&page=${page}`);
+        if (!Array.isArray(data)) throw new Error('Gitea returned an invalid pull request list');
+        const found = data.find((raw) => raw?.head?.ref === branch &&
+          raw?.head?.repo?.owner?.login === source.repo.owner && raw?.head?.repo?.name === source.repo.name);
+        if (found) return res.json({ repo: publicRepo(resolved), item: itemFromApi(found, 'pr', publicRepo(resolved)) });
+        if (hasNext === false || (hasNext === null && data.length < 50)) {
+          return res.json({ repo: publicRepo(resolved), item: null });
+        }
+      }
+      throw new Error('Gitea has more pull requests than can be checked; open the repository to find this branch');
+    } catch (error) { return fail(res, error); }
   });
 
   app.get('/api/gitea/items', async (req, res) => {
@@ -153,8 +253,30 @@ export function registerGiteaRoutes(app, { resolveRepository = resolveGiteaRepo 
         if (page === MAX_COMMENT_PAGES) commentsTruncated = true;
       }
       const repoInfo = publicRepo(resolved);
-      res.json({ repo: repoInfo, item: itemFromApi(raw, kind, repoInfo), comments, commentsTruncated });
+      res.json({ repo: repoInfo, item: itemFromApi(raw, kind, repoInfo),
+        pull: kind === 'pr' ? pullDetailFromApi(raw) : null,
+        comments, commentsTruncated });
     } catch (error) { fail(res, error); }
+  });
+
+  app.post('/api/gitea/comment', parseBody, async (req, res) => {
+    const parsed = commentSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: 'Invalid comment details' });
+    try {
+      const resolved = await repositoryForRequest(req, res, resolveRepository);
+      if (!resolved) return;
+      const { instanceUrl, owner, repo, number, body } = parsed.data;
+      if (resolved.connection.instanceUrl !== instanceUrl || resolved.repo.owner !== owner ||
+          resolved.repo.name !== repo) {
+        return res.status(409).json({ error: 'The Gitea repository changed. Reopen the item before commenting.' });
+      }
+      const root = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+      const raw = await requestGitea(resolved.connection, `${root}/issues/${number}/comments`,
+        { method: 'POST', body: { body } });
+      if (typeof raw?.body !== 'string') throw new Error('Gitea returned an invalid comment');
+      const [comment] = commentsFromApi([raw]);
+      return res.status(201).json(comment);
+    } catch (error) { return fail(res, error); }
   });
 
   app.get('/api/gitea/pull-diff', async (req, res) => {

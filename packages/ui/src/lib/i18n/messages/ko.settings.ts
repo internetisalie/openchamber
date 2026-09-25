@@ -2344,6 +2344,7 @@ export const settingsDict = {
   'settings.openchamber.visual.option.enterToSend.enter.label': 'Enter로 전송',
   'settings.openchamber.visual.option.enterToSend.modifier.label': 'Ctrl/Cmd+Enter로 전송',
   ...linearIntegrationI18n.ko,
+  ...giteaIntegrationI18n.en,
   ...giteaIntegrationI18n.ko,
   ...guestIntegrationsI18n.ko,
   ...extensionsSettingsI18n.ko,

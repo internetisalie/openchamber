@@ -2344,6 +2344,7 @@ export const settingsDict = {
   "settings.openchamber.visual.option.enterToSend.enter.label": "Надсилати клавішею Enter",
   "settings.openchamber.visual.option.enterToSend.modifier.label": "Надсилати за допомогою Ctrl/Cmd+Enter",
   ...linearIntegrationI18n.uk,
+  ...giteaIntegrationI18n.en,
   ...giteaIntegrationI18n.uk,
   ...guestIntegrationsI18n.uk,
   ...extensionsSettingsI18n.uk,

@@ -10,6 +10,7 @@ import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useUIStore } from '@/stores/useUIStore';
 import type { GiteaItem, GiteaItemDetail, GiteaRepository } from '@/lib/api/types';
+import { GiteaItemDetailView } from './gitea-item-detail';
 
 export interface GiteaSelection {
   providerId: string;
@@ -58,6 +59,8 @@ export function GiteaPickerDialog({ open, onOpenChange, onSelect }: {
   const [loading, setLoading] = React.useState(false);
   const [loadingMore, setLoadingMore] = React.useState(false);
   const [selecting, setSelecting] = React.useState<number | null>(null);
+  const [selectedDetail, setSelectedDetail] = React.useState<GiteaItemDetail | null>(null);
+  const [attaching, setAttaching] = React.useState(false);
   const [error, setError] = React.useState<string | null>(null);
   const requestId = React.useRef(0);
 
@@ -69,6 +72,7 @@ export function GiteaPickerDialog({ open, onOpenChange, onSelect }: {
       setHasMore(false);
       setLoading(false);
       setError(null);
+      setSelectedDetail(null);
       return;
     }
     const current = ++requestId.current;
@@ -76,6 +80,7 @@ export function GiteaPickerDialog({ open, onOpenChange, onSelect }: {
     setLoading(true);
     setLoadingMore(false);
     setSelecting(null);
+    setSelectedDetail(null);
     setError(null);
     setItems([]);
     setRepo(null);
@@ -120,21 +125,51 @@ export function GiteaPickerDialog({ open, onOpenChange, onSelect }: {
     setError(null);
     try {
       const detail = await gitea.item(directory, kind, number);
-      const diff = kind === 'pr' && includeDiff ? await gitea.pullDiff(directory, number) : null;
+      if (current !== requestId.current) return;
+      setSelectedDetail(detail);
+    } catch (error) {
+      if (current === requestId.current) setError(error instanceof Error && error.message
+        ? error.message : t('session.giteaPicker.detailFailed'));
+    } finally {
+      if (current === requestId.current) setSelecting(null);
+    }
+  };
+
+  const postComment = async (body: string) => {
+    if (!gitea || !selectedDetail) return;
+    const current = requestId.current;
+    const { repo: selectedRepo, item } = selectedDetail;
+    const posted = await gitea.comment({ directory, remote: selectedRepo.remote, kind: item.kind,
+      number: item.number, body, instanceUrl: selectedRepo.instanceUrl,
+      owner: selectedRepo.owner, repo: selectedRepo.name });
+    if (current === requestId.current) setSelectedDetail((previous) => previous?.item.number === item.number &&
+      previous.repo.instanceUrl === selectedRepo.instanceUrl && previous.repo.owner === selectedRepo.owner &&
+      previous.repo.name === selectedRepo.name ? { ...previous, comments: [...previous.comments, posted] } : previous);
+  };
+
+  const attach = async () => {
+    if (!gitea || !selectedDetail || attaching) return;
+    const current = requestId.current;
+    setAttaching(true);
+    setError(null);
+    try {
+      const { repo: selectedRepo, item } = selectedDetail;
+      const diff = item.kind === 'pr' && includeDiff
+        ? await gitea.pullDiff(directory, item.number, selectedRepo.remote) : null;
       if (current !== requestId.current) return;
       onSelect({
-        providerId: `gitea:${encodeURIComponent(detail.repo.instanceUrl)}/${encodeURIComponent(detail.repo.owner)}/${encodeURIComponent(detail.repo.name)}`,
-        id: String(detail.item.number), title: detail.item.title, url: detail.item.url,
-        contextText: contextText(detail, diff), thread: kind === 'pr' ? 'pull' : 'issue',
-        instanceUrl: detail.repo.instanceUrl, owner: detail.repo.owner, repo: detail.repo.name,
-        ...(detail.item.author ? { author: detail.item.author } : {}),
+        providerId: `gitea:${encodeURIComponent(selectedRepo.instanceUrl)}/${encodeURIComponent(selectedRepo.owner)}/${encodeURIComponent(selectedRepo.name)}`,
+        id: String(item.number), title: item.title, url: item.url,
+        contextText: contextText(selectedDetail, diff), thread: item.kind === 'pr' ? 'pull' : 'issue',
+        instanceUrl: selectedRepo.instanceUrl, owner: selectedRepo.owner, repo: selectedRepo.name,
+        ...(item.author ? { author: item.author } : {}),
       });
       onOpenChange(false);
     } catch (error) {
       if (current === requestId.current) setError(error instanceof Error && error.message
         ? error.message : t('session.giteaPicker.detailFailed'));
     } finally {
-      if (current === requestId.current) setSelecting(null);
+      if (current === requestId.current) setAttaching(false);
     }
   };
 
@@ -144,6 +179,24 @@ export function GiteaPickerDialog({ open, onOpenChange, onSelect }: {
   const description = t('session.giteaPicker.description');
   const content = (
     <div className="min-h-0 space-y-4 overflow-y-auto py-2">
+      {selectedDetail ? <>
+        <Button type="button" size="sm" variant="ghost" onClick={() => { setSelectedDetail(null); setError(null); }}>
+          {t('session.giteaDetail.back')}
+        </Button>
+        <GiteaItemDetailView key={`${directory}:${selectedDetail.repo.instanceUrl}:${selectedDetail.repo.owner}:${selectedDetail.repo.name}:${selectedDetail.item.kind}:${selectedDetail.item.number}`}
+          detail={selectedDetail} onComment={postComment} />
+        {selectedDetail.item.kind === 'pr' ? <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Checkbox checked={includeDiff} onChange={setIncludeDiff}
+            ariaLabel={t('session.giteaPicker.includeDiff')} />
+          <button type="button" onClick={() => setIncludeDiff((value) => !value)}>
+            {t('session.giteaPicker.includeDiff')}
+          </button>
+        </div> : null}
+        {error ? <p role="alert" className="text-sm text-[var(--status-error-text)]">{error}</p> : null}
+        <Button type="button" size="sm" disabled={attaching} onClick={() => { void attach(); }}>
+          {attaching ? t('common.loading') : t('session.giteaDetail.attach')}
+        </Button>
+      </> : <>
       <div className="flex gap-2">
         <Button type="button" size="sm" variant={kind === 'issue' ? 'secondary' : 'ghost'}
           onClick={() => { setKind('issue'); setNumberText(''); }}>
@@ -192,6 +245,7 @@ export function GiteaPickerDialog({ open, onOpenChange, onSelect }: {
       </div>
       {hasMore ? <Button type="button" size="sm" variant="outline" disabled={loadingMore}
         onClick={() => void loadMore()}>{t('session.giteaPicker.loadMore')}</Button> : null}
+      </>}
     </div>
   );
 

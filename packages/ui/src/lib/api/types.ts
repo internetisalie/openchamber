@@ -1405,20 +1405,54 @@ export interface GiteaItem {
 export interface GiteaItemDetail {
   repo: GiteaRepository;
   item: GiteaItem;
+  pull: {
+    draft: boolean | null;
+    merged: boolean | null;
+    sourceBranch: string | null;
+    targetBranch: string | null;
+    sourceOwner: string | null;
+  } | null;
   comments: Array<{ author: string | null; body: string }>;
   commentsTruncated: boolean;
+}
+
+export interface GiteaCommentInput {
+  directory: string;
+  remote: string;
+  kind: GiteaItem['kind'];
+  number: number;
+  body: string;
+  instanceUrl: string;
+  owner: string;
+  repo: string;
+}
+
+export interface GiteaPullRequestCreateInput {
+  directory: string;
+  remote: string;
+  headRemote?: string;
+  title: string;
+  body: string;
+  head: string;
+  base: string;
+  draft: boolean;
 }
 
 export interface GiteaAPI {
   connections(): Promise<GiteaConnection[]>;
   connect(instanceUrl: string, token: string, allowHttp: boolean): Promise<GiteaConnection>;
   disconnect(instanceUrl: string): Promise<boolean>;
-  repository(directory: string): Promise<GiteaRepository>;
+  repository(directory: string, remote?: string): Promise<GiteaRepository | null>;
+  pullRequestStatus(directory: string, branch: string, remote: string, headRemote?: string): Promise<{
+    repo: GiteaRepository; item: GiteaItem | null;
+  }>;
+  pullRequestCreate(input: GiteaPullRequestCreateInput): Promise<GiteaItem>;
   items(directory: string, kind: GiteaItem['kind'], page?: number): Promise<{
     repo: GiteaRepository; items: GiteaItem[]; page: number; hasMore: boolean;
   }>;
-  item(directory: string, kind: GiteaItem['kind'], number: number): Promise<GiteaItemDetail>;
-  pullDiff(directory: string, number: number): Promise<string>;
+  item(directory: string, kind: GiteaItem['kind'], number: number, remote?: string): Promise<GiteaItemDetail>;
+  comment(input: GiteaCommentInput): Promise<{ author: string | null; body: string }>;
+  pullDiff(directory: string, number: number, remote?: string): Promise<string>;
 }
 
 export interface RemoteClientRecord {

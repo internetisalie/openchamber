@@ -35,10 +35,12 @@ export function matchRemoteToConnection(remote, connections) {
   return matches.length === 1 ? matches[0] : null;
 }
 
-export async function resolveGiteaRepo(directory) {
+export async function resolveGiteaRepo(directory, remoteName) {
   const connections = readConnections();
   const remotes = await getRemotes(directory);
-  const ordered = remotes.slice().sort((a, b) => Number(b.name === 'origin') - Number(a.name === 'origin'));
+  const ordered = remoteName
+    ? remotes.filter((remote) => remote.name === remoteName)
+    : remotes.slice().sort((a, b) => Number(b.name === 'origin') - Number(a.name === 'origin'));
   for (const remote of ordered) {
     const parsed = parseRemote(remote.fetchUrl);
     if (!parsed) continue;

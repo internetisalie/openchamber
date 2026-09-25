@@ -2344,6 +2344,7 @@ export const settingsDict = {
   'settings.openchamber.visual.option.enterToSend.enter.label': '按 Enter 发送',
   'settings.openchamber.visual.option.enterToSend.modifier.label': '按 Ctrl/Cmd+Enter 发送',
   ...linearIntegrationI18n['zh-CN'],
+  ...giteaIntegrationI18n.en,
   ...giteaIntegrationI18n['zh-CN'],
   ...guestIntegrationsI18n['zh-CN'],
   ...extensionsSettingsI18n['zh-CN'],

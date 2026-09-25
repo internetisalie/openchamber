@@ -9,6 +9,10 @@ const item = z.object({
   body: z.string(), url: z.string(), state: z.enum(['open', 'closed']), author: z.string().nullable(),
 });
 const comment = z.object({ author: z.string().nullable(), body: z.string() });
+const pull = z.object({
+  draft: z.boolean().nullable(), merged: z.boolean().nullable(),
+  sourceBranch: z.string().nullable(), targetBranch: z.string().nullable(), sourceOwner: z.string().nullable(),
+});
 const errorBody = z.object({ error: z.string() });
 
 async function read<T>(response: Response, schema: z.ZodType<T>): Promise<T> {
@@ -39,21 +43,42 @@ export function createWebGiteaAPI(): GiteaAPI {
       }), z.object({ removed: z.boolean() }));
       return result.removed;
     },
-    async repository(directory) {
-      const result = await read(await runtimeFetch('/api/gitea/repository', { query: { directory } }),
+    async repository(directory, remote) {
+      const query = remote ? { directory, remote } : { directory };
+      const response = await runtimeFetch('/api/gitea/repository', { query });
+      if (response.status === 404) return null;
+      const result = await read(response,
         z.object({ repo }));
       return result.repo;
+    },
+    async pullRequestStatus(directory, branch, remote, headRemote) {
+      const query = headRemote ? { directory, branch, remote, headRemote } : { directory, branch, remote };
+      return read(await runtimeFetch('/api/gitea/pr/status', {
+        query,
+      }), z.object({ repo, item: item.nullable() }));
+    },
+    async pullRequestCreate(input) {
+      return read(await runtimeFetch('/api/gitea/pr/create', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
+      }), item);
     },
     async items(directory, kind, page = 1) {
       return read(await runtimeFetch('/api/gitea/items', { query: { directory, kind, page } }),
         z.object({ repo, items: z.array(item), page: z.number().int(), hasMore: z.boolean() }));
     },
-    async item(directory, kind, number) {
-      return read(await runtimeFetch('/api/gitea/item', { query: { directory, kind, number } }),
-        z.object({ repo, item, comments: z.array(comment), commentsTruncated: z.boolean() }));
+    async item(directory, kind, number, remote) {
+      const query = remote ? { directory, kind, number, remote } : { directory, kind, number };
+      return read(await runtimeFetch('/api/gitea/item', { query }),
+        z.object({ repo, item, pull: pull.nullable(), comments: z.array(comment), commentsTruncated: z.boolean() }));
     },
-    async pullDiff(directory, number) {
-      const response = await runtimeFetch('/api/gitea/pull-diff', { query: { directory, number } });
+    async comment(input) {
+      return read(await runtimeFetch('/api/gitea/comment', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
+      }), comment);
+    },
+    async pullDiff(directory, number, remote) {
+      const query = remote ? { directory, number, remote } : { directory, number };
+      const response = await runtimeFetch('/api/gitea/pull-diff', { query });
       if (!response.ok) {
         const payload: unknown = await response.json().catch(() => null);
         const parsed = errorBody.safeParse(payload);
