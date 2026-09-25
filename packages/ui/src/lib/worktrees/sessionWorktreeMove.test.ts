@@ -389,6 +389,23 @@ describe('moveSessionTreeToExistingWorktree', () => {
     expect(removeWorktreeCalls).toEqual([]);
   });
 
+  test('moves a cross-directory descendant from its own source and refreshes every source', async () => {
+    setStatuses('/source', { root: 'idle', child: 'idle' });
+    const result = await moveSessionTreeToExistingWorktree({
+      root: makeSession('root'),
+      descendants: [makeSession('child', '/child-source')],
+      sourceDirectory: '/source',
+      destination: makeWorktreeMetadata(),
+    });
+
+    expect(result).toBe('/destination');
+    expect(moveCalls).toEqual([
+      { sessionId: 'child', sourceDirectory: '/child-source', destinationDirectory: '/destination' },
+      { sessionId: 'root', sourceDirectory: '/source', destinationDirectory: '/destination' },
+    ]);
+    expect(refreshCalls).toEqual([['/source', '/child-source', '/destination']]);
+  });
+
   test('rejects a destination that normalizes to the source directory', async () => {
     setStatuses('/source', { root: 'idle' });
 
@@ -512,6 +529,26 @@ describe('moveSessionTreeToExistingWorktree', () => {
     expect(storedMetadata.get(childB.id)).toBe(previousChildBMetadata);
     expect(removeWorktreeCalls).toEqual([]);
     expect(refreshCalls).toEqual([]);
+  });
+
+  test('rolls back a child to its own source when the root move fails', async () => {
+    setStatuses('/source', { root: 'idle', child: 'idle' });
+    moveSessionImplementation = async (session, sourceDirectory) => {
+      if (session.id === 'root' && sourceDirectory === '/source') throw new Error('root failed');
+    };
+
+    await expect(moveSessionTreeToExistingWorktree({
+      root: makeSession('root'),
+      descendants: [makeSession('child', '/child-source')],
+      sourceDirectory: '/source',
+      destination: makeWorktreeMetadata(),
+    })).rejects.toThrow('root failed');
+
+    expect(moveCalls).toEqual([
+      { sessionId: 'child', sourceDirectory: '/child-source', destinationDirectory: '/destination' },
+      { sessionId: 'root', sourceDirectory: '/source', destinationDirectory: '/destination' },
+      { sessionId: 'child', sourceDirectory: '/destination', destinationDirectory: '/child-source' },
+    ]);
   });
 
   test('rolls back an earlier child and never moves a later descendant that becomes busy', async () => {
@@ -778,6 +815,24 @@ describe('moveSessionTreeToExistingWorktree', () => {
   // directory out from under a session that moved there.
   test('keeps a newly created worktree when the move fails ambiguously', async () => {
     setStatuses('/source', { root: 'idle' });
+    moveSessionImplementation = async (_session, sourceDirectory) => {
+      if (sourceDirectory === '/source') throw new Error('Request timed out');
+    };
+
+    requestSessionTreeMove(makeQuickIntent());
+
+    await waitFor(() => toastErrors.length === 1);
+    expect(toastErrors).toEqual([{ title: 'move failed', description: 'worktree kept' }]);
+    expect(moveCalls).toEqual([
+      { sessionId: 'root', sourceDirectory: '/source', destinationDirectory: '/created-worktree' },
+      { sessionId: 'root', sourceDirectory: '/created-worktree', destinationDirectory: '/source' },
+    ]);
+    expect(removeWorktreeCalls).toEqual([]);
+    expect(refreshCalls).toEqual([['/source', '/created-worktree']]);
+  });
+
+  test('reports an incomplete rollback when the ambiguous move cannot be reversed', async () => {
+    setStatuses('/source', { root: 'idle' });
     moveSessionImplementation = async () => {
       throw new Error('Request timed out');
     };
@@ -785,15 +840,19 @@ describe('moveSessionTreeToExistingWorktree', () => {
     requestSessionTreeMove(makeQuickIntent());
 
     await waitFor(() => toastErrors.length === 1);
-    expect(toastErrors).toEqual([{ title: 'move failed', description: 'worktree kept' }]);
+    expect(toastErrors[0]?.description).toContain('could not be fully rolled back');
+    expect(moveCalls).toEqual([
+      { sessionId: 'root', sourceDirectory: '/source', destinationDirectory: '/created-worktree' },
+      { sessionId: 'root', sourceDirectory: '/created-worktree', destinationDirectory: '/source' },
+    ]);
     expect(removeWorktreeCalls).toEqual([]);
     expect(refreshCalls).toEqual([['/source', '/created-worktree']]);
   });
 
   test('keeps a newly created worktree when a descendant fails ambiguously before the root moved', async () => {
     setStatuses('/source', { root: 'idle', child: 'idle' });
-    moveSessionImplementation = async (session) => {
-      if (session.id === 'child') throw new Error('Request timed out');
+    moveSessionImplementation = async (session, sourceDirectory) => {
+      if (session.id === 'child' && sourceDirectory === '/source') throw new Error('Request timed out');
     };
 
     requestSessionTreeMove({
@@ -808,6 +867,7 @@ describe('moveSessionTreeToExistingWorktree', () => {
     expect(toastErrors).toEqual([{ title: 'move failed', description: 'worktree kept' }]);
     expect(moveCalls).toEqual([
       { sessionId: 'child', sourceDirectory: '/source', destinationDirectory: '/created-worktree' },
+      { sessionId: 'child', sourceDirectory: '/created-worktree', destinationDirectory: '/source' },
     ]);
     expect(removeWorktreeCalls).toEqual([]);
     expect(refreshCalls).toEqual([['/source', '/created-worktree']]);
@@ -829,10 +889,11 @@ describe('moveSessionTreeToExistingWorktree', () => {
 
     await waitFor(() => toastErrors.length === 1);
     expect(toastErrors).toEqual([{ title: 'move failed', description: 'worktree kept' }]);
-    // The definitely moved child rolls back; the root's placement is unknown.
+    // Both the ambiguous root and definitely moved child are reversed.
     expect(moveCalls).toEqual([
       { sessionId: 'child', sourceDirectory: '/source', destinationDirectory: '/created-worktree' },
       { sessionId: 'root', sourceDirectory: '/source', destinationDirectory: '/created-worktree' },
+      { sessionId: 'root', sourceDirectory: '/created-worktree', destinationDirectory: '/source' },
       { sessionId: 'child', sourceDirectory: '/created-worktree', destinationDirectory: '/source' },
     ]);
     expect(removeWorktreeCalls).toEqual([]);

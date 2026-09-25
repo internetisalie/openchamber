@@ -1,4 +1,4 @@
-import type { Message, Part } from '@/lib/opencode/model';
+import type { Message, Part, Session } from '@/lib/opencode/model';
 import { hasParts } from '@/lib/opencode/model';
 import { getRegisteredRuntimeAPIs } from '@/contexts/runtimeAPIRegistry';
 import { getCurrentIntlLocale } from '@/lib/i18n';
@@ -6,6 +6,7 @@ import { isVSCodeRuntime, openDesktopPath, revealDesktopPath, saveDesktopMarkdow
 import { getRevealLabelKey } from '@/lib/utils';
 import { readContextPart } from '@/lib/messages/contextParts';
 import { formatContextMessage, formatMessageText } from '@/lib/messages/messageMarkdown';
+import { normalizePath } from '@/lib/pathNormalization';
 
 export type SessionMessageRecord = { info: Message; parts: Part[] };
 
@@ -15,6 +16,44 @@ export type ChildSessionExport = {
   records: SessionMessageRecord[];
   children: ChildSessionExport[];
 };
+
+type ChildSessionExportNode = { session: Session; children: readonly ChildSessionExportNode[] };
+
+export async function collectChildSessionExports(input: {
+  children: readonly ChildSessionExportNode[];
+  fallbackDirectory: string | null;
+  loadRecords: (request: { directory: string; sessionID: string }) => Promise<SessionMessageRecord[] | null>;
+  untitledSubagentTitle: string;
+}): Promise<{ children: ChildSessionExport[]; skipped: number }> {
+  const countSubtree = (node: ChildSessionExportNode): number =>
+    1 + node.children.reduce((count, child) => count + countSubtree(child), 0);
+
+  const collect = async (nodes: readonly ChildSessionExportNode[]): Promise<{ children: ChildSessionExport[]; skipped: number }> => {
+    const children: ChildSessionExport[] = [];
+    let skipped = 0;
+    for (const node of nodes) {
+      try {
+        const directory = normalizePath(node.session.directory) ?? input.fallbackDirectory;
+        if (!directory) throw new Error('Session directory is required for export');
+        const records = await input.loadRecords({ directory, sessionID: node.session.id });
+        if (!records) throw new Error('Session runtime changed during export');
+        const descendants = await collect(node.children);
+        skipped += descendants.skipped;
+        children.push({
+          title: node.session.title || input.untitledSubagentTitle,
+          agent: node.session.agent,
+          records,
+          children: descendants.children,
+        });
+      } catch {
+        skipped += countSubtree(node);
+      }
+    }
+    return { children, skipped };
+  };
+
+  return collect(input.children);
+}
 
 function formatTimestamp(timestamp: number | undefined): string {
   if (typeof timestamp !== 'number' || !Number.isFinite(timestamp)) {

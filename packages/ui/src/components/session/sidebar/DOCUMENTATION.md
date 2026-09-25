@@ -26,17 +26,15 @@ kept at this root in `types.ts` and `utils.tsx`.
 - Root session right-click and overflow menus expose `Move to worktree`: a submenu
   listing the canonical primary and linked worktree destinations, with the current
   target disabled and a separate `New worktree...` action. Opening the submenu
-  refreshes the worktree topology. Moving transfers the full idle subtree. Clean
-  and non-Git sources move session-only; a dirty Git source prompts to move only
-  the session, move all source changes, or cancel. Descendants move first without
-  changes and roll back session-only if a later descendant fails. The root moves
-  last and carries source changes once, which prevents rollback from replaying the
-  transferred patch into the source.
+  refreshes the worktree topology. Moving transfers the full idle subtree,
+  session-only. Descendants move from their own authoritative directories, and
+  rollback returns each to its own source. Refresh covers every source
+  directory and the destination. The root moves last.
 - Failure cleanup: a worktree created for the move is removed only after a
-  definite failure. When the change-carrying request fails without confirming
-  its outcome, that worktree is KEPT (it may hold the only copy of the user's
-  changes), both directories are refreshed authoritatively because the session
-  may have moved server-side, and the toast points the user at the destination.
+  definite failure. When a move fails without confirming its outcome, the
+  session is reversed if possible, but the worktree is kept because the
+  original move may still complete. Every source and the destination are
+  refreshed authoritatively, and the toast points the user at the destination.
   Existing destinations are never removed; they get the same guidance.
 
 `MainLayout` and `VSCodeLayout` call `useSessionListSync({ isVSCode })`

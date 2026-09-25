@@ -23,7 +23,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { isSessionPinned, useSessionPinnedStore } from '@/stores/useSessionPinnedStore';
 import { Icon } from "@/components/icon/Icon";
-import { buildExportFilename, downloadAsMarkdown, formatSessionAsMarkdown, getExportRevealLabelKey, revealExportedMarkdown, saveAsMarkdownDesktop } from '@/lib/exportSession';
+import { buildExportFilename, collectChildSessionExports, downloadAsMarkdown, formatSessionAsMarkdown, getExportRevealLabelKey, revealExportedMarkdown, saveAsMarkdownDesktop } from '@/lib/exportSession';
 import type { ChildSessionExport } from '@/lib/exportSession';
 import { GuestIcon } from '@/components/layout/GuestRailIcon';
 import { useGuestActions } from '@/hooks/useGuestSurfaces';
@@ -570,30 +570,13 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
   const descendantCount = React.useMemo(() => collectNodeDescendantIds(node).length, [collectNodeDescendantIds, node]);
 
   const collectChildExports = React.useCallback(async (children: SessionNode[]): Promise<{ children: ChildSessionExport[]; skipped: number }> => {
-    const results: ChildSessionExport[] = [];
-    let skipped = 0;
-    for (const child of children) {
-      try {
-        if (!sessionDirectory) throw new Error('Session directory is required for export');
-        const childRecords = await loadExportRecords({ directory: sessionDirectory, sessionID: child.session.id });
-        if (!childRecords) throw new Error('Session runtime changed during export');
-        const childTitle = child.session.title || t('sessions.sidebar.session.export.untitledSubagent');
-        // SAFETY: OpenCode session payloads may carry the optional agent label used by exports.
-        const childAgent = (child.session as Session & { agent?: string }).agent;
-        const grandChildren = await collectChildExports(child.children);
-        skipped += grandChildren.skipped;
-        results.push({
-          title: childTitle,
-          agent: childAgent,
-          records: childRecords,
-          children: grandChildren.children,
-        });
-      } catch {
-        skipped += collectNodeDescendantIds(child).length + 1;
-      }
-    }
-    return { children: results, skipped };
-  }, [collectNodeDescendantIds, loadExportRecords, sessionDirectory, t]);
+    return collectChildSessionExports({
+      children,
+      fallbackDirectory: sessionDirectory,
+      loadRecords: loadExportRecords,
+      untitledSubagentTitle: t('sessions.sidebar.session.export.untitledSubagent'),
+    });
+  }, [loadExportRecords, sessionDirectory, t]);
 
   const showSkippedSubtasksWarning = React.useCallback((count: number) => {
     if (count <= 0) return;
