@@ -17,7 +17,7 @@ export type SessionSidebarActivityItem = {
   getSecondaryMeta?: (sessionId: string) => SessionSidebarActivityItem['secondaryMeta'];
 };
 
-export type SessionSidebarActivityKey = 'chats' | 'active-now' | 'timeline';
+export type SessionSidebarActivityKey = 'chats' | 'global' | 'active-now' | 'timeline';
 
 // 'timeline-chat' is a Chats row inside the timeline view: one line, no left
 // gutter, status and pin on the right like the three-line timeline rows.
@@ -90,6 +90,7 @@ export type SessionSidebarRowModelArgs = {
   sections: readonly ProjectSection[];
   authoritativeSections: readonly ProjectSection[];
   chatGroup: SessionGroup | null;
+  globalGroup: SessionGroup | null;
   recentSections: readonly SessionSidebarActivitySection[];
   timelineItems?: readonly SessionSidebarActivityItem[];
   showRecentSection: boolean;
@@ -212,6 +213,7 @@ export const buildSessionSidebarRowModel = (args: SessionSidebarRowModelArgs): S
   const authoritativeRoots = [
     ...args.authoritativeSections.flatMap((section) => section.groups.flatMap((group) => group.sessions)),
     ...(args.chatGroup?.sessions ?? []),
+    ...(args.globalGroup?.sessions ?? []),
   ];
   const authorityStack = [...authoritativeRoots];
   while (authorityStack.length > 0) {
@@ -399,7 +401,7 @@ export const buildSessionSidebarRowModel = (args: SessionSidebarRowModelArgs): S
       });
       if (ownerKey) folderDropTargets.push(Object.freeze({ rowKey: folderKey, scopeKey: entry.scopeKey, folderId: entry.folder.id, ownerKey, enabled: dropEnabled }));
       if (folderCollapsed) return;
-      appendSessions({ nodes: entry.nodes, containerKey: folderKey, projectId, groupDirectory: entry.scopeDirectory ?? group.directory, ownerKey, selectionScopeKey: ownerKey, archived: group.isArchivedBucket === true, renderContext: 'project', indexedNodes: indexed, selectionPoolOffset });
+      appendSessions({ nodes: entry.nodes, containerKey: folderKey, projectId, groupDirectory: entry.scopeDirectory ?? group.directory, ownerKey, selectionScopeKey: ownerKey, archived: group.isArchivedBucket === true, renderContext: limits?.renderContext ?? 'project', indexedNodes: indexed, selectionPoolOffset });
       for (const child of childFolders.get(identity) ?? []) appendFolder(child, displayName);
     };
     for (const folder of roots) appendFolder(folder, '');
@@ -459,6 +461,16 @@ export const buildSessionSidebarRowModel = (args: SessionSidebarRowModelArgs): S
           ? { initial: TIMELINE_CHATS_INITIAL_LIMIT, increment: TIMELINE_CHATS_INCREMENT, pinnedAlwaysVisible: true, renderContext: 'timeline-chat' }
           : undefined);
       }
+    }
+  }
+
+  if (args.globalGroup) {
+    const globalSearchData = args.groupSearchDataByGroup.get(args.globalGroup);
+    if (!search || globalSearchData?.hasMatch === true) {
+      const collapsed = appendActivityHeader('global');
+      if (!collapsed) appendGroup(args.globalGroup, 'activity:global', null, true, {
+        initial: 7, increment: 7, pinnedAlwaysVisible: true, renderContext: 'recent',
+      });
     }
   }
 

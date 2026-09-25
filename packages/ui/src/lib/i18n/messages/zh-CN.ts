@@ -527,6 +527,7 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.empty.noMatches.description': '请尝试其他标题、分支、文件夹或路径。',
   'sessions.sidebar.activity.recentTitle': '最近',
   'sessions.sidebar.activity.chatsTitle': '聊天',
+  'sessions.sidebar.activity.globalTitle': '全局',
   'sessions.sidebar.activity.timelineTitle': '项目',
   'sessions.sidebar.header.viewMode.label': '视图',
   'sessions.sidebar.header.viewMode.projects': '分组',

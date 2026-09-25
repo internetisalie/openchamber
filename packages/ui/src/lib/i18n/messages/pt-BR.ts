@@ -526,6 +526,7 @@ export const dict: Record<I18nKey, string> = {
   "sessions.sidebar.empty.noMatches.title": "Não há sessões coincidentes",
   "sessions.sidebar.empty.noMatches.description": "Tente com outro título, branch, pasta ou caminho.",
   "sessions.sidebar.activity.recentTitle": "recente",
+  "sessions.sidebar.activity.globalTitle": "global",
   "sessions.sidebar.activity.chatsTitle": "conversas",
   "sessions.sidebar.activity.timelineTitle": "Projetos",
   "sessions.sidebar.header.viewMode.label": "Visualização",

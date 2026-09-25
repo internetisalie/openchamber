@@ -540,6 +540,7 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.empty.noMatches.description': '請嘗試其他標題、分支、資料夾或路徑。',
   'sessions.sidebar.activity.recentTitle': '最近',
   'sessions.sidebar.activity.chatsTitle': '聊天',
+  'sessions.sidebar.activity.globalTitle': '全域',
   'sessions.sidebar.activity.timelineTitle': '專案',
   'sessions.sidebar.header.viewMode.label': '檢視',
   'sessions.sidebar.header.viewMode.projects': '分組',

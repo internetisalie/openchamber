@@ -351,6 +351,7 @@ export const dict = {
   'sessions.sidebar.empty.noMatches.description': 'Essayez un autre titre, branche, dossier ou chemin.',
   'sessions.sidebar.activity.recentTitle': 'récent',
   'sessions.sidebar.activity.chatsTitle': 'discussions',
+  'sessions.sidebar.activity.globalTitle': 'global',
   'sessions.sidebar.activity.timelineTitle': 'Projets',
   'sessions.sidebar.header.viewMode.label': 'Affichage',
   'sessions.sidebar.header.viewMode.projects': 'Groupé',

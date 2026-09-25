@@ -337,6 +337,7 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.empty.noMatches.description': 'Spróbuj innego tytułu, gałęzi, folderu lub ścieżki.',
   'sessions.sidebar.activity.recentTitle': 'ostatnie',
   'sessions.sidebar.activity.chatsTitle': 'czaty',
+  'sessions.sidebar.activity.globalTitle': 'globalne',
   'sessions.sidebar.activity.timelineTitle': 'Projekty',
   'sessions.sidebar.header.viewMode.label': 'Widok',
   'sessions.sidebar.header.viewMode.projects': 'Pogrupowane',

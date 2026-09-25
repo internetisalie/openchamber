@@ -527,6 +527,7 @@ export const dict = {
   'sessions.sidebar.activity.recentTitle': 'recent',
   'sessions.sidebar.activity.timelineTitle': 'projects',
   'sessions.sidebar.activity.chatsTitle': 'chats',
+  'sessions.sidebar.activity.globalTitle': 'global',
   'sessions.sidebar.activity.chatsEmpty': 'No chats yet.',
   'chat.chatInput.chooseProject': 'Choose project',
   'sessions.archivePage.allDirectories': 'All directories',

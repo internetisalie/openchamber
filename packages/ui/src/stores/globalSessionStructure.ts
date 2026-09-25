@@ -1,5 +1,6 @@
 import type { Session } from '@/lib/opencode/model';
 import { normalizePath } from '@/lib/pathNormalization';
+import { isSessionArchived } from '@/lib/sessionArchive';
 
 export type GlobalSessionStructure = {
   activeSessionIds: readonly string[];
@@ -96,7 +97,7 @@ export const mergeSessionDirectoryMetadata = (incoming: Session, existing?: Sess
   return changed ? next : incoming;
 };
 
-const locationOf = (session: Session): SessionLocation | null => session.time?.archived ? null : ({
+const locationOf = (session: Session): SessionLocation | null => isSessionArchived(session) ? null : ({
   directory: resolveGlobalSessionDirectory(session),
   parentId: parentIdOf(session),
 });

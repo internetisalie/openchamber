@@ -526,6 +526,7 @@ export const dict: Record<I18nKey, string> = {
   "sessions.sidebar.empty.noMatches.title": "Немає відповідних сесій",
   "sessions.sidebar.empty.noMatches.description": "Спробуйте інший заголовок, гілку, папку або шлях.",
   "sessions.sidebar.activity.recentTitle": "Останні",
+  "sessions.sidebar.activity.globalTitle": "Глобальні",
   "sessions.sidebar.activity.chatsTitle": "Чати",
   "sessions.sidebar.activity.timelineTitle": "Проєкти",
   "sessions.sidebar.header.viewMode.label": "Вигляд",

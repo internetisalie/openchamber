@@ -527,6 +527,7 @@ export const dict: Record<I18nKey, string> = {
   'sessions.sidebar.empty.noMatches.description': '別のタイトル、ブランチ、フォルダ、パスをお試しください。',
   'sessions.sidebar.activity.recentTitle': '最近',
   'sessions.sidebar.activity.chatsTitle': 'チャット',
+  'sessions.sidebar.activity.globalTitle': 'グローバル',
   'sessions.sidebar.activity.timelineTitle': 'プロジェクト',
   'sessions.sidebar.header.viewMode.label': '表示',
   'sessions.sidebar.header.viewMode.projects': 'グループ表示',

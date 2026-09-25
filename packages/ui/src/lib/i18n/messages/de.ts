@@ -483,6 +483,7 @@ export const dict = {
   'sessions.sidebar.empty.noMatches.description': 'Versuchen Sie einen anderen Titel, Branch, Ordner oder Pfad.',
   'sessions.sidebar.activity.recentTitle': 'kürzlich',
   'sessions.sidebar.activity.chatsTitle': 'Chats',
+  'sessions.sidebar.activity.globalTitle': 'global',
   'sessions.sidebar.activity.timelineTitle': 'Projekte',
   'sessions.sidebar.header.viewMode.label': 'Ansicht',
   'sessions.sidebar.header.viewMode.projects': 'Gruppiert',
