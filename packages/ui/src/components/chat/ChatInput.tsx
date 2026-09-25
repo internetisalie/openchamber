@@ -75,6 +75,7 @@ import { useThemeSystem } from '@/contexts/useThemeSystem';
 import { GitHubIssuePickerDialog } from '@/components/session/GitHubIssuePickerDialog';
 import { GitHubPrPickerDialog } from '@/components/session/GitHubPrPickerDialog';
 import { LinearIssuePickerDialog } from '@/components/session/LinearIssuePickerDialog';
+import { GiteaPickerDialog } from '@/components/session/gitea-picker-dialog';
 import { Icon } from "@/components/icon/Icon";
 import { DraftPresetChips } from './DraftPresetChips';
 import { useChatSearchDirectory } from '@/hooks/useChatSearchDirectory';
@@ -590,7 +591,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const isExpandedInput = !isBtwActive && persistedExpandedInput;
     const setExpandedInput = useUIStore((state) => state.setExpandedInput);
     const setTimelineDialogOpen = useUIStore((state) => state.setTimelineDialogOpen);
-    const { git: runtimeGit, vscode: vscodeApi, linear: runtimeLinear } = useRuntimeAPIs();
+    const { git: runtimeGit, vscode: vscodeApi, linear: runtimeLinear, gitea: runtimeGitea } = useRuntimeAPIs();
     const cycleAgentShortcutOverride = useUIStore((state) => state.shortcutOverrides.cycle_agent);
     const cycleAgentShortcut = React.useMemo(() => (
         getEffectiveShortcutCombo('cycle_agent', cycleAgentShortcutOverride ? { cycle_agent: cycleAgentShortcutOverride } : undefined)
@@ -943,6 +944,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const [issuePickerOpen, setIssuePickerOpen] = React.useState(false);
     const [prPickerOpen, setPrPickerOpen] = React.useState(false);
     const [linearPickerOpen, setLinearPickerOpen] = React.useState(false);
+    const [giteaPickerOpen, setGiteaPickerOpen] = React.useState(false);
     const [linkedIssue, setLinkedIssue] = React.useState<{
         number: number;
         title: string;
@@ -1211,7 +1213,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         }
     }, [isBtwActive, pendingInputText, consumePendingInputText]);
 
-    const hasContent = message.trim().length > 0 || attachedFiles.length > 0 || hasDrafts;
+    const hasGiteaContext = !isBtwActive && Boolean(linkedGuestIssue?.providerId.startsWith('gitea:'));
+    const hasContent = message.trim().length > 0 || attachedFiles.length > 0 || hasDrafts || hasGiteaContext;
     const hasQueuedMessages = !isBtwActive && queuedMessages.length > 0;
     const preparingBtwSend = useBtwStore((state) => Boolean(currentSessionId && state.byParent[currentSessionId]?.pendingSend));
     const canSend = (hasContent || hasQueuedMessages) && !(isBtwActive && (btwPanel.creating || preparingBtwSend));
@@ -1222,9 +1225,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         const currentMessage = composerRef.current?.getValue() ?? message;
         return {
             message: currentMessage,
-            hasContent: currentMessage.trim().length > 0 || attachedFiles.length > 0 || hasDrafts,
+            hasContent: currentMessage.trim().length > 0 || attachedFiles.length > 0 || hasDrafts || hasGiteaContext,
         };
-    }, [attachedFiles.length, hasDrafts, message]);
+    }, [attachedFiles.length, hasDrafts, hasGiteaContext, message]);
 
     // Keep a ref to handleSubmit so callbacks don't depend on it.
     type SubmitOptions = {
@@ -1477,6 +1480,9 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
 
     const openLinearPicker = React.useCallback(() => {
         setLinearPickerOpen(true);
+    }, []);
+    const openGiteaPicker = React.useCallback(() => {
+        setGiteaPickerOpen(true);
     }, []);
 
     const getSubmitErrorMessage = (error: unknown, fallback: string) => {
@@ -3311,6 +3317,10 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         // extension may be paused or removed here. Say so instead of opening
         // an empty surface.
         const installed = useGuestsStore.getState().guests.find((entry) => entry.id === issue.providerId);
+        if (issue.providerId.startsWith('gitea:')) {
+            window.open(issue.url, '_blank', 'noopener,noreferrer');
+            return;
+        }
         if (!installed || !isGuestActive(installed)) {
             toast.info(t('chat.chatInput.toast.guestUnavailableHere'));
             return;
@@ -3364,6 +3374,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
         }
     }, [consumePendingGuestIssue, handleGuestAttach, pendingGuestIssue]);
     const showLinearPicker = Boolean(runtimeLinear) && !isVSCode;
+    const showGiteaPicker = Boolean(runtimeGitea) && !isVSCode;
     const showDraftTargetSelectors = newSessionDraftOpen && !isVSCode;
 
     // Which project and directory a new session will target.
@@ -3962,6 +3973,8 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         onOpenPrPicker={openPrPicker}
                         showLinearPicker={showLinearPicker}
                         onOpenLinearPicker={openLinearPicker}
+                        showGiteaPicker={showGiteaPicker}
+                        onOpenGiteaPicker={openGiteaPicker}
                         attachGuests={isMobile ? [] : guestAttachItems}
                         onOpenGuestAttach={openGuestAttach}
                         onOpenAttachSheet={openMobileAttachSheet}
@@ -4097,6 +4110,24 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                 setLinkedGuestIssue(null);
             }}
         />
+        <GiteaPickerDialog
+            open={giteaPickerOpen}
+            onOpenChange={setGiteaPickerOpen}
+            onSelect={(selection) => handleGuestAttach({
+                providerId: selection.providerId,
+                id: selection.id,
+                title: selection.title,
+                url: selection.url,
+                text: selection.contextText,
+                kind: selection.thread,
+                author: selection.author,
+                data: {
+                    instanceUrl: selection.instanceUrl,
+                    owner: selection.owner,
+                    repo: selection.repo,
+                },
+            })}
+        />
         <ReviewFlowDialog
             open={reviewDialogOpen}
             onOpenChange={setReviewDialogOpen}
@@ -4190,6 +4221,18 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                         >
                             <Icon name="linear" className="h-[18px] w-[18px] flex-shrink-0 text-muted-foreground" />
                             {t('chat.chatInput.actions.linkLinearIssue')}
+                        </button>
+                    ) : null}
+                    {showGiteaPicker ? (
+                        <button type="button"
+                            className="flex w-full cursor-pointer items-center gap-2.5 rounded-lg px-2 py-3 text-left typography-ui-label hover:bg-[var(--interactive-hover)]"
+                            onClick={() => {
+                                mobileShell.skipNextOverlayCloseRestore();
+                                setMobileAttachMenuOpen(false);
+                                requestAnimationFrame(openGiteaPicker);
+                            }}>
+                            <Icon name="server" className="h-[18px] w-[18px] flex-shrink-0 text-muted-foreground" />
+                            {t('settings.integrations.gitea.title')}
                         </button>
                     ) : null}
                 </div>

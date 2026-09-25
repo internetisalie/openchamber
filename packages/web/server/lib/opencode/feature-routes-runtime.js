@@ -5,6 +5,7 @@ import { registerWalkthroughRoutes } from '../walkthrough/routes.js';
 import { registerSessionGoalRoutes } from '../session-goal/routes.js';
 import { registerGitHubRoutes } from '../github/routes.js';
 import { registerLinearRoutes } from '../linear/routes.js';
+import { registerGiteaRoutes } from '../gitea/routes.js';
 import { registerGuestRoutes } from '../guests/routes.js';
 import { registerBuiltInGuests } from '../guests/catalog.js';
 import { extensionsPersistPath } from '../guests/persist.js';
@@ -331,6 +332,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
     registerSessionGoalRoutes(app);
     registerGitHubRoutes(app);
     registerLinearRoutes(app);
+    registerGiteaRoutes(app);
     await registerBuiltInGuests({ persistPath: extensionsPersistPath(openchamberDataDir), root: routeDependencies.builtInExtensionsDir });
     registerGuestRoutes(app, { openchamberDataDir, openchamberVersion, resolveGitBinaryForSpawn, resolveOptionalProjectDirectory, getSmallModelService, onGuestDeactivated, surfaceViewerHeaders });
     registerGitRoutes(app, {

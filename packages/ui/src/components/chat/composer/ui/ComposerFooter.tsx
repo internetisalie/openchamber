@@ -59,6 +59,8 @@ export interface ComposerFooterProps {
     onOpenPrPicker: () => void;
     showLinearPicker?: boolean;
     onOpenLinearPicker?: () => void;
+    showGiteaPicker?: boolean;
+    onOpenGiteaPicker?: () => void;
     attachGuests?: readonly GuestAttachItem[];
     onOpenGuestAttach?: (guestId: string) => void;
     onOpenAttachSheet: () => void;
@@ -106,6 +108,8 @@ export function ComposerFooter(props: ComposerFooterProps) {
         onOpenPrPicker,
         showLinearPicker,
         onOpenLinearPicker,
+        showGiteaPicker,
+        onOpenGiteaPicker,
         attachGuests,
         onOpenGuestAttach,
         onOpenAttachSheet,
@@ -150,6 +154,8 @@ export function ComposerFooter(props: ComposerFooterProps) {
                                 openPrPicker={onOpenPrPicker}
                                 showLinearPicker={showLinearPicker}
                                 openLinearPicker={onOpenLinearPicker}
+                                showGiteaPicker={showGiteaPicker}
+                                openGiteaPicker={onOpenGiteaPicker}
                                 onOpenSettings={isBtw ? undefined : onOpenSettings}
                                 onOpenMobileSheet={onOpenAttachSheet}
                                 attachGuests={attachGuests}
@@ -224,6 +230,8 @@ export function ComposerFooter(props: ComposerFooterProps) {
                             openPrPicker={onOpenPrPicker}
                             showLinearPicker={showLinearPicker}
                             openLinearPicker={onOpenLinearPicker}
+                            showGiteaPicker={showGiteaPicker}
+                            openGiteaPicker={onOpenGiteaPicker}
                             onOpenSettings={isBtw ? undefined : onOpenSettings}
                             attachGuests={attachGuests}
                             onOpenGuestAttach={onOpenGuestAttach}

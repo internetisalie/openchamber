@@ -48,6 +48,8 @@ function formatContext(payload: ContextPartPayload, originalText: string, fieldL
       return quoteContext(`Terminal ${payload.terminalLabel}, lines ${payload.startLine}-${payload.endLine}:`, payload.output, '', fieldLimit, '');
     case 'github-issue':
     case 'github-pr':
+    case 'gitea-issue':
+    case 'gitea-pr':
     case 'linear-issue':
     case 'guest-issue':
     case 'guest-pr':

@@ -1,6 +1,6 @@
 ---
 title: Integrations
-description: Connect GitHub and Linear to OpenChamber.
+description: Connect GitHub, Gitea, and Linear to OpenChamber.
 ---
 
 # Integrations
@@ -10,6 +10,14 @@ description: Connect GitHub and Linear to OpenChamber.
 ## GitHub
 
 Expand the **GitHub** card and choose **Connect GitHub** to sign in with a short device code. Once connected, OpenChamber can start sessions from issues and pull requests, attach them to messages, and open or update PRs. Everything GitHub can do is on [GitHub Issues & PRs](/github/).
+
+## Gitea
+
+Expand the **Gitea** card, enter your instance URL and a personal access token, then choose **Connect**. OpenChamber verifies the token and shows the connected account. You can connect more than one instance and disconnect each separately. HTTPS is recommended; an HTTP instance requires an explicit choice in the form.
+
+Open a project whose Git remote points to that instance. In the chat attachment menu, choose **Gitea**, then pick an open issue or pull request. You can also enter an item number directly, including a closed item. For a pull request, choose whether to include its diff. The selected item becomes context for the next message. In a new session draft, select an item and press Send to start the session with that context, with or without additional text. The message and session keep a link to the item.
+
+This connection currently reads issues, pull requests, comments, and optional PR diffs. It does not create, update, or merge pull requests.
 
 ## Linear
 

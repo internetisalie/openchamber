@@ -10,6 +10,7 @@ import { isGuestActive } from '@/lib/guests/capabilities';
 import { isMobileSurfaceRuntime } from '@/lib/runtimeSurface';
 import { GitHubIntegration } from './GitHubIntegration';
 import { LinearSettings } from './LinearSettings';
+import { GiteaIntegration } from './gitea-integration';
 
 export const IntegrationsPage: React.FC = () => {
   const { t } = useI18n();
@@ -17,12 +18,13 @@ export const IntegrationsPage: React.FC = () => {
   // uses the editor's own GitHub session instead.
   const hasGitHub = !isVSCodeRuntime();
   const hasLinear = Boolean(getRegisteredRuntimeAPIs()?.linear);
+  const hasGitea = Boolean(getRegisteredRuntimeAPIs()?.gitea);
   const guests = useGuestsStore((state) => state.guests);
   const runtimeKey = useGuestsStore((state) => state.runtimeKey);
   const builtInGuests = !isVSCodeRuntime() && !isMobileSurfaceRuntime()
     ? guests.filter((guest) => guest.source === 'bundled' && guest.integration && isGuestActive(guest))
     : [];
-  const hasBuiltIn = hasGitHub || hasLinear || builtInGuests.length > 0;
+  const hasBuiltIn = hasGitHub || hasLinear || hasGitea || builtInGuests.length > 0;
 
   return (
     <SettingsPageLayout
@@ -40,6 +42,7 @@ export const IntegrationsPage: React.FC = () => {
         >
           {hasGitHub ? <GitHubIntegration /> : null}
           {hasLinear ? <LinearSettings /> : null}
+          {hasGitea ? <GiteaIntegration key={runtimeKey} /> : null}
           {builtInGuests.map((guest) => <GuestIntegrationCard key={`${runtimeKey}:${guest.id}`} guest={guest} />)}
         </SettingsSection>
       ) : null}

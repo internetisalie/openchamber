@@ -213,6 +213,8 @@ const UserContextPart: React.FC<{
         }
         case 'github-issue':
         case 'github-pr':
+        case 'gitea-issue':
+        case 'gitea-pr':
         case 'linear-issue':
         case 'guest-issue':
         case 'guest-pr':

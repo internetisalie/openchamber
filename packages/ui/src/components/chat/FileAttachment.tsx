@@ -558,8 +558,10 @@ const GITHUB_PR_LINK_MIME = 'application/vnd.github.pull-request-link';
 const LINEAR_ISSUE_LINK_MIME = 'application/vnd.openchamber.linear-issue-link';
 const GUEST_ISSUE_LINK_MIME = 'application/vnd.openchamber.guest-issue-link';
 const GUEST_PR_LINK_MIME = 'application/vnd.openchamber.guest-pr-link';
+const GITEA_ISSUE_LINK_MIME = 'application/vnd.openchamber.gitea-issue-link';
+const GITEA_PR_LINK_MIME = 'application/vnd.openchamber.gitea-pr-link';
 
-type IssueLinkKind = 'github-issue' | 'github-pr' | 'linear-issue' | 'guest-issue' | 'guest-pr';
+type IssueLinkKind = 'github-issue' | 'github-pr' | 'linear-issue' | 'guest-issue' | 'guest-pr' | 'gitea-issue' | 'gitea-pr';
 
 const getIssueLinkKind = (file: FilePart): IssueLinkKind | null => {
   if (file.mime === GITHUB_ISSUE_LINK_MIME) {
@@ -577,12 +579,15 @@ const getIssueLinkKind = (file: FilePart): IssueLinkKind | null => {
   if (file.mime === GUEST_PR_LINK_MIME) {
     return 'guest-pr';
   }
+  if (file.mime === GITEA_ISSUE_LINK_MIME) return 'gitea-issue';
+  if (file.mime === GITEA_PR_LINK_MIME) return 'gitea-pr';
   return null;
 };
 
-const issueLinkIcon = (kind: IssueLinkKind): 'github' | 'git-pull-request' | 'linear' | 'attachment-2' => {
-  if (kind === 'github-pr' || kind === 'guest-pr') return 'git-pull-request';
+const issueLinkIcon = (kind: IssueLinkKind): 'github' | 'git-pull-request' | 'linear' | 'attachment-2' | 'server' => {
+  if (kind === 'github-pr' || kind === 'guest-pr' || kind === 'gitea-pr') return 'git-pull-request';
   if (kind === 'linear-issue') return 'linear';
+  if (kind === 'gitea-issue') return 'server';
   if (kind === 'guest-issue') return 'attachment-2';
   return 'github';
 };

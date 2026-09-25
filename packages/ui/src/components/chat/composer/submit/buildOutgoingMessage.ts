@@ -224,17 +224,25 @@ export function buildComposerContext(
 
     if (input.linkedGuestIssue) {
         const { providerId, id, title, url, contextText, thread, data } = input.linkedGuestIssue;
-        const payload: Extract<ContextPartPayload, { kind: 'guest-issue' | 'guest-pr' }> = {
-            kind: thread === 'pull' ? 'guest-pr' : 'guest-issue',
-            providerId,
-            id,
-            title,
-            url,
-        };
-        if (data !== undefined) {
-            payload.data = data;
+        if (providerId.startsWith('gitea:') && data && typeof data === 'object' && !Array.isArray(data)
+            && typeof data.instanceUrl === 'string' && typeof data.owner === 'string'
+            && typeof data.repo === 'string' && Number.isInteger(Number(id)) && Number(id) > 0) {
+            attach(createContextPart({
+                kind: thread === 'pull' ? 'gitea-pr' : 'gitea-issue',
+                instanceUrl: data.instanceUrl, owner: data.owner, repo: data.repo,
+                number: Number(id), title, url,
+            }, contextText));
+        } else {
+            const payload: Extract<ContextPartPayload, { kind: 'guest-issue' | 'guest-pr' }> = {
+                kind: thread === 'pull' ? 'guest-pr' : 'guest-issue',
+                providerId,
+                id,
+                title,
+                url,
+            };
+            if (data !== undefined) payload.data = data;
+            attach(createContextPart(payload, contextText));
         }
-        attach(createContextPart(payload, contextText));
     }
 
     if (skillInstruction) {

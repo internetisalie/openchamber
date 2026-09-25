@@ -1,6 +1,7 @@
 import { extensionsSettingsI18n } from './extensions.settings.i18n';
 import { guestIntegrationsI18n } from './guest-integrations.i18n';
 import { linearIntegrationI18n } from './linear-integration.i18n';
+import { giteaIntegrationI18n } from './gitea-integration.i18n';
 export const settingsDict = {
   'settings.themeImport.selectAll': 'Selecionar tudo',
   'settings.themeImport.deselectAll': 'Desmarcar tudo',
@@ -2343,10 +2344,11 @@ export const settingsDict = {
   "settings.openchamber.visual.option.enterToSend.enter.label": "Enviar com Enter",
   "settings.openchamber.visual.option.enterToSend.modifier.label": "Enviar com Ctrl/Cmd+Enter",
   ...linearIntegrationI18n['pt-BR'],
+  ...giteaIntegrationI18n['pt-BR'],
   ...guestIntegrationsI18n['pt-BR'],
   ...extensionsSettingsI18n['pt-BR'],
   'settings.page.integrations.title': 'Integrações',
-  'settings.page.integrations.description': 'Conecte o GitHub e o Linear para que o OpenChamber possa trabalhar com suas issues e pull requests.',
+  'settings.page.integrations.description': 'Conecte o GitHub, o Gitea e o Linear para que o OpenChamber possa trabalhar com suas issues e pull requests.',
   'settings.agents.page.field.steps': 'Passos máximos',
   'settings.agents.page.field.stepsTooltip': 'Quantos passos de ferramenta o agente pode dar em um turno antes de precisar parar.',
   'settings.agents.page.field.clearStepsAria': 'Limpar passos máximos',

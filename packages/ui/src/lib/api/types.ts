@@ -1380,6 +1380,47 @@ export interface GitHubAPI {
   repoBranches(owner: string, repo: string): Promise<string[]>;
 }
 
+export interface GiteaConnection {
+  instanceUrl: string;
+  user: { login: string };
+}
+
+export interface GiteaRepository {
+  instanceUrl: string;
+  owner: string;
+  name: string;
+  remote: string;
+}
+
+export interface GiteaItem {
+  kind: 'issue' | 'pr';
+  number: number;
+  title: string;
+  body: string;
+  url: string;
+  state: 'open' | 'closed';
+  author: string | null;
+}
+
+export interface GiteaItemDetail {
+  repo: GiteaRepository;
+  item: GiteaItem;
+  comments: Array<{ author: string | null; body: string }>;
+  commentsTruncated: boolean;
+}
+
+export interface GiteaAPI {
+  connections(): Promise<GiteaConnection[]>;
+  connect(instanceUrl: string, token: string, allowHttp: boolean): Promise<GiteaConnection>;
+  disconnect(instanceUrl: string): Promise<boolean>;
+  repository(directory: string): Promise<GiteaRepository>;
+  items(directory: string, kind: GiteaItem['kind'], page?: number): Promise<{
+    repo: GiteaRepository; items: GiteaItem[]; page: number; hasMore: boolean;
+  }>;
+  item(directory: string, kind: GiteaItem['kind'], number: number): Promise<GiteaItemDetail>;
+  pullDiff(directory: string, number: number): Promise<string>;
+}
+
 export interface RemoteClientRecord {
   id: string;
   label: string;
@@ -1479,6 +1520,7 @@ export interface RuntimeAPIs {
   permissions: PermissionsAPI;
   notifications: NotificationsAPI;
   github?: GitHubAPI;
+  gitea?: GiteaAPI;
   linear?: LinearAPI;
   push?: PushAPI;
   diagnostics?: DiagnosticsAPI;

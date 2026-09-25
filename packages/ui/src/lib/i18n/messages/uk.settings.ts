@@ -1,6 +1,7 @@
 import { extensionsSettingsI18n } from './extensions.settings.i18n';
 import { guestIntegrationsI18n } from './guest-integrations.i18n';
 import { linearIntegrationI18n } from './linear-integration.i18n';
+import { giteaIntegrationI18n } from './gitea-integration.i18n';
 export const settingsDict = {
   'settings.themeImport.selectAll': 'Вибрати всі',
   'settings.themeImport.deselectAll': 'Зняти вибір',
@@ -2343,10 +2344,11 @@ export const settingsDict = {
   "settings.openchamber.visual.option.enterToSend.enter.label": "Надсилати клавішею Enter",
   "settings.openchamber.visual.option.enterToSend.modifier.label": "Надсилати за допомогою Ctrl/Cmd+Enter",
   ...linearIntegrationI18n.uk,
+  ...giteaIntegrationI18n.uk,
   ...guestIntegrationsI18n.uk,
   ...extensionsSettingsI18n.uk,
   'settings.page.integrations.title': 'Інтеграції',
-  'settings.page.integrations.description': 'Підключіть GitHub і Linear, щоб OpenChamber міг працювати з вашими задачами та pull request-ами.',
+  'settings.page.integrations.description': 'Підключіть GitHub, Gitea і Linear, щоб OpenChamber міг працювати з вашими задачами та pull request-ами.',
   'settings.agents.page.field.steps': 'Максимум кроків',
   'settings.agents.page.field.stepsTooltip': 'Скільки кроків інструментів агент може зробити за один хід, перш ніж зупинитися.',
   'settings.agents.page.field.clearStepsAria': 'Очистити максимум кроків',

@@ -308,6 +308,27 @@ describe('synthetic context', () => {
             });
     });
 
+    test('a Gitea pull keeps its instance and repository in context metadata', () => {
+        const result = buildOutgoingMessage(input({
+            composerText: 'review this',
+            linkedGuestIssue: {
+                providerId: 'gitea:https%3A%2F%2Fgit.example.com%2Fteam/alice/project',
+                id: '12',
+                title: 'Fix login',
+                url: 'https://git.example.com/team/alice/project/pulls/12',
+                contextText: 'private pull request content',
+                thread: 'pull',
+                data: { instanceUrl: 'https://git.example.com/team', owner: 'alice', repo: 'project' },
+            },
+        }), deps());
+        expect(result.additionalParts[0].text).toBe('private pull request content');
+        expect(result.additionalParts[0].metadata?.[CONTEXT_METADATA_KEY]).toEqual({
+            kind: 'gitea-pr', instanceUrl: 'https://git.example.com/team',
+            owner: 'alice', repo: 'project', number: 12, title: 'Fix login',
+            url: 'https://git.example.com/team/alice/project/pulls/12',
+        });
+    });
+
     test('synthetic texts precede the linked references', () => {
         const result = buildOutgoingMessage(input({
             composerText: 'x',

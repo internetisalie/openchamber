@@ -249,6 +249,8 @@ export const WorkStatusContextSection: React.FC<Props> = ({ sessionId, directory
                 ? 'git-pull-request'
                 : entry.kind === 'linear'
                   ? 'linear'
+                  : entry.kind === 'guest' && entry.providerId.startsWith('gitea:')
+                    ? 'server'
                   : entry.kind === 'guest'
                     ? 'attachment-2'
                     : 'error-warning'}

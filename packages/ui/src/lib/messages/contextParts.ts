@@ -101,6 +101,16 @@ type GitHubPrContext = {
     url: string;
 };
 
+type GiteaContext = {
+    kind: 'gitea-issue' | 'gitea-pr';
+    instanceUrl: string;
+    owner: string;
+    repo: string;
+    number: number;
+    title: string;
+    url: string;
+};
+
 type LinearIssueContext = {
     kind: 'linear-issue';
     identifier: string;
@@ -137,6 +147,7 @@ export type ContextPartPayload =
     | ChatQuoteContext
     | GitHubIssueContext
     | GitHubPrContext
+    | GiteaContext
     | LinearIssueContext
     | GuestIssueContext
     | GuestPrContext;
@@ -203,6 +214,8 @@ export function formatContextText(payload: ContextPartPayload): string {
             return `Attached failed GitHub PR check (${payload.label}):\n\`\`\`\n${payload.output}\n\`\`\`${payload.text ? `\n\n${payload.text}` : ''}`;
         case 'github-issue':
         case 'github-pr':
+        case 'gitea-issue':
+        case 'gitea-pr':
         case 'linear-issue':
         case 'guest-issue':
         case 'guest-pr':
@@ -365,6 +378,15 @@ const contextPayloadSchema = z.discriminatedUnion('kind', [
         number: z.number().int().positive(),
         title: z.string(),
         url: z.string(),
+    }),
+    z.object({
+        kind: z.enum(['gitea-issue', 'gitea-pr']),
+        instanceUrl: z.string().url(),
+        owner: z.string().min(1),
+        repo: z.string().min(1),
+        number: z.number().int().positive(),
+        title: z.string(),
+        url: z.string().url(),
     }),
     z.object({
         kind: z.literal('linear-issue'),
@@ -536,6 +558,8 @@ export function draftFromContextPayload(
             };
         case 'github-issue':
         case 'github-pr':
+        case 'gitea-issue':
+        case 'gitea-pr':
         case 'linear-issue':
         case 'guest-issue':
         case 'guest-pr':

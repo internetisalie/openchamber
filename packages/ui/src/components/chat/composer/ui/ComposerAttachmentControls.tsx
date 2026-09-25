@@ -30,6 +30,8 @@ type ComposerAttachmentControlsProps = {
     openPrPicker: () => void;
     showLinearPicker?: boolean;
     openLinearPicker?: () => void;
+    showGiteaPicker?: boolean;
+    openGiteaPicker?: () => void;
     onOpenSettings?: () => void;
     onMenuOpenChange?: (open: boolean) => void;
     /** Mobile: open the attachment bottom sheet instead of the dropdown menu. */
@@ -54,6 +56,8 @@ export const ComposerAttachmentControls = React.memo(function ComposerAttachment
         openPrPicker,
         showLinearPicker,
         openLinearPicker,
+        showGiteaPicker,
+        openGiteaPicker,
         onOpenSettings,
         attachGuests,
         onOpenGuestAttach,
@@ -140,6 +144,12 @@ export const ComposerAttachmentControls = React.memo(function ComposerAttachment
                                     {t('chat.chatInput.actions.linkLinearIssue')}
                                 </DropdownMenuItem>
                             ) : null}
+                            {showGiteaPicker && openGiteaPicker ? (
+                                <DropdownMenuItem onSelect={() => requestAnimationFrame(openGiteaPicker)}>
+                                    <Icon name="server"/>
+                                    {t('settings.integrations.gitea.title')}
+                                </DropdownMenuItem>
+                            ) : null}
                             {attachGuests?.map((guest) => (
                                 <DropdownMenuItem
                                     key={guest.id}
@@ -174,6 +184,7 @@ export const ComposerAttachmentControls = React.memo(function ComposerAttachment
     && prev.footerIconButtonClass === next.footerIconButtonClass
     && prev.iconSizeClass === next.iconSizeClass
     && prev.showLinearPicker === next.showLinearPicker
+    && prev.showGiteaPicker === next.showGiteaPicker
     && prev.onOpenSettings === next.onOpenSettings
     && prev.onMenuOpenChange === next.onMenuOpenChange
     && prev.onOpenMobileSheet === next.onOpenMobileSheet

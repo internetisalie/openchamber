@@ -70,6 +70,22 @@ const linkAttachmentPart = (part: TextPart): FilePart | null => {
                 filename: `PR #${payload.number}: ${payload.title}`,
                 url: payload.url,
             };
+        case 'gitea-issue':
+            return {
+                ...identity,
+                type: 'file',
+                mime: 'application/vnd.openchamber.gitea-issue-link',
+                filename: `Issue #${payload.number}: ${payload.title}`,
+                url: payload.url,
+            };
+        case 'gitea-pr':
+            return {
+                ...identity,
+                type: 'file',
+                mime: 'application/vnd.openchamber.gitea-pr-link',
+                filename: `PR #${payload.number}: ${payload.title}`,
+                url: payload.url,
+            };
         case 'linear-issue':
             return {
                 ...identity,

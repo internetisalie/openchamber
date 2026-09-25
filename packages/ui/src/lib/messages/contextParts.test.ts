@@ -119,6 +119,20 @@ describe('round-trip through part metadata', () => {
         expect(readContextPart(part)).toEqual(payload);
     });
 
+    test('Gitea references round-trip with distinct instance identity', () => {
+        const base = {
+            kind: 'gitea-issue' as const, owner: 'alice', repo: 'project',
+            number: 7, title: 'Fix login',
+        };
+        const first: ContextPartPayload = { ...base, instanceUrl: 'https://git-one.example',
+            url: 'https://git-one.example/alice/project/issues/7' };
+        const second: ContextPartPayload = { ...base, instanceUrl: 'https://git-two.example',
+            url: 'https://git-two.example/alice/project/issues/7' };
+        expect(readContextPart(asPart(first, 'first issue body'))).toEqual(first);
+        expect(readContextPart(asPart(second, 'second issue body'))).toEqual(second);
+        expect(first).not.toEqual(second);
+    });
+
     test('linear references carry picker-built text and the identifier', () => {
         const payload: ContextPartPayload = { kind: 'linear-issue', identifier: 'ENG-12', title: 'Login', url: 'https://linear.app/x/issue/ENG-12' };
         const part = asPart(payload, 'Linear issue context (JSON)\n{}');
