@@ -2,7 +2,7 @@ name: loom OpenChamber server image
 
 on:
   pull_request:
-    branches: [main, openchamber]
+    branches: [v2.0.1-internetisalie-trunk]
     paths:
       - .github/workflows/loom-server-image.yml
       - Dockerfile
@@ -12,7 +12,8 @@ on:
       - package.json
       - bun.lock
   push:
-    branches: [main, openchamber]
+    branches: [v2.0.1-internetisalie-trunk]
+    tags: [loom-image-*]
   workflow_dispatch:
 
 permissions:
