@@ -35,6 +35,9 @@ kept at this root in `types.ts` and `utils.tsx`.
   required rollback succeeds; a failed rollback keeps it and reports the
   affected session. All source directories and the destination are refreshed
   after an ambiguous outcome. Existing destinations are never removed.
+- Session Markdown export loads each descendant transcript from that session's
+  returned directory. It uses the root directory only when a descendant has no
+  directory, and a failed child load skips its subtree without dropping siblings.
 
 `MainLayout` and `VSCodeLayout` call `useSessionListSync({ isVSCode })`
 unconditionally. The hook is the only bootstrap demand owner and publishes
