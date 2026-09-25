@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 import {
@@ -99,24 +99,33 @@ function asPositiveInt(value, fallback, name) {
 }
 
 function runOxlint() {
-  // Oxlint exits non-zero whenever it reports findings, so the report has to be
-  // read from stdout of the failed invocation rather than treated as an error.
-  let output;
+  const tempRoot = join(process.cwd(), ".tmp");
+  mkdirSync(tempRoot, { recursive: true });
+  const tempDir = mkdtempSync(join(tempRoot, "anti-slop-"));
+  const reportPath = join(tempDir, "report.json");
+  const reportFd = openSync(reportPath, "w");
+  let commandError;
   try {
-    output = execFileSync("bunx", ["oxlint", "--format", "json"], {
-      cwd: process.cwd(),
-      encoding: "utf8",
-      maxBuffer: 256 * 1024 * 1024,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-  } catch (error) {
-    // The utf8 encoding above makes stdout a string whenever the run produced
-    // a report; an empty stdout means the run itself failed.
-    if (!error.stdout) throw error;
-    output = error.stdout;
+    try {
+      execFileSync("bunx", ["--bun", "oxlint", "--format", "json"], {
+        cwd: process.cwd(),
+        stdio: ["ignore", reportFd, "pipe"],
+      });
+    } catch (error) {
+      // Findings make Oxlint exit non-zero, so a non-empty report is success.
+      commandError = error;
+    } finally {
+      closeSync(reportFd);
+    }
+
+    // Bun can truncate multi-megabyte stdout when it exits into a pipe.
+    const output = readFileSync(reportPath, "utf8");
+    if (!output) throw commandError ?? new Error("Oxlint produced no report");
+    const report = JSON.parse(output);
+    return { diagnostics: normalizeDiagnostics(report.diagnostics ?? []) };
+  } finally {
+    rmSync(tempDir, { recursive: true, force: true });
   }
-  const report = JSON.parse(output);
-  return { diagnostics: normalizeDiagnostics(report.diagnostics ?? []) };
 }
 
 function ruleOf(code) {
