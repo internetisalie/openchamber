@@ -5,7 +5,7 @@ import { checkIsGitRepository, getGitStatus } from '@/lib/gitApi';
 import { normalizePath } from '@/lib/pathNormalization';
 import { createQuickWorktree, resolveProjectRef } from '@/lib/worktreeSessionCreator';
 import { getLatestWorktreeMetadata, removeProjectWorktree, type ProjectRef } from '@/lib/worktrees/worktreeManager';
-import { refreshGlobalSessionsForDirectories } from '@/stores/useGlobalSessionsStore';
+import { refreshGlobalSessionsForDirectories, resolveGlobalSessionDirectory } from '@/stores/useGlobalSessionsStore';
 import { isAmbiguousSendFailure } from '@/sync/send-failure-classification';
 import { getSessionLiveActivity, isSessionBusyNow, moveSessionToDirectory } from '@/sync/session-actions';
 import { useSessionUIStore } from '@/sync/session-ui-store';
@@ -116,6 +116,16 @@ type RollbackFailure = {
   error: Error;
 };
 
+type SessionMoveSource = {
+  session: Session;
+  sourceDirectory: string;
+};
+
+const captureSessionMoveSource = (session: Session, fallbackDirectory: string): SessionMoveSource => ({
+  session,
+  sourceDirectory: normalizePath(resolveGlobalSessionDirectory(session)) ?? fallbackDirectory,
+});
+
 /** Rollback left sessions in the destination; the toast names them. */
 class IncompleteRollbackError extends Error {
   constructor(message: string, cause: unknown) {
@@ -135,13 +145,12 @@ const createIncompleteRollbackError = (moveError: Error, rollbackFailures: Rollb
 };
 
 const rollbackMovedSessions = async (
-  sessions: Session[],
-  sourceDirectory: string,
+  moves: SessionMoveSource[],
   worktreeDirectory: string,
   previousMetadata: ReadonlyMap<string, WorktreeMetadata | undefined>,
 ): Promise<RollbackFailure[]> => {
   const failures: RollbackFailure[] = [];
-  for (const session of [...sessions].reverse()) {
+  for (const { session, sourceDirectory } of [...moves].reverse()) {
     if (isSessionBusyNow(session.id)) {
       failures.push({ sessionId: session.id, error: new Error('Session is not idle') });
       continue;
@@ -172,8 +181,11 @@ const removeFailedWorktree = async (
   throw moveError;
 };
 
-const refreshMovedDirectories = async (sourceDirectory: string, destinationDirectory: string | undefined): Promise<void> => {
-  const directories = destinationDirectory ? [sourceDirectory, destinationDirectory] : [sourceDirectory];
+const refreshMovedDirectories = async (sourceDirectories: readonly string[], destinationDirectory: string | undefined): Promise<void> => {
+  const directories = Array.from(new Set([
+    ...sourceDirectories,
+    ...(destinationDirectory ? [destinationDirectory] : []),
+  ]));
   try {
     await refreshGlobalSessionsForDirectories(directories);
   } catch (error) {
@@ -202,6 +214,11 @@ const moveSessionTreeTransaction = async (
 
   try {
     const sessions = [...input.descendants, input.root];
+    const sessionMoves = sessions.map((session) => captureSessionMoveSource(session, input.sourceDirectory));
+    const sourceDirectories = Array.from(new Set([
+      input.sourceDirectory,
+      ...sessionMoves.map((move) => move.sourceDirectory),
+    ]));
     const previousMetadata = new Map(
       sessions.map((session) => [
         session.id,
@@ -211,60 +228,60 @@ const moveSessionTreeTransaction = async (
     assertSessionsIdle(sessions);
 
     let destination: Awaited<ReturnType<typeof prepareDestination>> | null = null;
-    const moved: Session[] = [];
-    let moveOutcomeUnknown = false;
+    const moved: SessionMoveSource[] = [];
+    let ambiguousSessionMove: SessionMoveSource | null = null;
     try {
       destination = await prepareDestination();
-      for (const [index, session] of sessions.entries()) {
+      for (const [index, move] of sessionMoves.entries()) {
+        const { session, sourceDirectory } = move;
         // Setup and earlier moves can take long enough for a not-yet-moved
         // session to start running, so re-check the remaining source tree
         // immediately before each move. The root moves last.
         assertSessionsIdle(sessions.slice(index));
         try {
-          await moveSessionToDirectory(session, input.sourceDirectory, destination.directory);
+          await moveSessionToDirectory(session, sourceDirectory, destination.directory);
         } catch (error) {
-          // A transport failure leaves the outcome unknown: the server may have
-          // moved the session before the response was lost. Definite rejections
-          // keep this false.
-          if (isAmbiguousSendFailure(error)) moveOutcomeUnknown = true;
+          // The server may have moved the session before an ambiguous response
+          // was lost. Reverse that move along with earlier completed moves.
+          if (isAmbiguousSendFailure(error)) {
+            ambiguousSessionMove = move;
+          }
           throw error;
         }
-        moved.push(session);
+        moved.push(move);
         if (session.id === input.root.id) continue;
         useSessionUIStore.getState().setWorktreeMetadata(session.id, getLatestWorktreeMetadata(destination.metadata));
       }
     } catch (error) {
       const moveError = error instanceof Error ? error : new Error(String(error));
       const rollbackFailures = await rollbackMovedSessions(
-        moved,
-        input.sourceDirectory,
+        ambiguousSessionMove ? [...moved, ambiguousSessionMove] : moved,
         destination?.directory ?? input.sourceDirectory,
         previousMetadata,
       );
-      if (moveOutcomeUnknown) {
+      if (ambiguousSessionMove) {
         // The move request may have completed server-side, so the session's
         // directory is unknown too. Reconcile both directories now instead of
         // letting the sidebar contradict the toast until the next poll.
-        await refreshMovedDirectories(input.sourceDirectory, destination?.directory);
+        await refreshMovedDirectories(sourceDirectories, destination?.directory);
       }
       if (rollbackFailures.length > 0) {
-        throw createIncompleteRollbackError(moveError, rollbackFailures);
+        const incomplete = createIncompleteRollbackError(moveError, rollbackFailures);
+        if (ambiguousSessionMove && destination?.onMoveFailure) {
+          throw new SessionMoveOutcomeUnknownError(incomplete);
+        }
+        throw incomplete;
       }
-      // OpenCode admits a move durably before it answers, so a lost response
-      // does not cancel it: the session may already sit in the destination or
-      // land there once the inbox drains. Only a definite rejection proves the
-      // destination is unused and safe to delete.
-      if (destination?.onMoveFailure && !moveOutcomeUnknown) {
+      // A successful reverse move returns every affected session to its
+      // captured source, so a newly created destination can be removed.
+      if (destination?.onMoveFailure) {
         return destination.onMoveFailure(moveError);
-      }
-      if (destination?.onMoveFailure && moveOutcomeUnknown) {
-        throw new SessionMoveOutcomeUnknownError(moveError);
       }
       throw moveError;
     }
     useSessionUIStore.getState().setWorktreeMetadata(input.root.id, getLatestWorktreeMetadata(destination.metadata));
 
-    await refreshMovedDirectories(input.sourceDirectory, destination.directory);
+    await refreshMovedDirectories(sourceDirectories, destination.directory);
     return destination.directory;
   } finally {
     setSessionMovePending(input.root.id, false);
@@ -316,8 +333,7 @@ const moveSessionTreeToQuickWorktree = async (input: {
       metadata: worktree,
       // removeFailedWorktree force-deletes the worktree and its branch; the
       // session's files never move, so nothing of the user's is in it yet.
-      // Called only for a definite rejection; the transaction keeps the
-      // worktree when the move outcome is unknown.
+      // Called after all completed or ambiguous moves have been reversed.
       onMoveFailure: async (error) => removeFailedWorktree(project, worktree, error),
     };
   });
@@ -342,7 +358,9 @@ const executeSessionTreeMove = (intent: SessionTreeMoveIntent): void => {
     .catch((error) => {
       const failure = error instanceof Error ? error : new Error(String(error));
       toast.error(intent.messages.failure, {
-        description: failure instanceof SessionMoveOutcomeUnknownError ? intent.messages.outcomeUnknown : failure.message,
+        description: failure instanceof SessionMoveOutcomeUnknownError
+          ? `${intent.messages.outcomeUnknown} ${failure.message}`
+          : failure.message,
       });
     });
 };
