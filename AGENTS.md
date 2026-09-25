@@ -93,6 +93,7 @@ process violation.
 | Trigger | Required skill |
 |---|---|
 | Source/dependency changes, exports or package contracts, build/generated assets, or module ownership | `openchamber-change-discipline` |
+| Building or packaging Web, Electron, or VS Code artifacts, or rebuilding Electron native addons | `build-openchamber` |
 | CLI commands, prompts, terminal output, non-TTY, `--quiet`, or `--json` behavior | `clack-cli-patterns` |
 | Shared UI data access, OpenCode SDK or server routes, `RuntimeAPIs`, runtime auth/URLs, bridges, or runtime switching | `ui-api-decoupling` |
 | Electron main/preload, IPC, native UI, updater, deep links, SSH/tunnels, packaging, or child processes | `desktop-shell` |
