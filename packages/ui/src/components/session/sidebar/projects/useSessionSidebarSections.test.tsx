@@ -60,6 +60,7 @@ const renderSections = (
       getSessionsForProject: () => projectSessions?.filter((session) => !session.time.archived) ?? [],
       getArchivedSessionsForProject: () => projectSessions?.filter((session) => Boolean(session.time.archived)) ?? [],
       availableWorktreesByProject: new Map(),
+      workspaceDirectoriesByProject: new Map(),
       projectRepoStatus: new Map(),
       projectRootBranches: new Map(),
       gitBranches: new Map(),

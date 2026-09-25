@@ -106,7 +106,7 @@ Then, for every package the final diff touches, run its own checks:
 
 `bun run --cwd packages/<name> test`
 
-Run `bunx oxlint <changed-paths>` on the files in the diff and confirm you have not increased anti-slop findings anywhere.
+Run `bunx --bun oxlint <changed-paths>` on the files in the diff and confirm you have not increased anti-slop findings anywhere.
 
 For surfaces TypeScript does not cover, such as server JavaScript, CLI JavaScript, or Electron main-process helpers, run the focused tests for that surface. Static checks do not prove those correct.
 

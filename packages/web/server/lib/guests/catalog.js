@@ -280,6 +280,11 @@ export const inspectGuestPackage = async (packageRoot, { openchamberVersion, ski
   if (parsed.manifest.contributes.tools?.length) {
     guest.tools = parsed.manifest.contributes.tools.map((tool) => ({ ...tool }));
   }
+  if (parsed.manifest.contributes.openCode?.plugins.length) {
+    guest.openCode = {
+      plugins: parsed.manifest.contributes.openCode.plugins.map((plugin) => ({ ...plugin, methods: [...plugin.methods] })),
+    };
+  }
   if (parsed.manifest.contributes.service) {
     const serviceEntry = await resolveGuestAssetPath(packageRoot, parsed.manifest.contributes.service.entry);
     if (!serviceEntry) {
@@ -353,6 +358,11 @@ export const toPublicGuest = (guest) => {
   }
   if (Array.isArray(guest.filesystem) && guest.filesystem.length > 0) {
     row.filesystem = [...guest.filesystem];
+  }
+  if (Array.isArray(guest.openCode?.plugins) && guest.openCode.plugins.length > 0) {
+    row.openCode = {
+      plugins: guest.openCode.plugins.map((plugin) => ({ ...plugin, methods: [...plugin.methods] })),
+    };
   }
   // Actions, commands, and tools are the parsed manifest entries as they
   // are: the UI decides which ones to apply from the grant and the enabled flag.

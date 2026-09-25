@@ -80,14 +80,17 @@ export const verifyExtractedPayload = ({
   targetArchitecture,
   expectedOpenCodeVersion,
   runCliVersion = defaultCliVersion,
+  verifyAppImageDesktop = true,
 }) => {
-  const desktopPath = path.join(root, 'openchamber.desktop');
-  if (!fs.existsSync(desktopPath)) throw new Error(`Missing desktop entry: ${desktopPath}`);
-  const desktop = fs.readFileSync(desktopPath, 'utf8');
-  for (const entry of ['Name=OpenChamber', 'Icon=openchamber', 'StartupWMClass=openchamber']) {
-    if (!desktop.split(/\r?\n/).includes(entry)) throw new Error(`Desktop identity mismatch: missing ${entry}`);
+  if (verifyAppImageDesktop) {
+    const desktopPath = path.join(root, 'openchamber.desktop');
+    if (!fs.existsSync(desktopPath)) throw new Error(`Missing desktop entry: ${desktopPath}`);
+    const desktop = fs.readFileSync(desktopPath, 'utf8');
+    for (const entry of ['Name=OpenChamber', 'Icon=openchamber', 'StartupWMClass=openchamber']) {
+      if (!desktop.split(/\r?\n/).includes(entry)) throw new Error(`Desktop identity mismatch: missing ${entry}`);
+    }
+    if (!/^Exec=AppRun(?:\s|$)/m.test(desktop)) throw new Error('Desktop identity mismatch: expected AppImage AppRun entrypoint');
   }
-  if (!/^Exec=AppRun(?:\s|$)/m.test(desktop)) throw new Error('Desktop identity mismatch: expected AppImage AppRun entrypoint');
 
   assertElfArchitecture(path.join(root, 'openchamber'), targetArchitecture, 'Electron executable');
   const cliPath = path.join(root, 'resources', 'opencode-cli', 'opencode');
@@ -138,6 +141,20 @@ const extractAppImage = (appImagePath, destination) => {
 const main = () => {
   const rootPackage = readJson(path.join(workspaceRoot, 'package.json'));
   const target = normalizeTargetArchitecture(process.env.OPENCHAMBER_TARGET_ARCH || process.arch).node;
+  if (process.argv[2] === '--directory') {
+    const directoryPath = process.argv[3]
+      ? path.resolve(process.argv[3])
+      : path.join(electronRoot, 'dist', 'linux-unpacked');
+    const result = verifyExtractedPayload({
+      root: directoryPath,
+      targetArchitecture: target,
+      expectedOpenCodeVersion: readPinnedOpenCodeCliVersion(),
+      verifyAppImageDesktop: false,
+    });
+    console.log(`[electron] verified Linux ${target} directory: ${directoryPath}`);
+    console.log(`[electron] verified OpenCode CLI ${result.openCodeVersion} and ${result.nativeModuleCount} native modules`);
+    return;
+  }
   const appImagePath = process.argv[2] ? path.resolve(process.argv[2]) : findAppImage(rootPackage.version, target);
   assertElfArchitecture(appImagePath, target, 'AppImage');
 

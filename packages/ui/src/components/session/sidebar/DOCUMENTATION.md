@@ -12,7 +12,7 @@ kept at this root in `types.ts` and `utils.tsx`.
 - `recent/` owns Recent and managed Chats activity projections.
 - `folders/` owns folder DnD, bulk actions, archived folders, and folder UI.
 - `sessionSidebarRowModel.ts` owns the ordered, mode-neutral projection for
-  Chats, Recent, projects, groups, folders, sessions, status notices, empty
+  Chats, Global, Recent, projects, groups, folders, sessions, status notices, empty
   states, and reveal controls. `SessionSidebarRows.tsx` is the shared desktop
   Web, Electron and VS Code sidebar row renderer. Normal and committed-search modes use the same
   model and the same `@tanstack/react-virtual` instance.
@@ -26,18 +26,18 @@ kept at this root in `types.ts` and `utils.tsx`.
 - Root session right-click and overflow menus expose `Move to worktree`: a submenu
   listing the canonical primary and linked worktree destinations, with the current
   target disabled and a separate `New worktree...` action. Opening the submenu
-  refreshes the worktree topology. Moving transfers the full idle subtree. Clean
-  and non-Git sources move session-only; a dirty Git source prompts to move only
-  the session, move all source changes, or cancel. Descendants move first without
-  changes and roll back session-only if a later descendant fails. The root moves
-  last and carries source changes once, which prevents rollback from replaying the
-  transferred patch into the source.
-- Failure cleanup: a worktree created for the move is removed only after a
-  definite failure. When the change-carrying request fails without confirming
-  its outcome, that worktree is KEPT (it may hold the only copy of the user's
-  changes), both directories are refreshed authoritatively because the session
-  may have moved server-side, and the toast points the user at the destination.
-  Existing destinations are never removed; they get the same guidance.
+  refreshes the worktree topology. Moving transfers the full idle subtree,
+  session-only: OpenCode 2.x leaves working-tree changes in place. Descendants
+  move first and the root moves last. Every member moves from its own returned
+  directory and rolls back to that captured source if a later move fails.
+- Failure cleanup attempts to reverse an ambiguously dispatched move as well as
+  earlier completed moves. A newly created worktree is removed only when every
+  required rollback succeeds; a failed rollback keeps it and reports the
+  affected session. All source directories and the destination are refreshed
+  after an ambiguous outcome. Existing destinations are never removed.
+- Session Markdown export loads each descendant transcript from that session's
+  returned directory. It uses the root directory only when a descendant has no
+  directory, and a failed child load skips its subtree without dropping siblings.
 
 `MainLayout` and `VSCodeLayout` call `useSessionListSync({ isVSCode })`
 unconditionally. The hook is the only bootstrap demand owner and publishes
@@ -76,12 +76,13 @@ taking display ownership (project id, labels) from the index.
 Web and desktop show managed Chats before optional Recent activity (off by
 default since the timeline view exists; the display menu toggles it). Chats use
 their shared managed root for folders and never expose worktree actions. Project
-display can be all projects or one selected project. The mobile sessions sheet
-(`apps/MobileSessionsSheet.tsx`) partitions the same way through
-`partitionSidebarSessions` and lists Chats as a collapsible section above the
-project tree, with no Recent projection. VS Code excludes worktrees and managed
-Chats, while retaining its workspace-scoped grouped list and inline archived
-buckets.
+display can be all projects or one selected project. Hosted mobile renders its
+Global sessions in a dedicated group and selects them through each session's
+returned directory. The Capacitor sessions sheet retains the project/Chats
+partition and does not render the Global section. VS Code does not classify
+Global separately: it continues to exclude worktrees and managed Chats while
+retaining its workspace-scoped directory filter, grouped list, and inline
+archived buckets.
 
 Worktree groups inside a project follow `worktreeSortOrder` (profile setting
 `sidebarWorktreeSortOrder`, default `manual`). `recent` floats worktrees by session activity, so
@@ -279,7 +280,7 @@ matching and ordering. Search does not fetch sessions or broaden list membership
 - Structural updates rebuild grouped nodes only for projects whose local sessions, worktrees, repository state, or branch changed; unchanged project sections preserve references so memoized group/session descendants skip the update wave.
 - Empty successful lists, unresolved loads, and failed loads are separate UI states. Failed groups expose Retry and retain prior data.
 - List loading and workspace initialization have separate states. The spinner follows only the list queue; config, MCP, LSP, and live-state recovery cannot keep a successful empty list spinning. A core initialization failure has a separate localized notice and reuses the retry/native-access actions without clearing loaded sessions.
-- Directory permission failures remain visible even when stale sessions are retained. Flat groups inspect every represented root/worktree directory; local Desktop may open the native picker for the exact failed directory, while other runtimes keep the ordinary Retry action.
+- Directory permission failures remain visible even when stale sessions are retained. Flat groups inspect every represented root/workspace directory; local Desktop may open the native picker for the exact failed directory, while other runtimes keep the ordinary Retry action.
 - Pins and folder assignments are not pruned from the first startup snapshot or from optimistic mutations. Confirmed local deletion and routed external deletion clean immediately; a later authoritative omission after an established baseline covers missed external delete events.
 - Pending-permission/question row badges fade with the same hover/menu-open rule as the date label, except on non-VS Code always-visible-actions rows, which reserve permanent padding and keep the badges shown. VS Code hover-reveals its actions over the row's right edge even under `alwaysShowActions`, so its badges keep fading (`selectRowBadgeVisibilityClass` in `sessions/sessionNodeItemUtils.ts`).
 

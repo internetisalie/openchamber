@@ -56,6 +56,7 @@ const args = (sections: ProjectSection[]): SessionSidebarRowModelArgs => ({
   sections,
   authoritativeSections: sections,
   chatGroup: null,
+  globalGroup: null,
   recentSections: [],
   showRecentSection: false,
   foldersMap: {},
@@ -195,6 +196,34 @@ describe('buildSessionSidebarRowModel', () => {
     expect(rows.some((row) => row.kind === 'session' && row.node.session.id === 'retained-chat')).toBe(true);
     expect(rows.find((row) => row.kind === 'status')).toMatchObject({ groupKey: 'activity:chats', status: { state: 'load-failed' } });
     expect(rows.some((row) => row.kind === 'empty')).toBe(false);
+  });
+
+  test('renders authoritative Global sessions once in their own virtualized activity zone', () => {
+    const child = node('global-child');
+    child.session.parentID = 'global-root';
+    child.session.directory = '/global/child';
+    const globalGroup = group([node('global-root', [child])], {
+      id: 'global-sessions',
+      directory: null,
+      folderScopeKey: null,
+    });
+    const input = args([project([group([node('project-session')])])]);
+    input.globalGroup = globalGroup;
+    input.expandedParents = new Set(['recent:active:global-root']);
+
+    const model = buildSessionSidebarRowModel(input);
+
+    expect(model.rows.filter((row) => row.kind === 'activity-header').map((row) => row.activityKey)).toEqual(['global']);
+    expect(model.rows.filter((row) => row.kind === 'session').map((row) => row.node.session.id)).toEqual([
+      'global-root',
+      'global-child',
+      'project-session',
+    ]);
+    expect(model.rows.filter((row) => row.kind === 'session' && row.node.session.id === 'global-root')[0]).toMatchObject({
+      projectId: null,
+      renderContext: 'recent',
+    });
+    expect(model.sessionById.get('global-child')?.directory).toBe('/global/child');
   });
 
   test('a collapsed folder retains activity coverage from nested folders without flattening subtasks', () => {

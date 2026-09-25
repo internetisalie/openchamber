@@ -8,6 +8,8 @@ import {
   GUEST_ATTACH_DATA_MAX,
   GUEST_ATTACH_TITLE_MAX,
   GUEST_COMPOSE_TEXT_MAX,
+  GUEST_OPENCODE_RESPONSE_MAX,
+  GUEST_REQUEST_RESPONSE_MAX,
   readHostMessage,
 } from './contract.ts';
 import {
@@ -32,6 +34,7 @@ test('background action messages round-trip and reject invalid payloads', () => 
 });
 
 const readyPayload = {
+  features: ['openCodeRequest'],
   theme: {
     mode: 'dark',
     tokens: {
@@ -100,6 +103,13 @@ describe('parseHostMessage', () => {
       type: 'ready',
       payload: readyPayload,
     });
+  });
+
+  test('defaults missing host features and rejects unknown features', () => {
+    const envelope = { channel: OPENCHAMBER_SDK_CHANNEL, v: 1, type: 'ready' };
+    expect(parseHostMessage({ ...envelope, payload: { ...readyPayload, features: undefined } }))
+      .toMatchObject({ type: 'ready', payload: { features: [] } });
+    expect(parseHostMessage({ ...envelope, payload: { ...readyPayload, features: ['unknown'] } })).toBeNull();
   });
 
   test('accepts a null directory', () => {
@@ -385,6 +395,27 @@ describe('parseHostMessage', () => {
       ok: true,
       payload: { status: 200, body: '{"ok":true}' },
     });
+  });
+
+  test('allows a 4 MiB OpenCode response on the shared result wire', () => {
+    const body = 'x'.repeat(GUEST_OPENCODE_RESPONSE_MAX);
+    expect(body.length).toBeGreaterThan(GUEST_REQUEST_RESPONSE_MAX);
+    expect(parseHostMessage({
+      channel: OPENCHAMBER_SDK_CHANNEL,
+      v: 1,
+      type: 'result',
+      id: 'oc-opencode',
+      ok: true,
+      payload: { status: 200, body },
+    })).toMatchObject({ type: 'result', ok: true, payload: { status: 200, body } });
+    expect(parseHostMessage({
+      channel: OPENCHAMBER_SDK_CHANNEL,
+      v: 1,
+      type: 'result',
+      id: 'oc-opencode',
+      ok: true,
+      payload: { status: 200, body: `${body}x` },
+    })).toBeNull();
   });
 
   test('accepts the four file result payloads', () => {
@@ -700,6 +731,23 @@ describe('parseGuestMessage', () => {
       id: 'oc-12',
       payload: { method: 'GET', path: '/api/v2/user' },
     })?.type).toBe('request');
+  });
+
+  test('accepts strict OpenCode requests and rejects header injection', () => {
+    const request = {
+      channel: OPENCHAMBER_SDK_CHANNEL,
+      v: 1 as const,
+      type: 'opencode-request' as const,
+      id: 'oc-13',
+      payload: { pluginId: 'example-plugin', method: 'POST' as const, path: '/snapshot', query: { full: 'true' }, body: '{}' },
+    };
+    expect(parseGuestMessage(request)).toEqual(request);
+    expect(parseGuestMessage({
+      ...request,
+      payload: { ...request.payload, headers: { Authorization: 'Bearer stolen' } },
+    })).toBeNull();
+    expect(parseGuestMessage({ ...request, payload: { ...request.payload, pluginId: 'Example-Plugin' } })).toBeNull();
+    expect(parseGuestMessage({ ...request, payload: { ...request.payload, path: '/../config' } })).toBeNull();
   });
 
   test('accepts generate messages and drops an empty prompt or oversized output ask', () => {

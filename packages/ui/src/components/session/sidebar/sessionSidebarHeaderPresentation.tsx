@@ -4,9 +4,10 @@ import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import type { SessionSidebarActivityKey } from './sessionSidebarRowModel';
 
-const ACTIVITY_ICON = { chats: 'chat-4', 'active-now': 'history', timeline: 'folder' } as const;
+const ACTIVITY_ICON = { chats: 'chat-4', global: 'global', 'active-now': 'history', timeline: 'folder' } as const;
 const ACTIVITY_TITLE_KEY = {
   chats: 'sessions.sidebar.activity.chatsTitle',
+  global: 'sessions.sidebar.activity.globalTitle',
   'active-now': 'sessions.sidebar.activity.recentTitle',
   timeline: 'sessions.sidebar.activity.timelineTitle',
 } as const;

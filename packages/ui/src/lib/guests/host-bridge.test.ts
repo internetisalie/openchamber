@@ -39,6 +39,7 @@ const effects = (overrides: Partial<BridgeEffects> = {}): BridgeEffects => ({
   oauthStart: overrides.oauthStart ?? (async () => true),
   oauthDisconnect: overrides.oauthDisconnect ?? (async () => true),
   request: overrides.request ?? (async () => ({ ok: true, result: { status: 200, body: '{}' } })),
+  openCodeRequest: overrides.openCodeRequest ?? (async () => ({ ok: true, result: { status: 200, body: '{}' } })),
   serviceRequest: overrides.serviceRequest ?? (async () => ({ ok: true, result: { status: 200, body: '{}' } })),
   serviceStatus: overrides.serviceStatus ?? (async () => ({ ok: true, result: { status: 'ready' as const } })),
   file: overrides.file ?? (async () => ({ ok: true, result: { written: true as const } })),
@@ -432,6 +433,25 @@ describe('answerGuestMessage', () => {
       error: 'Not connected.',
       code: 'DISCONNECTED',
     });
+  });
+
+  test('routes an OpenCode request without exposing credentials', async () => {
+    const seen: unknown[] = [];
+    const reply = await answerGuestMessage({
+      channel: OPENCHAMBER_SDK_CHANNEL,
+      v: 1,
+      type: 'opencode-request',
+      id: 'oc-plugin',
+      payload: { pluginId: 'example-plugin', method: 'GET', path: '/snapshot' },
+    }, effects({
+      openCodeRequest: async (request) => {
+        seen.push(request);
+        return { ok: true, result: { status: 206, body: '{"ok":true}' } };
+      },
+    }));
+    expect(seen).toEqual([{ pluginId: 'example-plugin', method: 'GET', path: '/snapshot' }]);
+    expect(reply).toMatchObject({ type: 'result', id: 'oc-plugin', ok: true, payload: { status: 206, body: '{"ok":true}' } });
+    expect(JSON.stringify(reply)).not.toContain('Authorization');
   });
 
   test('proxies serviceRequest and serviceStatus', async () => {

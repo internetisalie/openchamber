@@ -24,6 +24,7 @@ const CAPABILITY_ROWS = {
   filesystem: { icon: 'hard-drive-2', titleKey: 'settings.extensions.capability.filesystem', detailKey: 'settings.extensions.capability.filesystem.detail' },
   service: { icon: 'terminal', titleKey: 'settings.extensions.capability.service', detailKey: 'settings.extensions.capability.service.detail' },
   network: { icon: 'plug', titleKey: 'settings.extensions.capability.network', detailKey: 'settings.extensions.capability.network.detail' },
+  opencode: { icon: 'code-box', titleKey: 'settings.extensions.capability.opencode', detailKey: 'settings.extensions.capability.opencode.detail' },
 } satisfies Record<GuestCapability, { icon: IconName; titleKey: I18nKey; detailKey: I18nKey }>;
 
 type GuestApprovalDialogProps = {
@@ -47,6 +48,7 @@ export const GuestApprovalDialog: React.FC<GuestApprovalDialogProps> = ({ guest,
   const serviceSockets = guest?.service?.permissions?.sockets ?? [];
   const providesBrowser = serviceProvides(guest?.service, 'browser');
   const apiOrigin = guest?.integration?.apiOrigin ?? null;
+  const openCodePlugins = guest?.openCode?.plugins ?? [];
 
   return (
     <Dialog
@@ -88,6 +90,15 @@ export const GuestApprovalDialog: React.FC<GuestApprovalDialogProps> = ({ guest,
                       {t('settings.extensions.capability.service.sockets')}{' '}
                       <span className="break-all font-mono">{apiOrigin}</span>
                     </p>
+                  ) : null}
+                  {capability === 'opencode' && openCodePlugins.length > 0 ? (
+                    <ul className="mt-1 space-y-0.5">
+                      {openCodePlugins.map((plugin) => (
+                        <li key={plugin.id} className="typography-meta break-all font-mono text-foreground">
+                          {plugin.id}: {plugin.methods.join(', ')}
+                        </li>
+                      ))}
+                    </ul>
                   ) : null}
                   {capability === 'service' && serviceExec.length > 0 ? (
                     <p className="typography-meta mt-1 text-foreground">

@@ -1,4 +1,5 @@
 import type { Session } from '@/lib/opencode/model';
+import { isSessionArchived } from '@/lib/sessionArchive';
 import type { SessionNode } from '../types';
 import type { SidebarSessionLocation } from './sessionLocation';
 
@@ -33,10 +34,6 @@ const isSubtaskSession = (session: Session): boolean => {
   return Boolean((session as Session & { parentID?: string | null }).parentID);
 };
 
-const isArchivedSession = (session: Session): boolean => {
-  return Boolean(session.time?.archived);
-};
-
 const getSessionUpdatedAt = (session: Session): number => {
   const updated = session.time?.updated;
   const created = session.time?.created;
@@ -60,7 +57,7 @@ export const deriveRecentSessions = (
 ): Session[] => {
   const minUpdatedAt = now - RECENT_SESSION_MAX_AGE_MS;
   return sessions.filter((session) => {
-    if (isArchivedSession(session) || isSubtaskSession(session)) {
+    if (isSessionArchived(session) || isSubtaskSession(session)) {
       return false;
     }
     return activeSessionIds.has(session.id) || getSessionUpdatedAt(session) >= minUpdatedAt;

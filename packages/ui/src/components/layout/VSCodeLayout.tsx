@@ -21,6 +21,7 @@ import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useSessionDisplayStore } from '@/stores/useSessionDisplayStore';
 import { getVSCodeBootstrapWorkspaceFolder } from '@/lib/vscodeBootstrap';
 import { cn } from '@/lib/utils';
+import { isSessionArchived } from '@/lib/sessionArchive';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -309,7 +310,7 @@ export const VSCodeLayout: React.FC = () => {
         const children = childrenMap.get(sessionId) ?? [];
         for (const childId of children) {
           const child = byId.get(childId);
-          if (child?.time?.archived) continue; // skip already-archived children
+          if (child && isSessionArchived(child)) continue; // skip already-archived children
           ids.add(childId);
           addDescendants(childId, visited);
         }
@@ -327,7 +328,7 @@ export const VSCodeLayout: React.FC = () => {
 
   const handleArchiveAll = React.useCallback(async () => {
     const store = useSessionUIStore.getState();
-    const rootSessions = traversalSessions.filter((session) => !session.time?.archived && isSessionInActiveWorkspace(session));
+    const rootSessions = traversalSessions.filter((session) => !isSessionArchived(session) && isSessionInActiveWorkspace(session));
     const allIds = collectSessionIdsWithDescendants(traversalSessions, rootSessions);
     if (allIds.length === 0) return;
 

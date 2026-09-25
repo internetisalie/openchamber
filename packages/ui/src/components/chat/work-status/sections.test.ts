@@ -19,7 +19,7 @@ describe('section registry', () => {
 
   test('preserves chosen positions and appends missing sections once', () => {
     const order = sanitizeWorkStatusSectionOrder(['pinned', 'repository', 'pinned', 'obsolete', 'session']);
-    expect(order).toEqual(['pinned', 'repository', 'session', 'usage', 'telemetry', 'subagents', 'mcp', 'contextSources']);
+    expect(order).toEqual(['pinned', 'repository', 'session', 'usage', 'telemetry', 'subagents', 'ptys', 'mcp', 'contextSources']);
     expect(sanitizeWorkStatusSectionOrder(JSON.parse(JSON.stringify(order)))).toEqual(order);
   });
 
@@ -123,6 +123,10 @@ describe('sanitizeWorkStatusHiddenSections', () => {
 
   test('deduplicates', () => {
     expect(sanitizeWorkStatusHiddenSections(['usage', 'usage'])).toEqual(['usage']);
+  });
+
+  test('accepts the PTY section as a persisted visibility choice', () => {
+    expect(sanitizeWorkStatusHiddenSections(['ptys'])).toEqual(['ptys']);
   });
 
   test('treats a non-array payload as default hidden preference', () => {
