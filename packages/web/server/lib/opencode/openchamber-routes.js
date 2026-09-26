@@ -92,7 +92,7 @@ export const registerOpenChamberRoutes = (app, dependencies) => {
   };
 
   app.get('/api/openchamber/update-check', async (req, res) => {
-    if (process.env.OPENCHAMBER_DISABLE_UPDATES === '1') {
+    if (['1', 'true'].includes(process.env.OPENCHAMBER_DISABLE_UPDATES?.toLowerCase())) {
       return res.json({ available: false, disabled: true });
     }
     try {
@@ -164,7 +164,7 @@ export const registerOpenChamberRoutes = (app, dependencies) => {
   });
 
   app.post('/api/openchamber/update-install', async (_req, res) => {
-    if (process.env.OPENCHAMBER_DISABLE_UPDATES === '1') {
+    if (['1', 'true'].includes(process.env.OPENCHAMBER_DISABLE_UPDATES?.toLowerCase())) {
       return res.status(403).json({ error: 'Updates are disabled for this installation.' });
     }
     try {

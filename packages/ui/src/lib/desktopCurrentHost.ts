@@ -27,7 +27,10 @@ export const buildLocalDesktopHost = (localOrigin?: string | null): DesktopHost 
 
 export const getLocalDesktopOrigin = (): string => {
   if (typeof window === 'undefined') return '';
-  return window.__OPENCHAMBER_LOCAL_ORIGIN__ || window.location.origin;
+  // An injected empty origin means the desktop shell has no local backend.
+  // The bundled UI scheme is a document origin, never an API server.
+  const origin = window.__OPENCHAMBER_LOCAL_ORIGIN__ ?? window.location.origin;
+  return normalizeHostUrl(origin) ? origin : '';
 };
 
 export const runtimeKeyForDesktopHost = (host: DesktopHost): string => {
@@ -39,6 +42,19 @@ type ResolvedDesktopHost = {
   id: string;
   label: string;
   url: string;
+};
+
+// Display matching only: preserve saved endpoints and transport credentials.
+const matchesLoopbackDesktopHost = (locationHref: string, hostUrl: string): boolean => {
+  if (!normalizeHostUrl(locationHref) || !normalizeHostUrl(hostUrl)) return false;
+  const current = new URL(locationHref);
+  const host = new URL(hostUrl);
+  const loopbackNames = ['localhost', '127.0.0.1'];
+  if (current.hostname === host.hostname
+    || !loopbackNames.includes(current.hostname)
+    || !loopbackNames.includes(host.hostname)) return false;
+  host.hostname = current.hostname;
+  return locationMatchesHost(current.href, host.href);
 };
 
 export const resolveCurrentDesktopHost = (hosts: DesktopHost[]): ResolvedDesktopHost => {
@@ -63,6 +79,8 @@ export const resolveCurrentDesktopHost = (hosts: DesktopHost[]): ResolvedDesktop
 
   const runtimeMatch = hosts.find((host) => (
     runtimeApiBaseUrl ? locationMatchesHost(runtimeApiBaseUrl, getDesktopHostApiUrl(host)) : false
+  )) || hosts.find((host) => (
+    runtimeApiBaseUrl ? matchesLoopbackDesktopHost(runtimeApiBaseUrl, getDesktopHostApiUrl(host)) : false
   ));
 
   if (runtimeMatch) {
@@ -77,13 +95,14 @@ export const resolveCurrentDesktopHost = (hosts: DesktopHost[]): ResolvedDesktop
     return { id: LOCAL_HOST_ID, label: 'Local', url: normalizedLocal };
   }
 
-  const match = hosts.find((host) => (currentHref ? locationMatchesHost(currentHref, host.url) : false));
+  const match = hosts.find((host) => (currentHref ? locationMatchesHost(currentHref, host.url) : false))
+    || hosts.find((host) => (currentHref ? matchesLoopbackDesktopHost(currentHref, host.url) : false));
 
   if (match) {
     return { id: match.id, label: match.label, url: normalizeHostUrl(match.url) || match.url };
   }
 
-  if (currentHref.startsWith('openchamber-ui://')) {
+  if (localOrigin && currentHref.startsWith('openchamber-ui://')) {
     return { id: LOCAL_HOST_ID, label: 'Local', url: normalizedLocal };
   }
 
@@ -91,7 +110,7 @@ export const resolveCurrentDesktopHost = (hosts: DesktopHost[]): ResolvedDesktop
   // bare word "Instance"; the redaction strips anything credential-shaped.
   return {
     id: 'custom',
-    label: redactSensitiveUrl(normalizedCurrent || 'Instance'),
-    url: normalizedCurrent,
+    label: redactSensitiveUrl(runtimeApiBaseUrl || normalizedCurrent || 'Instance'),
+    url: runtimeApiBaseUrl || normalizedCurrent,
   };
 };
