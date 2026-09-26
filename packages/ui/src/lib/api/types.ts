@@ -1411,6 +1411,7 @@ export interface GiteaItemDetail {
     sourceBranch: string | null;
     targetBranch: string | null;
     sourceOwner: string | null;
+    headSha: string | null;
   } | null;
   comments: Array<{ author: string | null; body: string }>;
   commentsTruncated: boolean;
@@ -1425,6 +1426,47 @@ export interface GiteaCommentInput {
   instanceUrl: string;
   owner: string;
   repo: string;
+}
+
+export interface GiteaPullIdentity {
+  directory: string;
+  remote: string;
+  number: number;
+  instanceUrl: string;
+  owner: string;
+  repo: string;
+}
+
+export interface GiteaPullActionIdentity extends GiteaPullIdentity {
+  headSha: string;
+  sourceRemote: string;
+  sourceBranch: string;
+}
+
+export interface GiteaPullCapabilities {
+  canEdit: boolean;
+  canMarkReady: boolean;
+  canMerge: boolean;
+  mergeMethods: Array<'merge' | 'rebase' | 'rebase-merge' | 'squash' | 'fast-forward-only'>;
+}
+
+export interface GiteaPullActionResult {
+  repo: GiteaRepository;
+  item: GiteaItem;
+  pull: NonNullable<GiteaItemDetail['pull']>;
+}
+
+export interface GiteaReviewComments {
+  comments: Array<{ id: number | null; reviewId: number; author: string | null;
+    body: string; path: string | null; line: number | null }>;
+  truncated: boolean;
+}
+
+export interface GiteaChecks {
+  state: string;
+  totalCount: number;
+  checks: Array<{ id: number | null; name: string; state: string;
+    description: string | null; url: string | null }>;
 }
 
 export interface GiteaPullRequestCreateInput {
@@ -1458,6 +1500,12 @@ export interface GiteaAPI {
     repo: GiteaRepository; items: GiteaItem[]; page: number; hasMore: boolean;
   }>;
   item(directory: string, kind: GiteaItem['kind'], number: number, remote?: string): Promise<GiteaItemDetail>;
+  reviews(identity: GiteaPullIdentity): Promise<GiteaReviewComments>;
+  checks(identity: GiteaPullIdentity): Promise<GiteaChecks>;
+  pullCapabilities(identity: GiteaPullIdentity): Promise<GiteaPullCapabilities>;
+  pullEdit(input: GiteaPullActionIdentity & { title: string; body: string }): Promise<GiteaPullActionResult>;
+  pullReady(input: GiteaPullActionIdentity): Promise<GiteaPullActionResult>;
+  pullMerge(input: GiteaPullActionIdentity & { method: GiteaPullCapabilities['mergeMethods'][number] }): Promise<GiteaPullActionResult>;
   comment(input: GiteaCommentInput): Promise<{ author: string | null; body: string }>;
   pullDiff(directory: string, number: number, remote?: string,
     expectedRepo?: GiteaRepository): Promise<string>;

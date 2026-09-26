@@ -12,7 +12,19 @@ const comment = z.object({ author: z.string().nullable(), body: z.string() });
 const pull = z.object({
   draft: z.boolean().nullable(), merged: z.boolean().nullable(),
   sourceBranch: z.string().nullable(), targetBranch: z.string().nullable(), sourceOwner: z.string().nullable(),
+  headSha: z.string().nullable(),
 });
+const reviewComments = z.object({ comments: z.array(z.object({
+  id: z.number().int().nullable(), reviewId: z.number().int(), author: z.string().nullable(),
+  body: z.string(), path: z.string().nullable(), line: z.number().int().nullable(),
+})), truncated: z.boolean() });
+const checks = z.object({ state: z.string(), totalCount: z.number().int(), checks: z.array(z.object({
+  id: z.number().int().nullable(), name: z.string(), state: z.string(),
+  description: z.string().nullable(), url: z.string().nullable(),
+})) });
+const capabilities = z.object({ canEdit: z.boolean(), canMarkReady: z.boolean(), canMerge: z.boolean(),
+  mergeMethods: z.array(z.enum(['merge', 'rebase', 'rebase-merge', 'squash', 'fast-forward-only'])) });
+const actionResult = z.object({ repo, item, pull });
 const errorBody = z.object({ error: z.string() });
 
 async function read<T>(response: Response, schema: z.ZodType<T>): Promise<T> {
@@ -75,6 +87,27 @@ export function createWebGiteaAPI(): GiteaAPI {
       const query = remote ? { directory, kind, number, remote } : { directory, kind, number };
       return read(await runtimeFetch('/api/gitea/item', { query }),
         z.object({ repo, item, pull: pull.nullable(), comments: z.array(comment), commentsTruncated: z.boolean() }));
+    },
+    async reviews(identity) {
+      return read(await runtimeFetch('/api/gitea/pr/reviews', { query: { ...identity } }), reviewComments);
+    },
+    async checks(identity) {
+      return read(await runtimeFetch('/api/gitea/pr/checks', { query: { ...identity } }), checks);
+    },
+    async pullCapabilities(identity) {
+      return read(await runtimeFetch('/api/gitea/pr/capabilities', { query: { ...identity } }), capabilities);
+    },
+    async pullEdit(input) {
+      return read(await runtimeFetch('/api/gitea/pr', { method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }), actionResult);
+    },
+    async pullReady(input) {
+      return read(await runtimeFetch('/api/gitea/pr/ready', { method: 'POST',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }), actionResult);
+    },
+    async pullMerge(input) {
+      return read(await runtimeFetch('/api/gitea/pr/merge', { method: 'POST',
+        headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input) }), actionResult);
     },
     async comment(input) {
       return read(await runtimeFetch('/api/gitea/comment', {

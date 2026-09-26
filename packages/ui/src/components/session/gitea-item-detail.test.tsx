@@ -3,20 +3,22 @@ import { describe, expect, test } from 'bun:test';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { I18nProvider } from '@/lib/i18n';
 import type { GiteaItemDetail } from '@/lib/api/types';
+import type { RuntimeAPIs } from '@/lib/api/types';
+import { RuntimeAPIContext } from '@/contexts/runtimeAPIContext';
 import { GiteaItemDetailView } from './gitea-item-detail';
 
 const detail: GiteaItemDetail = {
   repo: { instanceUrl: 'https://git.example.com', owner: 'team', name: 'project', remote: 'origin' },
   item: { kind: 'pr', number: 20, title: 'Update docs', body: 'Explains the change',
     url: 'https://git.example.com/team/project/pulls/20', state: 'closed', author: 'alice' },
-  pull: { draft: false, merged: true, sourceBranch: 'feature', targetBranch: 'main', sourceOwner: 'alice' },
+  pull: { draft: false, merged: true, sourceBranch: 'feature', targetBranch: 'main', sourceOwner: 'alice', headSha: null },
   comments: [{ author: 'bob', body: 'Looks good' }], commentsTruncated: false,
 };
 
 function render(value: GiteaItemDetail) {
-  return renderToStaticMarkup(<I18nProvider>
-    <GiteaItemDetailView detail={value} onComment={async () => {}} />
-  </I18nProvider>);
+  return renderToStaticMarkup(<I18nProvider><RuntimeAPIContext.Provider value={{} as RuntimeAPIs}>
+    <GiteaItemDetailView detail={value} directory="/repo" onComment={async () => {}} />
+  </RuntimeAPIContext.Provider></I18nProvider>);
 }
 
 describe('Gitea item detail', () => {

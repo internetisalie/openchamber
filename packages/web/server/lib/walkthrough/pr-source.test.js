@@ -18,4 +18,24 @@ describe('repository-qualified PR sources', () => {
     } });
     expect(received).toEqual(['/repo', 42, source.sourceRepo]);
   });
+
+  it('keeps Gitea instances and remotes distinct without changing GitHub keys', async () => {
+    const source = parseSource({ kind: 'pr', number: 42, gitea: {
+      instanceUrl: 'https://git.example.com', owner: 'team', repo: 'project', remote: 'origin',
+    } });
+    const other = parseSource({ kind: 'pr', number: 42, gitea: {
+      instanceUrl: 'https://other.example.com', owner: 'team', repo: 'project', remote: 'origin',
+    } });
+    expect(sourceKey(source)).not.toBe(sourceKey(other));
+    expect(sourceKey(source)).not.toBe(sourceKey(parseSource({ kind: 'pr', number: 42 })));
+    expect(() => parseSource({ kind: 'pr', number: 42, gitea: {
+      instanceUrl: 'https://git.example.com/', owner: 'team', repo: 'project', remote: 'origin',
+    } })).toThrow();
+    let received;
+    await loadSourceSections('/repo', source, { getPullRequestDiff: async (...args) => {
+      received = args;
+      return { patch: 'diff --git a/a b/a', meta: {} };
+    } });
+    expect(received).toEqual(['/repo', 42, undefined, { source }]);
+  });
 });

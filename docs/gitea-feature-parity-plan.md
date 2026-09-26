@@ -12,12 +12,12 @@ This plan describes the feature gap in the Gitea branch as of September 25, 2026
 |---|---|---|---|
 | Connect and identify an account | Device flow, saved accounts, account switching, optional `gh` CLI | PAT, one account per instance, multiple instances | Keep PAT setup; decide whether more than one account per instance is needed for functional parity |
 | Find issues and PRs for a project | Search, paging, direct number, upstream repository discovery | Search, paging, direct number, nested-folder choice, and connected-remote choice | Validate in Electron against a private repository and same-name repositories on different instances |
-| Start or enrich a chat | Attach an issue or PR; send PR comments and failed checks to chat | Attach an issue or PR, optionally with its diff | Let people send individual Gitea comments and failed checks to chat after those details exist |
+| Start or enrich a chat | Attach an issue or PR; send PR comments and failed checks to chat | Attach an issue or PR, optionally with its diff; pin individual issue/review comments and failed checks | Live comment attachment confirmed in Electron |
 | Create a PR | Shared creation form, including a fork source | Same form, including a fork source | Keep this behavior working through the port |
-| Read a PR | Overview, checks, review and issue comments | Title, author, state, branches, description, issue-style comments | Add review comments and checks when Gitea supplies them; show unavailable data honestly |
+| Read a PR | Overview, checks, review and issue comments | Overview, issue comments, separately loaded review comments and commit checks with independent errors and refresh | Live empty review/check results confirmed in Electron; populated review/check examples remain fixture-tested |
 | Track a branch's PR | Refreshing status in the Git view and session sidebar, including historical PRs | Shared status in the Git view and sidebar, including recent closed PRs | Validate in Electron against a connected instance during the acceptance pass |
-| Manage a PR | Edit title/body, mark ready, choose merge method, merge | None of these actions yet | Add supported actions with permission and repository-setting checks |
-| Walk through a PR | User-initiated walkthrough of the committed PR diff, with file context | Diff can be attached to chat; no walkthrough source | Add a Gitea PR source to walkthrough and Changes, including file context |
+| Manage a PR | Edit title/body, mark ready, choose merge method, merge | Edit, mark ready, and guarded merge with the repository's allowed methods | Edit and ready confirmed in Electron; the test PR's merge is blocked by required approvals |
+| Walk through a PR | User-initiated walkthrough of the committed PR diff, with file context | Gitea source, published diff, merge-base/head context, Changes selector, user-initiated generation | Live Electron walkthrough and file-context read confirmed |
 
 Gitea can already post issue-style comments from OpenChamber. The current GitHub runtime API does not expose that write operation, so it is an additional Gitea capability rather than a parity gap.
 
@@ -28,6 +28,8 @@ The branch-status portion of step 1 is implemented on the Gitea branch: the Git 
 The nested-folder choice uses the shared Git discovery route. This branch carries the breadth-first discovery fix from `fix/v2-git-repo-discovery-bfs`, so a large early subtree cannot hide Loom's sibling repositories under the scan limit. When integrating with the accepted port, keep one copy of that route change.
 
 On September 25, the isolated Electron build loaded the new picker for the connected `ad-demo` repository and returned its open PRs when searching for `OpenChamber`. Automated UI coverage switches between two same-name repositories on different instances and rejects a stale result from the first. A live second-instance acceptance check remains for step 6.
+
+The September 25 parity pass used Gitea 1.27.3 and an isolated Electron profile. PR #21 in `ad-demo` confirmed separately loaded empty reviews and checks, single-comment chat attachment, editing, the `WIP:` ready transition, published-diff Changes mode, merge-base file context, and user-initiated walkthrough generation. The merge request reached Gitea, which rejected it because this repository requires additional approvals; OpenChamber leaves the PR open and now reports that policy reason. Server tests cover a read-only account and a changed remote, but a separate read-only PAT and a second live instance were not available for a live acceptance run. The isolated Electron app, its data, and build scratch space live under the user's home directory; the systemd `openchamber` and `openchamber-dev` services were not changed.
 
 ### 1. Lock down repository and status identity
 
@@ -71,9 +73,9 @@ Run focused server contract tests, UI behavior tests, package type checks, and l
 
 After the accepted v2 port exists, transplant the Gitea changes onto it and repeat the affected checks and Electron flow. Record the final supported Gitea version and any unavailable actions in the UI and module documentation.
 
-## Decisions before implementation
+## Implementation decisions
 
-- Minimum Gitea version for reviews, checks, ready transitions, and merge methods. The existing live test instance is Gitea 1.24; older behavior needs explicit evidence before support is promised.
-- Whether account switching within one Gitea instance is needed. The current credential store supports one account per instance; multiple instances already work.
-- Whether a Gitea PR action should appear in the same layout as GitHub's richer panel or in a smaller provider-specific panel. Keep shared presentation where the data and behavior truly match.
-- Whether merging needs a separate confirmation step in the Gitea panel. Match the accepted product behavior before adding one.
+- Gitea 1.27.3 is acceptance tested. The APIs used are documented for 1.24, but older instances are not claimed as tested.
+- One account per instance remains the supported credential model; multiple instances are supported. Account switching within one instance is outside Electron workflow parity.
+- Gitea actions use the shared Git panel area and a provider-specific detail component because review and check payloads differ from GitHub.
+- Merge uses a second confirmation click. Repository approval rules are respected; the UI does not offer force merge.

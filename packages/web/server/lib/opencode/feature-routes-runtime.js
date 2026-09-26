@@ -83,11 +83,19 @@ export const createFeatureRoutesRuntime = (dependencies) => {
   let walkthroughService = null;
   const getWalkthroughService = async () => {
     if (!walkthroughService) {
-      const [service, pullRequest] = await Promise.all([
+      const [service, pullRequest, giteaPullRequest] = await Promise.all([
         import('../walkthrough/index.js'),
         import('../walkthrough/pull-request.js'),
+        import('../walkthrough/gitea-pull-request.js'),
       ]);
-      walkthroughService = { ...service, getPullRequestDiff: pullRequest.getPullRequestDiff, getPullRequestFileContents: pullRequest.getPullRequestFileContents };
+      walkthroughService = { ...service,
+        getPullRequestDiff: (directory, number, sourceRepo, options = {}) => options.source?.gitea
+          ? giteaPullRequest.getGiteaPullRequestDiff(directory, options.source, options)
+          : pullRequest.getPullRequestDiff(directory, number, sourceRepo, options),
+        getPullRequestFileContents: (directory, number, sourceRepo, file, source) => source?.gitea
+          ? giteaPullRequest.getGiteaPullRequestFileContents(directory, source, file)
+          : pullRequest.getPullRequestFileContents(directory, number, sourceRepo, file),
+      };
     }
     return walkthroughService;
   };

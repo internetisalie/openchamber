@@ -12,7 +12,8 @@ export type WalkthroughSource =
   | { kind: 'working-tree'; scope: WalkthroughWorkingTreeScope }
   | { kind: 'branch'; baseRef: string; headRef: string }
   | { kind: 'commit'; hash: string }
-  | { kind: 'pr'; number: number; sourceRepo?: { owner: string; repo: string } };
+  | { kind: 'pr'; number: number; sourceRepo?: { owner: string; repo: string };
+    gitea?: { instanceUrl: string; owner: string; repo: string; remote: string } };
 
 export type WalkthroughChapterIcon = 'bug' | 'wrench' | 'path' | 'flask' | 'doc' | 'gear';
 export type WalkthroughStopImportance = 'critical' | 'normal' | 'context';

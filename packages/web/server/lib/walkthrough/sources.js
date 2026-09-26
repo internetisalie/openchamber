@@ -1,5 +1,6 @@
 import { getDiff, getRangeDiff, getCommitDiff, getUntrackedDiffs, listUntrackedPaths } from '../git/service.js';
 import assert from 'node:assert/strict';
+import { normalizeInstanceUrl } from '../gitea/instance.js';
 
 // A walkthrough source resolves to one or more diff *sections*. A section is a
 // patch plus the scope its hunk ids live in; keeping staged and working-tree
@@ -46,6 +47,18 @@ export function parseSource(raw) {
     if (!Number.isInteger(number) || number <= 0) {
       throw new WalkthroughSourceError('pr sources require a positive number');
     }
+    if (raw.gitea !== undefined) {
+      const { instanceUrl, owner, repo, remote } = raw.gitea ?? {};
+      let normalizedInstance;
+      try { normalizedInstance = normalizeInstanceUrl(instanceUrl); } catch { /* Invalid identity below. */ }
+      if (!normalizedInstance || normalizedInstance !== instanceUrl ||
+          typeof owner !== 'string' || !/^[a-zA-Z0-9_.-]+$/.test(owner) ||
+          typeof repo !== 'string' || !/^[a-zA-Z0-9_.-]+$/.test(repo) ||
+          typeof remote !== 'string' || !/^[a-zA-Z0-9_.-]+$/.test(remote)) {
+        throw new WalkthroughSourceError('Gitea PR sources require a valid instance, repository and remote');
+      }
+      return { kind: 'pr', number, gitea: { instanceUrl, owner, repo, remote } };
+    }
     if (raw.sourceRepo !== undefined) {
       const { owner, repo } = raw.sourceRepo ?? {};
       try {
@@ -82,6 +95,7 @@ export function sourceKey(source) {
   if (source.kind === 'working-tree') return `working-tree:${source.scope}`;
   if (source.kind === 'branch') return `branch:${source.baseRef}...${source.headRef}`;
   if (source.kind === 'commit') return `commit:${source.hash}`;
+  if (source.gitea) return `gitea-pr:${encodeURIComponent(source.gitea.instanceUrl)}:${source.gitea.owner}/${source.gitea.repo}:${source.gitea.remote}:${source.number}`;
   return source.sourceRepo ? `pr:${source.sourceRepo.owner}/${source.sourceRepo.repo}:${source.number}` : `pr:${source.number}`;
 }
 
@@ -140,7 +154,9 @@ export async function loadSourceSections(directory, source, { getPullRequestDiff
     throw new WalkthroughSourceError('Pull request diffs are unavailable', 500);
   }
 
-  const { patch, meta } = await getPullRequestDiff(directory, source.number, source.sourceRepo);
+  const { patch, meta } = source.gitea
+    ? await getPullRequestDiff(directory, source.number, undefined, { source })
+    : await getPullRequestDiff(directory, source.number, source.sourceRepo);
   return {
     sections: patch && patch.trim() ? [{ scope: `pr:${source.number}`, patch }] : [],
     meta: meta || {},

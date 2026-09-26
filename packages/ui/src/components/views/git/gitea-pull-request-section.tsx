@@ -6,11 +6,18 @@ import { Icon } from '@/components/icon/Icon';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import { generatePullRequestDescription } from '@/lib/gitApi';
 import { useI18n } from '@/lib/i18n';
-import type { GiteaItemDetail, GiteaRepository, GitRemote } from '@/lib/api/types';
+import type { GiteaItemDetail, GiteaPullActionIdentity, GiteaPullCapabilities, GiteaPullActionResult,
+  GiteaRepository, GitRemote } from '@/lib/api/types';
+import { Input } from '@/components/ui/input';
+import { Textarea } from '@/components/ui/textarea';
 import { GiteaItemDetailView } from '@/components/session/gitea-item-detail';
 import { createGiteaPrIdentity, getGiteaPrIdentityKey, useGiteaPrStatusStore } from '@/stores/useGiteaPrStatusStore';
 import { getRuntimeKey } from '@/lib/runtime-switch';
 import { subscribeGitStatusInvalidations } from '@/lib/gitStatusInvalidation';
+import { useUIStore } from '@/stores/useUIStore';
+import { useWalkthroughStore } from '@/stores/useWalkthroughStore';
+import { useDeviceInfo } from '@/lib/device';
+import { isVSCodeRuntime } from '@/lib/desktop';
 import { PullRequestCreateForm } from './pull-request-create-form';
 
 interface GiteaPullRequestSectionProps {
@@ -30,6 +37,10 @@ export function GiteaPullRequestSection({
 }: GiteaPullRequestSectionProps) {
   const { t } = useI18n();
   const { gitea } = useRuntimeAPIs();
+  const openContextSurface = useUIStore((state) => state.openContextSurface);
+  const requestWalkthroughSource = useWalkthroughStore((state) => state.requestSource);
+  const { isMobile, screenWidth } = useDeviceInfo();
+  const showWalkthroughAction = !isMobile && screenWidth >= 768 && !isVSCodeRuntime();
   const [repositories, setRepositories] = React.useState<GiteaRepository[]>([repository]);
   const [selectedRemote, setSelectedRemote] = React.useState(repository.remote);
   const [title, setTitle] = React.useState(() => branchTitle(branch));
@@ -44,6 +55,16 @@ export function GiteaPullRequestSection({
   const [isCreating, setIsCreating] = React.useState(false);
   const [isGenerating, setIsGenerating] = React.useState(false);
   const [refreshRevision, setRefreshRevision] = React.useState(0);
+  const [capabilities, setCapabilities] = React.useState<{ identity: string; number: number;
+    value: GiteaPullCapabilities } | null>(null);
+  const [capabilityError, setCapabilityError] = React.useState<string | null>(null);
+  const [editing, setEditing] = React.useState(false);
+  const [editTitle, setEditTitle] = React.useState('');
+  const [editBody, setEditBody] = React.useState('');
+  const [mergeMethod, setMergeMethod] = React.useState<GiteaPullCapabilities['mergeMethods'][number]>('merge');
+  const [confirmMerge, setConfirmMerge] = React.useState(false);
+  const [acting, setActing] = React.useState(false);
+  const [actionError, setActionError] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     if (!gitea) return;
@@ -81,6 +102,22 @@ export function GiteaPullRequestSection({
   const item = statusEntry?.status?.item ?? null;
   const itemNumber = item?.number;
   const currentDetail = detail?.identity === identity && detail.number === item?.number ? detail.value : null;
+  const currentCapabilities = capabilities?.identity === identity && capabilities.number === item?.number
+    ? capabilities.value : null;
+  const actionSource = repositories.find((candidate) => candidate.owner === currentDetail?.pull?.sourceOwner &&
+    candidate.name === target.name && candidate.instanceUrl === target.instanceUrl);
+  const actionIdentity: GiteaPullActionIdentity | null = currentDetail?.pull?.headSha &&
+    currentDetail.pull.sourceBranch && actionSource ? {
+      directory, remote: target.remote, number: currentDetail.item.number,
+      instanceUrl: target.instanceUrl, owner: target.owner, repo: target.name,
+      headSha: currentDetail.pull.headSha, sourceRemote: actionSource.remote,
+      sourceBranch: currentDetail.pull.sourceBranch,
+    } : null;
+  React.useEffect(() => {
+    if (currentCapabilities?.mergeMethods.length && !currentCapabilities.mergeMethods.includes(mergeMethod)) {
+      setMergeMethod(currentCapabilities.mergeMethods[0]);
+    }
+  }, [currentCapabilities, mergeMethod]);
 
   React.useEffect(() => {
     let timer: number | null = null;
@@ -121,6 +158,46 @@ export function GiteaPullRequestSection({
     return () => { cancelled = true; };
   }, [directory, gitea, identity, itemNumber, refreshRevision,
     target.instanceUrl, target.owner, target.name, target.remote]);
+
+  React.useEffect(() => {
+    if (!gitea || !currentDetail || currentDetail.item.state !== 'open') return;
+    let cancelled = false;
+    const repo = currentDetail.repo;
+    setCapabilityError(null);
+    void gitea.pullCapabilities({ directory, remote: repo.remote, number: currentDetail.item.number,
+      instanceUrl: repo.instanceUrl, owner: repo.owner, repo: repo.name })
+      .then((value) => { if (!cancelled) setCapabilities({ identity, number: currentDetail.item.number, value }); })
+      .catch((caught: Error) => { if (!cancelled) setCapabilityError(caught.message); });
+    return () => { cancelled = true; };
+  }, [gitea, directory, identity, currentDetail, refreshRevision]);
+
+  const applyActionResult = (result: GiteaPullActionResult) => {
+    if (result.repo.instanceUrl !== target.instanceUrl || result.repo.owner !== target.owner ||
+        result.repo.name !== target.name || result.item.number !== item?.number) {
+      throw new Error('Gitea returned a different pull request. Refresh before continuing.');
+    }
+    setDetail((previous) => previous?.identity === identity && previous.number === result.item.number
+      ? { ...previous, value: { ...previous.value, repo: result.repo, item: result.item, pull: result.pull } }
+      : previous);
+    publishStatus(prIdentity, { repo: result.repo, item: result.item,
+      pull: { draft: result.pull.draft, merged: result.pull.merged }, historyIncomplete: false });
+    setRefreshRevision((value) => value + 1);
+  };
+
+  const runAction = async (action: 'edit' | 'ready' | 'merge') => {
+    if (!gitea || !actionIdentity || acting) return;
+    setActing(true); setActionError(null);
+    try {
+      const result = action === 'edit' ? await gitea.pullEdit({ ...actionIdentity,
+        title: editTitle.trim(), body: editBody })
+        : action === 'ready' ? await gitea.pullReady(actionIdentity)
+          : await gitea.pullMerge({ ...actionIdentity, method: mergeMethod });
+      applyActionResult(result);
+      setEditing(false); setConfirmMerge(false);
+    } catch (caught) {
+      setActionError(caught instanceof Error ? caught.message : String(caught));
+    } finally { setActing(false); }
+  };
 
   const postComment = async (commentBody: string) => {
     if (!gitea || !item || !currentDetail) return;
@@ -190,6 +267,15 @@ export function GiteaPullRequestSection({
             <Icon name={isLoading ? 'loader-4' : 'refresh'}
               className={`size-4 text-muted-foreground ${isLoading ? 'animate-spin' : ''}`} />
           </Button>
+          {item && showWalkthroughAction ? <Button variant="outline" size="sm" className="h-7 gap-1.5"
+            onClick={() => {
+              requestWalkthroughSource(directory, { kind: 'pr', number: item.number,
+                gitea: { instanceUrl: target.instanceUrl, owner: target.owner, repo: target.name,
+                  remote: target.remote } });
+              openContextSurface(directory, 'walkthrough');
+            }} aria-label={t('walkthrough.action.open')}>
+            <Icon name="route" className="size-4" />{t('walkthrough.action.open')}
+          </Button> : null}
         </div>
       </div>
       <div className="flex flex-col gap-3 py-3">
@@ -209,8 +295,45 @@ export function GiteaPullRequestSection({
             {detailError?.identity === identity && detailError.number === item.number ? <p role="alert" className="typography-micro text-status-error">
               {detailError.message}</p> : null}
             {currentDetail ? <GiteaItemDetailView key={`${identity}:${item.number}`} detail={currentDetail}
-              onComment={postComment} /> : isLoadingDetail ? <p className="typography-micro text-muted-foreground">
+              directory={directory} onComment={postComment} /> : isLoadingDetail ? <p className="typography-micro text-muted-foreground">
                 {t('common.loading')}</p> : null}
+            {currentDetail?.item.state === 'open' ? <div className="space-y-2 border-t border-border/40 pt-3">
+              {capabilityError ? <p role="alert" className="typography-micro text-status-error">{capabilityError}</p> : null}
+              {actionError ? <p role="alert" className="typography-micro text-status-error">{actionError}</p> : null}
+              {currentCapabilities?.canEdit && actionIdentity ? <>
+                {!editing ? <Button type="button" variant="ghost" size="sm" onClick={() => {
+                  setEditTitle(currentDetail.item.title); setEditBody(currentDetail.item.body); setEditing(true);
+                  setActionError(null);
+                }}>{t('gitView.gitea.edit')}</Button> : null}
+                {editing ? <div className="space-y-2">
+                  <Input value={editTitle} onChange={(event) => setEditTitle(event.target.value)} maxLength={300}
+                    aria-label={t('gitView.gitea.editTitle')} />
+                  <Textarea value={editBody} onChange={(event) => setEditBody(event.target.value)} maxLength={60_000}
+                    aria-label={t('gitView.gitea.editBody')} />
+                  <div className="flex gap-2">
+                    <Button size="sm" disabled={acting || !editTitle.trim()} onClick={() => { void runAction('edit'); }}>
+                      {acting ? t('common.loading') : t('gitView.gitea.save')}</Button>
+                    <Button size="sm" variant="ghost" onClick={() => setEditing(false)}>{t('gitView.gitea.cancel')}</Button>
+                  </div>
+                </div> : null}
+              </> : null}
+              {currentCapabilities?.canMarkReady && actionIdentity ? <Button size="sm" variant="ghost" disabled={acting}
+                onClick={() => { void runAction('ready'); }}>{t('gitView.gitea.markReady')}</Button> : null}
+              {currentCapabilities?.canMerge && actionIdentity && currentCapabilities.mergeMethods.length ? <div className="space-y-2">
+                <Select value={mergeMethod} onValueChange={(value) => { setMergeMethod(value as typeof mergeMethod); setConfirmMerge(false); }}>
+                  <SelectTrigger size="lg" aria-label={t('gitView.gitea.mergeMethod')}><SelectValue /></SelectTrigger>
+                  <SelectContent>{currentCapabilities.mergeMethods.map((method) => <SelectItem key={method} value={method}>
+                    {method}</SelectItem>)}</SelectContent>
+                </Select>
+                {confirmMerge ? <div className="flex items-center gap-2">
+                  <span className="typography-micro">{t('gitView.gitea.confirmMerge')}</span>
+                  <Button size="sm" disabled={acting || !actionIdentity} onClick={() => { void runAction('merge'); }}>
+                    {acting ? t('common.loading') : t('gitView.gitea.merge')}</Button>
+                  <Button size="sm" variant="ghost" onClick={() => setConfirmMerge(false)}>{t('gitView.gitea.cancel')}</Button>
+                </div> : <Button size="sm" disabled={!actionIdentity} onClick={() => setConfirmMerge(true)}>
+                  {t('gitView.gitea.merge')}</Button>}
+              </div> : null}
+            </div> : null}
           </div>
         ) : null}
         {!isLoading && statusEntry?.status && (!item || item.state === 'closed') ? (

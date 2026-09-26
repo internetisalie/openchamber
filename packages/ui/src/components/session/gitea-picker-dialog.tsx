@@ -263,7 +263,7 @@ export function GiteaPickerDialog({ open, onOpenChange, onSelect }: {
           {t('session.giteaDetail.back')}
         </Button>
         <GiteaItemDetailView key={`${directory}:${currentSelectedDetail.repo.instanceUrl}:${currentSelectedDetail.repo.owner}:${currentSelectedDetail.repo.name}:${currentSelectedDetail.item.kind}:${currentSelectedDetail.item.number}`}
-          detail={currentSelectedDetail} onComment={postComment} />
+          detail={currentSelectedDetail} directory={directory} onComment={postComment} />
         {currentSelectedDetail.item.kind === 'pr' ? <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Checkbox checked={includeDiff} onChange={setIncludeDiff}
             ariaLabel={t('session.giteaPicker.includeDiff')} />

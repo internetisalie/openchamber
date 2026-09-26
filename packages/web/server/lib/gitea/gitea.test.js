@@ -279,7 +279,7 @@ test('comment pages and pull diff stay with the matched instance', async () => {
   assert.equal(detail.body.commentsTruncated, false);
   assert.equal(detail.body.item.url, 'https://git.example.com/team/alice/project/pulls/7');
   assert.deepEqual(detail.body.pull, {
-    draft: null, merged: null, sourceBranch: null, targetBranch: null, sourceOwner: null,
+    draft: null, merged: null, sourceBranch: null, targetBranch: null, sourceOwner: null, headSha: null,
   });
   const diff = await request(app).get('/api/gitea/pull-diff')
     .query({ directory: '/repo', remote: 'origin', number: 7,
@@ -315,7 +315,7 @@ test('pull detail and comments retain the matched repository and report write fa
   const detail = await request(app).get('/api/gitea/item')
     .query({ directory: '/repo', remote: 'origin', kind: 'pr', number: 7 }).expect(200);
   assert.deepEqual(detail.body.pull, {
-    draft: false, merged: true, sourceBranch: 'feature', targetBranch: 'main', sourceOwner: 'alice',
+    draft: false, merged: true, sourceBranch: 'feature', targetBranch: 'main', sourceOwner: 'alice', headSha: null,
   });
   const input = { directory: '/repo', remote: 'origin', kind: 'pr', number: 7,
     body: 'Looks good', instanceUrl: 'https://git.example.com/team', owner: 'alice', repo: 'project' };
@@ -378,4 +378,106 @@ test('comment limits report partial content', async () => {
     .query({ directory: '/repo', kind: 'issue', number: 7 }).expect(200);
   assert.equal(detail.body.comments.length, 100);
   assert.equal(detail.body.commentsTruncated, true);
+});
+
+test('PR review comments and checks load independently with confirmed empty checks', async () => {
+  const resolved = { connection: { instanceUrl: 'https://git.example.com', token: 'read-token' },
+    repo: { owner: 'team', name: 'project' }, remote: 'origin' };
+  const sha = 'a'.repeat(40);
+  let statusPayload = { state: 'pending', total_count: 0, statuses: null };
+  globalThis.fetch = async (url) => {
+    const address = String(url);
+    if (address.includes('/reviews/3/comments')) return Response.json([
+      { id: 9, body: 'Please adjust this', path: 'src/app.ts', line: 12, user: { login: 'reviewer' } },
+    ]);
+    if (address.includes('/reviews?')) return Response.json([{ id: 3, user: { login: 'reviewer' } }]);
+    if (address.endsWith(`/commits/${sha}/status`)) return Response.json(statusPayload);
+    return Response.json({ number: 7, title: 'PR', head: { sha } });
+  };
+  const query = { directory: '/repo', remote: 'origin', number: 7,
+    instanceUrl: 'https://git.example.com', owner: 'team', repo: 'project' };
+  const app = appFor(resolved);
+  const reviews = await request(app).get('/api/gitea/pr/reviews').query(query).expect(200);
+  assert.deepEqual(reviews.body.comments, [{ id: 9, reviewId: 3, author: 'reviewer',
+    body: 'Please adjust this', path: 'src/app.ts', line: 12 }]);
+  const checks = await request(app).get('/api/gitea/pr/checks').query(query).expect(200);
+  assert.deepEqual(checks.body, { state: 'pending', totalCount: 0, checks: [] });
+  statusPayload = { state: 'failure', total_count: 1, statuses: [{ id: 4, context: 'ci/test',
+    status: 'failure', description: 'Tests failed', target_url: 'https://ci.example/build/4' }] };
+  const failed = await request(app).get('/api/gitea/pr/checks').query(query).expect(200);
+  assert.deepEqual(failed.body, { state: 'failure', totalCount: 1, checks: [{ id: 4, name: 'ci/test',
+    state: 'failure', description: 'Tests failed', url: 'https://ci.example/build/4' }] });
+  await request(app).get('/api/gitea/pr/checks').query({ ...query, instanceUrl: 'https://elsewhere.example' }).expect(409);
+});
+
+test('PR actions recheck permissions, source identity and merge settings', async () => {
+  const resolved = { connection: { instanceUrl: 'https://git.example.com', token: 'write-token',
+    user: { login: 'author' } }, repo: { owner: 'team', name: 'project' }, remote: 'origin' };
+  const sha = 'a'.repeat(40);
+  let title = 'WIP: Feature';
+  let merged = false;
+  let canPush = true;
+  let approvalBlocked = false;
+  let patches = 0;
+  globalThis.fetch = async (url, options) => {
+    const address = String(url);
+    if (address.endsWith('/repos/team/project')) return Response.json({ permissions: { push: canPush },
+      allow_merge_commits: true, allow_squash_merge: false, archived: false });
+    if (options.method === 'PATCH') {
+      patches++;
+      title = JSON.parse(options.body).title;
+    }
+    if (address.endsWith('/merge') && options.method === 'POST') {
+      if (approvalBlocked) return Response.json({ message: 'Does not have enough approvals' }, { status: 405 });
+      merged = true;
+      return new Response('merged');
+    }
+    return Response.json({ number: 7, title, body: 'Body', state: merged ? 'closed' : 'open',
+      draft: title.startsWith('WIP:'), merged, mergeable: !title.startsWith('WIP:'),
+      user: { login: 'author' }, head: { sha, ref: 'feature', repo: { owner: { login: 'team' }, name: 'project' } },
+      base: { ref: 'main' } });
+  };
+  const app = appFor(resolved);
+  const identity = { directory: '/repo', remote: 'origin', sourceRemote: 'origin', sourceBranch: 'feature',
+    number: 7, headSha: sha, instanceUrl: 'https://git.example.com', owner: 'team', repo: 'project' };
+  const capabilities = await request(app).get('/api/gitea/pr/capabilities').query(identity).expect(200);
+  assert.equal(capabilities.body.canMarkReady, true);
+  assert.deepEqual(capabilities.body.mergeMethods, ['merge']);
+  await request(app).post('/api/gitea/pr/ready').send({ ...identity, headSha: 'b'.repeat(40) }).expect(409);
+  assert.equal(patches, 0);
+  const ready = await request(app).post('/api/gitea/pr/ready').send(identity).expect(200);
+  assert.equal(ready.body.item.title, 'Feature');
+  assert.equal(ready.body.pull.draft, false);
+  const edited = await request(app).patch('/api/gitea/pr').send({ ...identity, title: 'Feature updated', body: 'Body' }).expect(200);
+  assert.equal(edited.body.item.title, 'Feature updated');
+  await request(app).post('/api/gitea/pr/merge').send({ ...identity, method: 'squash' }).expect(409);
+  canPush = false;
+  await request(app).post('/api/gitea/pr/merge').send({ ...identity, method: 'merge' }).expect(403);
+  const readOnly = appFor({ ...resolved, connection: { ...resolved.connection, user: { login: 'reader' } } });
+  await request(readOnly).patch('/api/gitea/pr').send({ ...identity, title: 'Denied', body: 'Body' }).expect(403);
+  canPush = true;
+  approvalBlocked = true;
+  const blocked = await request(app).post('/api/gitea/pr/merge').send({ ...identity, method: 'merge' }).expect(409);
+  assert.match(blocked.body.error, /needs more approvals/);
+  approvalBlocked = false;
+  const result = await request(app).post('/api/gitea/pr/merge').send({ ...identity, method: 'merge' }).expect(200);
+  assert.equal(result.body.pull.merged, true);
+  assert.equal(result.body.item.state, 'closed');
+});
+
+test('PR writes reject a remote that now resolves to another repository', async () => {
+  const original = { connection: { instanceUrl: 'https://git.example.com', token: 'token' },
+    repo: { owner: 'team', name: 'project' }, remote: 'origin' };
+  let resolved = original;
+  const app = express();
+  registerGiteaRoutes(app, { resolveRepository: async () => resolved });
+  resolved = { ...original, repo: { owner: 'other', name: 'project' } };
+  let called = false;
+  globalThis.fetch = async () => { called = true; throw new Error('must not contact Gitea'); };
+  const denied = await request(app).patch('/api/gitea/pr').send({ directory: '/repo', remote: 'origin',
+    sourceRemote: 'origin', sourceBranch: 'feature', headSha: 'a'.repeat(40), number: 7,
+    instanceUrl: 'https://git.example.com', owner: 'team', repo: 'project',
+    title: 'Unrelated', body: '' }).expect(409);
+  assert.match(denied.body.error, /repository changed/);
+  assert.equal(called, false);
 });

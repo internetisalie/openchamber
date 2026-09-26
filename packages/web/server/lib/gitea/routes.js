@@ -11,6 +11,7 @@ const COMMENT_PAGE_SIZE = 50;
 const MAX_COMMENTS = 100;
 const MAX_COMMENT_PAGES = 10;
 const MAX_CLOSED_STATUS_PAGES = 2;
+const MAX_REVIEWS = 100;
 const text = z.string();
 const optionalText = (value) => {
   const parsed = text.safeParse(value);
@@ -32,7 +33,7 @@ const apiCommentsSchema = z.array(z.object({
 
 function fail(res, error) {
   if (error instanceof GiteaRequestError) {
-    const status = [401, 403, 404, 409, 422].includes(error.status) ? error.status : 502;
+    const status = error.status === 405 ? 409 : [401, 403, 404, 409, 422].includes(error.status) ? error.status : 502;
     return res.status(status).json({ error: error.message });
   }
   return res.status(502).json({ error: error instanceof Error ? error.message : 'Gitea request failed' });
@@ -89,6 +90,30 @@ const commentSchema = z.object({
   owner: z.string().min(1),
   repo: z.string().min(1),
 });
+const pullSectionSchema = z.object({
+  directory: z.string().trim().min(1),
+  remote: z.string().trim().min(1),
+  number: z.coerce.number().int().positive(),
+  instanceUrl: z.string().url(),
+  owner: z.string().min(1),
+  repo: z.string().min(1),
+});
+const pullActionIdentitySchema = pullSectionSchema.extend({
+  headSha: z.string().regex(/^[a-f0-9]{40,64}$/i),
+  sourceRemote: z.string().trim().min(1),
+  sourceBranch: branchSchema,
+});
+const editPullSchema = pullActionIdentitySchema.extend({
+  title: z.string().trim().min(1).max(300), body: z.string().max(60_000),
+});
+const mergePullSchema = pullActionIdentitySchema.extend({
+  method: z.enum(['merge', 'rebase', 'rebase-merge', 'squash', 'fast-forward-only']),
+});
+const MERGE_SETTINGS = {
+  merge: 'allow_merge_commits', rebase: 'allow_rebase',
+  'rebase-merge': 'allow_rebase_explicit', squash: 'allow_squash_merge',
+  'fast-forward-only': 'allow_fast_forward_only_merge',
+};
 
 function publicRepo({ connection, repo, remote }) {
   return { instanceUrl: connection.instanceUrl, owner: repo.owner, name: repo.name, remote };
@@ -124,7 +149,65 @@ function pullDetailFromApi(raw) {
     sourceBranch: optionalText(raw?.head?.ref),
     targetBranch: optionalText(raw?.base?.ref),
     sourceOwner: optionalText(raw?.head?.repo?.owner?.login),
+    headSha: optionalText(raw?.head?.sha),
   };
+}
+
+async function confirmedPull(req, res, resolveRepository) {
+  const parsed = pullSectionSchema.safeParse(req.query);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'Invalid pull request identity' });
+    return null;
+  }
+  const resolved = await repositoryForRequest(req, res, resolveRepository);
+  if (!resolved) return null;
+  const { instanceUrl, owner, repo, number } = parsed.data;
+  if (resolved.connection.instanceUrl !== instanceUrl || resolved.repo.owner !== owner ||
+      resolved.repo.name !== repo) {
+    res.status(409).json({ error: 'The Gitea repository changed. Reopen the pull request.' });
+    return null;
+  }
+  const root = `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}`;
+  const pull = await requestGitea(resolved.connection, `${root}/pulls/${number}`);
+  return { ...resolved, root, number, pull };
+}
+
+async function confirmedWritablePull(req, res, resolveRepository, identity, action) {
+  const resolved = await repositoryForRequest(req, res, resolveRepository);
+  if (!resolved) return null;
+  if (resolved.connection.instanceUrl !== identity.instanceUrl || resolved.repo.owner !== identity.owner ||
+      resolved.repo.name !== identity.repo) {
+    res.status(409).json({ error: 'The Gitea repository changed. Reopen the pull request.' });
+    return null;
+  }
+  const source = await resolveRepository(identity.directory, identity.sourceRemote);
+  if (!source || source.connection.instanceUrl !== identity.instanceUrl ||
+      source.repo.name !== resolved.repo.name) {
+    res.status(409).json({ error: 'The Gitea source remote changed. Reopen the pull request.' });
+    return null;
+  }
+  const root = `/repos/${encodeURIComponent(identity.owner)}/${encodeURIComponent(identity.repo)}`;
+  const [pull, repository] = await Promise.all([
+    requestGitea(resolved.connection, `${root}/pulls/${identity.number}`),
+    requestGitea(resolved.connection, root),
+  ]);
+  if (pull?.head?.sha !== identity.headSha || pull?.head?.ref !== identity.sourceBranch ||
+      pull?.head?.repo?.owner?.login !== source.repo.owner || pull?.head?.repo?.name !== source.repo.name) {
+    res.status(409).json({ error: 'The pull request source changed. Refresh before continuing.' });
+    return null;
+  }
+  if (pull?.state !== 'open') {
+    res.status(409).json({ error: 'This pull request is no longer open.' });
+    return null;
+  }
+  const canEdit = repository?.permissions?.push === true || repository?.permissions?.admin === true ||
+    pull?.user?.login === resolved.connection.user?.login;
+  const canMerge = repository?.permissions?.push === true || repository?.permissions?.admin === true;
+  if (repository?.archived === true || (action === 'merge' ? !canMerge : !canEdit)) {
+    res.status(403).json({ error: 'This account cannot change this pull request.' });
+    return null;
+  }
+  return { ...resolved, root, pull, repository };
 }
 
 export function registerGiteaRoutes(app, { resolveRepository = resolveGiteaRepo } = {}) {
@@ -293,6 +376,139 @@ export function registerGiteaRoutes(app, { resolveRepository = resolveGiteaRepo 
         pull: kind === 'pr' ? pullDetailFromApi(raw) : null,
         comments, commentsTruncated });
     } catch (error) { fail(res, error); }
+  });
+
+  app.get('/api/gitea/pr/reviews', async (req, res) => {
+    try {
+      const resolved = await confirmedPull(req, res, resolveRepository);
+      if (!resolved) return;
+      const { connection, root, number } = resolved;
+      const reviews = [];
+      let truncated = false;
+      for (let page = 1; page <= MAX_COMMENT_PAGES; page++) {
+        const { data, hasNext } = await requestGiteaPage(connection,
+          `${root}/pulls/${number}/reviews?limit=${COMMENT_PAGE_SIZE}&page=${page}`);
+        if (!Array.isArray(data)) throw new Error('Gitea returned invalid reviews');
+        for (const entry of data) {
+          if (!Number.isInteger(entry?.id) || entry.id < 1) throw new Error('Gitea returned an invalid review');
+          reviews.push(entry);
+          if (reviews.length === MAX_REVIEWS) break;
+        }
+        if (reviews.length === MAX_REVIEWS) {
+          truncated = data.length > COMMENT_PAGE_SIZE || hasNext === true;
+          break;
+        }
+        if (hasNext === false || (hasNext === null && data.length < COMMENT_PAGE_SIZE)) break;
+        if (page === MAX_COMMENT_PAGES) truncated = true;
+      }
+      const result = [];
+      for (const review of reviews) {
+        const { data } = await requestGiteaPage(connection,
+          `${root}/pulls/${number}/reviews/${review.id}/comments?limit=${COMMENT_PAGE_SIZE}&page=1`);
+        if (!Array.isArray(data)) throw new Error('Gitea returned invalid review comments');
+        for (const entry of data) {
+          result.push({ id: Number.isInteger(entry?.id) ? entry.id : null,
+            reviewId: review.id, author: optionalText(entry?.user?.login) ?? optionalText(review.user?.login),
+            body: optionalText(entry?.body) ?? '', path: optionalText(entry?.path),
+            line: Number.isInteger(entry?.line) ? entry.line : null });
+        }
+        if (data.length === COMMENT_PAGE_SIZE) truncated = true;
+      }
+      res.json({ comments: result, truncated });
+    } catch (error) { fail(res, error); }
+  });
+
+  app.get('/api/gitea/pr/checks', async (req, res) => {
+    try {
+      const resolved = await confirmedPull(req, res, resolveRepository);
+      if (!resolved) return;
+      const sha = optionalText(resolved.pull?.head?.sha);
+      if (!sha || !/^[a-f0-9]{40,64}$/i.test(sha)) throw new Error('Gitea did not return a valid PR head commit');
+      const raw = await requestGitea(resolved.connection, `${resolved.root}/commits/${sha}/status`);
+      if (!Number.isInteger(raw?.total_count) || raw.total_count < 0 ||
+          !Array.isArray(raw.statuses) && raw.statuses !== null) {
+        throw new Error('Gitea returned invalid commit statuses');
+      }
+      const statuses = raw.statuses ?? [];
+      res.json({ state: optionalText(raw.state) ?? 'unknown', totalCount: raw.total_count,
+        checks: statuses.map((entry) => ({
+          id: Number.isInteger(entry?.id) ? entry.id : null,
+          name: optionalText(entry?.context) ?? 'Unnamed check',
+          state: optionalText(entry?.status) ?? 'unknown',
+          description: optionalText(entry?.description),
+          url: optionalText(entry?.target_url),
+        })) });
+    } catch (error) { fail(res, error); }
+  });
+
+  app.get('/api/gitea/pr/capabilities', async (req, res) => {
+    try {
+      const resolved = await confirmedPull(req, res, resolveRepository);
+      if (!resolved) return;
+      const repository = await requestGitea(resolved.connection, resolved.root);
+      const canEdit = repository?.permissions?.push === true || repository?.permissions?.admin === true ||
+        resolved.pull?.user?.login === resolved.connection.user?.login;
+      const canMerge = repository?.permissions?.push === true || repository?.permissions?.admin === true;
+      const open = resolved.pull?.state === 'open' && repository?.archived !== true;
+      const methods = Object.entries(MERGE_SETTINGS).filter(([, field]) => repository?.[field] === true)
+        .map(([method]) => method);
+      res.json({ canEdit: open && canEdit, canMarkReady: open && canEdit &&
+        resolved.pull?.draft === true && /^(?:WIP:|\[WIP\])\s*/i.test(resolved.pull?.title ?? ''),
+        canMerge: open && canMerge && resolved.pull?.draft !== true && resolved.pull?.mergeable === true,
+        mergeMethods: methods });
+    } catch (error) { fail(res, error); }
+  });
+
+  app.patch('/api/gitea/pr', parseBody, async (req, res) => {
+    const parsed = editPullSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: 'Invalid pull request edit' });
+    try {
+      const resolved = await confirmedWritablePull(req, res, resolveRepository, parsed.data, 'edit');
+      if (!resolved) return;
+      const raw = await requestGitea(resolved.connection, `${resolved.root}/pulls/${parsed.data.number}`,
+        { method: 'PATCH', body: { title: parsed.data.title, body: parsed.data.body } });
+      return res.json({ repo: publicRepo(resolved), item: itemFromApi(raw, 'pr', publicRepo(resolved)),
+        pull: pullDetailFromApi(raw) });
+    } catch (error) { return fail(res, error); }
+  });
+
+  app.post('/api/gitea/pr/ready', parseBody, async (req, res) => {
+    const parsed = pullActionIdentitySchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: 'Invalid pull request identity' });
+    try {
+      const resolved = await confirmedWritablePull(req, res, resolveRepository, parsed.data, 'edit');
+      if (!resolved) return;
+      const title = resolved.pull?.title?.replace(/^(?:WIP:|\[WIP\])\s*/i, '');
+      if (resolved.pull?.draft !== true || !title || title === resolved.pull.title) {
+        return res.status(409).json({ error: 'This Gitea draft cannot be marked ready from its title.' });
+      }
+      const raw = await requestGitea(resolved.connection, `${resolved.root}/pulls/${parsed.data.number}`,
+        { method: 'PATCH', body: { title } });
+      if (raw?.draft !== false) throw new Error('Gitea did not confirm that the pull request is ready');
+      return res.json({ repo: publicRepo(resolved), item: itemFromApi(raw, 'pr', publicRepo(resolved)),
+        pull: pullDetailFromApi(raw) });
+    } catch (error) { return fail(res, error); }
+  });
+
+  app.post('/api/gitea/pr/merge', parseBody, async (req, res) => {
+    const parsed = mergePullSchema.safeParse(req.body);
+    if (!parsed.success) return res.status(400).json({ error: 'Invalid merge request' });
+    try {
+      const resolved = await confirmedWritablePull(req, res, resolveRepository, parsed.data, 'merge');
+      if (!resolved) return;
+      if (resolved.repository?.[MERGE_SETTINGS[parsed.data.method]] !== true) {
+        return res.status(409).json({ error: 'This merge method is disabled for the repository.' });
+      }
+      if (resolved.pull?.draft === true || resolved.pull?.mergeable !== true) {
+        return res.status(409).json({ error: 'This pull request is not ready to merge.' });
+      }
+      await requestGitea(resolved.connection, `${resolved.root}/pulls/${parsed.data.number}/merge`,
+        { method: 'POST', body: { do: parsed.data.method }, accept: 'text/plain' });
+      const raw = await requestGitea(resolved.connection, `${resolved.root}/pulls/${parsed.data.number}`);
+      if (raw?.merged !== true) throw new Error('Gitea did not confirm the merge');
+      return res.json({ repo: publicRepo(resolved), item: itemFromApi(raw, 'pr', publicRepo(resolved)),
+        pull: pullDetailFromApi(raw) });
+    } catch (error) { return fail(res, error); }
   });
 
   app.post('/api/gitea/comment', parseBody, async (req, res) => {
