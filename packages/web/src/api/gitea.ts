@@ -55,15 +55,20 @@ export function createWebGiteaAPI(): GiteaAPI {
       const query = headRemote ? { directory, branch, remote, headRemote } : { directory, branch, remote };
       return read(await runtimeFetch('/api/gitea/pr/status', {
         query,
-      }), z.object({ repo, item: item.nullable() }));
+      }), z.object({ repo, item: item.nullable(),
+        pull: z.object({ draft: z.boolean().nullable(), merged: z.boolean().nullable() }).nullable(),
+        historyIncomplete: z.boolean() }));
     },
     async pullRequestCreate(input) {
       return read(await runtimeFetch('/api/gitea/pr/create', {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
       }), item);
     },
-    async items(directory, kind, page = 1) {
-      return read(await runtimeFetch('/api/gitea/items', { query: { directory, kind, page } }),
+    async items(directory, kind, options = {}) {
+      const baseQuery = { directory, kind, page: options.page ?? 1 };
+      const remoteQuery = options.remote ? { ...baseQuery, remote: options.remote } : baseQuery;
+      const query = options.query ? { ...remoteQuery, q: options.query } : remoteQuery;
+      return read(await runtimeFetch('/api/gitea/items', { query }),
         z.object({ repo, items: z.array(item), page: z.number().int(), hasMore: z.boolean() }));
     },
     async item(directory, kind, number, remote) {
@@ -76,8 +81,10 @@ export function createWebGiteaAPI(): GiteaAPI {
         method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(input),
       }), comment);
     },
-    async pullDiff(directory, number, remote) {
-      const query = remote ? { directory, number, remote } : { directory, number };
+    async pullDiff(directory, number, remote, expectedRepo) {
+      const baseQuery = remote ? { directory, number, remote } : { directory, number };
+      const query = expectedRepo ? { ...baseQuery, instanceUrl: expectedRepo.instanceUrl,
+        owner: expectedRepo.owner, repo: expectedRepo.name } : baseQuery;
       const response = await runtimeFetch('/api/gitea/pull-diff', { query });
       if (!response.ok) {
         const payload: unknown = await response.json().catch(() => null);

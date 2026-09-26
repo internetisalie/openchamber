@@ -119,6 +119,44 @@ test('read routes keep repo identity and distinguish API failure from an empty p
   assert.match(denied.body.error, /lacks permission/);
 });
 
+test('searched issues and PRs stay in the selected remote and use repository search', async () => {
+  const first = { connection: { instanceUrl: 'https://one.example', token: 'first' },
+    repo: { owner: 'team', name: 'same-name' }, remote: 'origin' };
+  const second = { connection: { instanceUrl: 'https://two.example', token: 'second' },
+    repo: { owner: 'team', name: 'same-name' }, remote: 'upstream' };
+  const app = express();
+  registerGiteaRoutes(app, { resolveRepository: async (_directory, remote) =>
+    remote === 'upstream' ? second : first });
+  const requested = [];
+  globalThis.fetch = async (url, options) => {
+    const address = String(url);
+    requested.push(address);
+    assert.ok(address.startsWith('https://two.example/api/v1/repos/team/same-name/issues?'));
+    assert.equal(options.headers.Authorization, 'token second');
+    const params = new URL(address).searchParams;
+    assert.equal(params.get('q'), 'login fix');
+    assert.equal(params.get('state'), 'open');
+    assert.equal(params.get('type'), params.get('page') === '1' ? 'issues' : 'pulls');
+    return Response.json([{ number: 7, title: 'Login fix', state: 'open' }], {
+      headers: params.get('page') === '1' ? { Link: '<https://elsewhere.example/steal>; rel="next"' } : {},
+    });
+  };
+  const issues = await request(app).get('/api/gitea/items').query({ directory: '/repo', remote: 'upstream',
+    kind: 'issue', q: '  login fix  ' }).expect(200);
+  assert.equal(issues.body.hasMore, true);
+  assert.equal(issues.body.repo.instanceUrl, second.connection.instanceUrl);
+  assert.equal(issues.body.repo.remote, 'upstream');
+  assert.equal(issues.body.items[0].url, 'https://two.example/team/same-name/issues/7');
+  const pulls = await request(app).get('/api/gitea/items').query({ directory: '/repo', remote: 'upstream',
+    kind: 'pr', q: 'login fix', page: 2 }).expect(200);
+  assert.equal(pulls.body.hasMore, false);
+  assert.equal(pulls.body.items[0].kind, 'pr');
+  assert.equal(pulls.body.items[0].url, 'https://two.example/team/same-name/pulls/7');
+  assert.equal(requested.length, 2);
+  await request(app).get('/api/gitea/items').query({ directory: '/repo', kind: 'issue', q: 'x'.repeat(257) }).expect(400);
+  assert.equal(requested.length, 2);
+});
+
 test('creating a pull request posts only to the selected instance and source fork', async () => {
   const connection = { instanceUrl: 'https://git.example.com/team', token: 'write-token' };
   const target = { connection, repo: { owner: 'upstream', name: 'project' }, remote: 'upstream' };
@@ -176,12 +214,46 @@ test('pull request status identifies the source repository and preserves lookup 
   }).expect(200);
   assert.equal(result.body.item.number, 12);
   assert.equal(result.body.repo.owner, 'upstream');
+  assert.deepEqual(result.body.pull, { draft: null, merged: null });
+  assert.equal(result.body.historyIncomplete, false);
 
   globalThis.fetch = async () => Response.json({ message: 'forbidden' }, { status: 403 });
   const denied = await request(app).get('/api/gitea/pr/status').query({
     directory: '/repo', remote: 'upstream', headRemote: 'origin', branch: 'feature/login',
   }).expect(403);
   assert.equal('item' in denied.body, false);
+});
+
+test('pull request status finds recent closed history and reports an incomplete history scan', async () => {
+  const resolved = {
+    connection: { instanceUrl: 'https://git.example.com', token: 'read-token' },
+    repo: { owner: 'alice', name: 'project' }, remote: 'origin',
+  };
+  const app = appFor(resolved);
+  globalThis.fetch = async (url) => {
+    const address = new URL(url);
+    if (address.searchParams.get('state') === 'open') return Response.json([]);
+    assert.equal(address.searchParams.get('sort'), 'recentclose');
+    return Response.json([{ number: 18, title: 'Completed', state: 'closed', merged: true,
+      draft: false, head: { ref: 'feature', repo: { owner: { login: 'alice' }, name: 'project' } } }]);
+  };
+  const historical = await request(app).get('/api/gitea/pr/status')
+    .query({ directory: '/repo', branch: 'feature' }).expect(200);
+  assert.equal(historical.body.item.number, 18);
+  assert.deepEqual(historical.body.pull, { draft: false, merged: true });
+
+  let closedPages = 0;
+  globalThis.fetch = async (url) => {
+    const address = new URL(url);
+    if (address.searchParams.get('state') === 'open') return Response.json([]);
+    closedPages++;
+    return Response.json([], { headers: { Link: '<https://bad.example>; rel="next"' } });
+  };
+  const incomplete = await request(app).get('/api/gitea/pr/status')
+    .query({ directory: '/repo', branch: 'feature' }).expect(200);
+  assert.equal(incomplete.body.item, null);
+  assert.equal(incomplete.body.historyIncomplete, true);
+  assert.equal(closedPages, 2);
 });
 
 test('comment pages and pull diff stay with the matched instance', async () => {
@@ -210,8 +282,13 @@ test('comment pages and pull diff stay with the matched instance', async () => {
     draft: null, merged: null, sourceBranch: null, targetBranch: null, sourceOwner: null,
   });
   const diff = await request(app).get('/api/gitea/pull-diff')
-    .query({ directory: '/repo', number: 7 }).expect(200);
+    .query({ directory: '/repo', remote: 'origin', number: 7,
+      instanceUrl: 'https://git.example.com/team', owner: 'alice', repo: 'project' }).expect(200);
   assert.equal(diff.text, 'diff --git a/file b/file');
+  const requestCount = requested.length;
+  await request(app).get('/api/gitea/pull-diff').query({ directory: '/repo', remote: 'origin', number: 7,
+    instanceUrl: 'https://other.example', owner: 'alice', repo: 'project' }).expect(409);
+  assert.equal(requested.length, requestCount);
   assert.ok(requested.every((url) => url.startsWith('https://git.example.com/team/api/v1/')));
 });
 

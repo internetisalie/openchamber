@@ -74,8 +74,8 @@ export const installHookTestDom = (storage?: Storage) => {
     querySelectorAll: () => [],
     createElement: () => createElement(documentStub),
     createElementNS: () => createElement(documentStub),
-    // SAFETY: React only checks the text node identity field in this fixture.
-    createTextNode: () => ({ nodeType: 3 } as Text),
+    // SAFETY: React uses the text node identity and text value in this fixture.
+    createTextNode: (text) => ({ nodeType: 3, textContent: text, nodeValue: text } as Text),
   };
   // SAFETY: React's test renderer only inspects this fixture's DOM identity fields and listeners.
   const container = createElement(documentStub);

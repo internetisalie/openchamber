@@ -6,6 +6,7 @@ import { ChildStoreManager } from '@/sync/child-store';
 import { I18nProvider } from '@/lib/i18n';
 import { useSessionFoldersStore } from '@/stores/useSessionFoldersStore';
 import { useUIStore } from '@/stores/useUIStore';
+import { createGiteaPrIdentity, getGiteaPrBranchKey, useGiteaPrStatusStore, useGiteaPrVisualSummary } from '@/stores/useGiteaPrStatusStore';
 import type { SessionFolder } from '@/stores/useSessionFoldersStore';
 import type { Session } from '@/lib/opencode/model';
 import type { SessionGroupSectionProps } from './SessionGroupSection';
@@ -33,6 +34,10 @@ mock.module('@/components/ui/button', () => ({
     if (children === 'Start a session') emptyGroupAction = onClick ?? null;
     return <button>{children}</button>;
   },
+}));
+
+mock.module('@/components/icon/Icon', () => ({
+  Icon: ({ name }: { name: string }) => <span data-icon={name} />,
 }));
 
 mock.module('../../SessionFolderItem', () => ({
@@ -148,7 +153,44 @@ const createProps = (): SessionGroupSectionProps => ({
   clearFolderRename: () => undefined,
 });
 
+const renderedText = (node: Node): string => (node.textContent ?? '') +
+  Array.from(node.childNodes ?? []).map(renderedText).join('');
+
 describe('SessionGroupSection public behavior', () => {
+  test('worktree badge follows the active Gitea repository identity', async () => {
+    const dom = installHookTestDom();
+    const root = createRoot(dom.container);
+    const store = useGiteaPrStatusStore.getState();
+    store.resetForRuntimeSwitch();
+    const repo = { instanceUrl: 'https://git.example.com', owner: 'alice', name: 'project', remote: 'origin' };
+    const identity = createGiteaPrIdentity('/workspace', 'feature', repo);
+    const props = { ...createProps(), hideGroupLabel: false,
+      group: { ...group, id: 'feature', label: 'feature', isMain: false, branch: 'feature' } };
+    let renderedSummary: number | null = null;
+    const Probe = () => {
+      renderedSummary = useGiteaPrVisualSummary('/workspace', 'feature')?.number ?? null;
+      return null;
+    };
+    try {
+      await act(async () => root.render(<I18nProvider><Probe /><SessionGroupSection {...props} /></I18nProvider>));
+      await act(async () => store.publish(identity, { repo, item: { kind: 'pr', number: 12, title: 'Feature', body: '',
+        url: 'https://git.example.com/alice/project/pulls/12', state: 'open', author: 'alice' },
+      pull: { draft: false, merged: false }, historyIncomplete: false }));
+      const active = useGiteaPrStatusStore.getState().activeByBranch[getGiteaPrBranchKey('/workspace', 'feature')];
+      expect(useGiteaPrStatusStore.getState().entries[active]?.summary?.number).toBe(12);
+      expect(renderedSummary).toBe(12);
+      expect(renderedText(dom.container)).toContain('#12');
+
+      await act(async () => store.activate(createGiteaPrIdentity('/workspace', 'feature',
+        { ...repo, instanceUrl: 'https://other.example' })));
+      expect(renderedText(dom.container)).not.toContain('#12');
+    } finally {
+      await act(async () => root.unmount());
+      store.resetForRuntimeSwitch();
+      dom.restore();
+    }
+  });
+
   test('an empty successful list does not spin for initialization and keeps initialization failure retryable', async () => {
     let rejectInitialization!: (error: Error) => void;
     const initialization = new Promise<void>((_resolve, reject) => { rejectInitialization = reject; });

@@ -47,6 +47,7 @@ import { formatProjectLabel, formatSessionCompactDateLabel, formatSessionDateLab
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { openExternalUrl } from '@/lib/url';
 import { usePrVisualSummary } from '@/stores/useGitHubPrStatusStore';
+import { useGiteaPrIsActive, useGiteaPrVisualSummary } from '@/stores/useGiteaPrStatusStore';
 import { useSessionUnseenCount } from '@/sync/notification-store';
 import { useHasSessionActivityDuration } from '@/sync/session-activity-timing';
 import { SessionActivityDuration } from '@/components/session/SessionActivityDuration';
@@ -410,7 +411,12 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
     () => resolveSessionPrLookupKey(node.worktree, isVSCode),
     [isVSCode, node.worktree],
   );
-  const prSummary = usePrVisualSummary(prLookupKey);
+  const githubPrSummary = usePrVisualSummary(prLookupKey);
+  const giteaDirectory = isVSCode ? null : normalizePath(node.worktree?.path ?? null);
+  const giteaBranch = isVSCode ? null : node.worktree?.branch?.trim() || null;
+  const giteaPrSummary = useGiteaPrVisualSummary(giteaDirectory, giteaBranch);
+  const giteaPrActive = useGiteaPrIsActive(giteaDirectory, giteaBranch);
+  const prSummary = giteaPrActive ? giteaPrSummary : githubPrSummary;
   const prIconColor = prSummary ? `var(--pr-${prSummary.visualState})` : undefined;
   // The project tree already shows the branch on the worktree sub-header, so
   // the per-row marker only appears in the mixed-context recent list.

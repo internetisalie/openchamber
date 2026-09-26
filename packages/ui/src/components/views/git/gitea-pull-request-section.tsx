@@ -6,8 +6,11 @@ import { Icon } from '@/components/icon/Icon';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import { generatePullRequestDescription } from '@/lib/gitApi';
 import { useI18n } from '@/lib/i18n';
-import type { GiteaItem, GiteaItemDetail, GiteaRepository, GitRemote } from '@/lib/api/types';
+import type { GiteaItemDetail, GiteaRepository, GitRemote } from '@/lib/api/types';
 import { GiteaItemDetailView } from '@/components/session/gitea-item-detail';
+import { createGiteaPrIdentity, getGiteaPrIdentityKey, useGiteaPrStatusStore } from '@/stores/useGiteaPrStatusStore';
+import { getRuntimeKey } from '@/lib/runtime-switch';
+import { subscribeGitStatusInvalidations } from '@/lib/gitStatusInvalidation';
 import { PullRequestCreateForm } from './pull-request-create-form';
 
 interface GiteaPullRequestSectionProps {
@@ -34,9 +37,7 @@ export function GiteaPullRequestSection({
   const [body, setBody] = React.useState('');
   const [draft, setDraft] = React.useState(false);
   const [additionalContext, setAdditionalContext] = React.useState('');
-  const [status, setStatus] = React.useState<{ identity: string; item: GiteaItem | null } | null>(null);
   const [detail, setDetail] = React.useState<{ identity: string; number: number; value: GiteaItemDetail } | null>(null);
-  const [statusError, setStatusError] = React.useState<{ identity: string; message: string } | null>(null);
   const [detailError, setDetailError] = React.useState<{ identity: string; number: number; message: string } | null>(null);
   const [isLoading, setIsLoading] = React.useState(true);
   const [isLoadingDetail, setIsLoadingDetail] = React.useState(false);
@@ -70,29 +71,36 @@ export function GiteaPullRequestSection({
     return Array.from(new Set([...options, base].filter(Boolean))).sort();
   }, [base, remoteBranches, selectedRemote]);
   const repoUrl = `${target.instanceUrl}/${encodeURIComponent(target.owner)}/${encodeURIComponent(target.name)}`;
-  const identity = JSON.stringify({ directory, branch, instanceUrl: target.instanceUrl,
-    owner: target.owner, name: target.name, remote: target.remote, sourceRemote });
-  const item = status?.identity === identity ? status.item : null;
+  const runtimeKey = getRuntimeKey();
+  const prIdentity = React.useMemo(() => ({ ...createGiteaPrIdentity(directory, branch, target, sourceRemote), runtimeKey }),
+    [runtimeKey, directory, branch, target, sourceRemote]);
+  const identity = getGiteaPrIdentityKey(prIdentity);
+  const statusEntry = useGiteaPrStatusStore((state) => state.entries[identity]);
+  const refreshExact = useGiteaPrStatusStore((state) => state.refreshExact);
+  const publishStatus = useGiteaPrStatusStore((state) => state.publish);
+  const item = statusEntry?.status?.item ?? null;
   const itemNumber = item?.number;
   const currentDetail = detail?.identity === identity && detail.number === item?.number ? detail.value : null;
+
+  React.useEffect(() => {
+    let timer: number | null = null;
+    const unsubscribe = subscribeGitStatusInvalidations((changedDirectory) => {
+      if (changedDirectory !== directory) return;
+      if (timer !== null) window.clearTimeout(timer);
+      timer = window.setTimeout(() => { timer = null; setRefreshRevision((value) => value + 1); }, 1_500);
+    });
+    return () => { unsubscribe(); if (timer !== null) window.clearTimeout(timer); };
+  }, [directory]);
 
   React.useEffect(() => {
     if (!gitea) return;
     let cancelled = false;
     setIsLoading(true);
-    void gitea.pullRequestStatus(directory, branch, target.remote, sourceRemote)
-      .then((result) => {
-        if (!cancelled) {
-          setStatus({ identity, item: result.item });
-          setStatusError(null);
-        }
-      })
-      .catch((error: Error) => {
-        if (!cancelled) setStatusError({ identity, message: error.message });
-      })
+    void refreshExact(gitea, prIdentity)
+      .catch(() => undefined)
       .finally(() => { if (!cancelled) setIsLoading(false); });
     return () => { cancelled = true; };
-  }, [branch, directory, gitea, identity, refreshRevision, sourceRemote, target.remote]);
+  }, [gitea, identity, prIdentity, refreshExact, refreshRevision]);
 
   React.useEffect(() => {
     if (!gitea || !itemNumber) return;
@@ -154,8 +162,8 @@ export function GiteaPullRequestSection({
         directory, remote: target.remote, headRemote: sourceRemote,
         title: title.trim(), body, head: branch, base: base.trim(), draft,
       });
-      setStatus({ identity, item: created });
-      setStatusError(null);
+      publishStatus(prIdentity, { repo: target, item: created,
+        pull: { draft, merged: false }, historyIncomplete: false });
       setRefreshRevision((value) => value + 1);
       toast.success(t('gitView.pr.toast.prCreated'));
     } catch (error) {
@@ -193,7 +201,9 @@ export function GiteaPullRequestSection({
             ))}</SelectContent>
           </Select>
         ) : null}
-        {statusError?.identity === identity ? <p role="alert" className="typography-micro text-status-error">{statusError.message}</p> : null}
+        {statusEntry?.error ? <p role="alert" className="typography-micro text-status-error">{statusEntry.error}</p> : null}
+        {statusEntry?.status?.historyIncomplete && !item ? <p className="typography-micro text-muted-foreground">
+          {t('gitView.gitea.historyIncomplete')}</p> : null}
         {item ? (
           <div className="space-y-2">
             {detailError?.identity === identity && detailError.number === item.number ? <p role="alert" className="typography-micro text-status-error">
@@ -202,7 +212,8 @@ export function GiteaPullRequestSection({
               onComment={postComment} /> : isLoadingDetail ? <p className="typography-micro text-muted-foreground">
                 {t('common.loading')}</p> : null}
           </div>
-        ) : !isLoading && status?.identity === identity && status.item === null ? (
+        ) : null}
+        {!isLoading && statusEntry?.status && (!item || item.state === 'closed') ? (
           <PullRequestCreateForm
             branch={branch} base={base} baseBranches={baseBranches} title={title} body={body}
             draft={draft} additionalContext={additionalContext} repoUrl={repoUrl}

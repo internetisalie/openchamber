@@ -1438,21 +1438,29 @@ export interface GiteaPullRequestCreateInput {
   draft: boolean;
 }
 
+export interface GiteaPullRequestStatus {
+  repo: GiteaRepository;
+  item: GiteaItem | null;
+  pull: { draft: boolean | null; merged: boolean | null } | null;
+  historyIncomplete: boolean;
+}
+
 export interface GiteaAPI {
   connections(): Promise<GiteaConnection[]>;
   connect(instanceUrl: string, token: string, allowHttp: boolean): Promise<GiteaConnection>;
   disconnect(instanceUrl: string): Promise<boolean>;
   repository(directory: string, remote?: string): Promise<GiteaRepository | null>;
-  pullRequestStatus(directory: string, branch: string, remote: string, headRemote?: string): Promise<{
-    repo: GiteaRepository; item: GiteaItem | null;
-  }>;
+  pullRequestStatus(directory: string, branch: string, remote: string, headRemote?: string): Promise<GiteaPullRequestStatus>;
   pullRequestCreate(input: GiteaPullRequestCreateInput): Promise<GiteaItem>;
-  items(directory: string, kind: GiteaItem['kind'], page?: number): Promise<{
+  items(directory: string, kind: GiteaItem['kind'], options?: {
+    page?: number; remote?: string; query?: string;
+  }): Promise<{
     repo: GiteaRepository; items: GiteaItem[]; page: number; hasMore: boolean;
   }>;
   item(directory: string, kind: GiteaItem['kind'], number: number, remote?: string): Promise<GiteaItemDetail>;
   comment(input: GiteaCommentInput): Promise<{ author: string | null; body: string }>;
-  pullDiff(directory: string, number: number, remote?: string): Promise<string>;
+  pullDiff(directory: string, number: number, remote?: string,
+    expectedRepo?: GiteaRepository): Promise<string>;
 }
 
 export interface RemoteClientRecord {

@@ -44,6 +44,7 @@ These are the most performance-sensitive.
 
 - `useGitStore.ts`
 - `useGitHubPrStatusStore.ts`
+- `useGiteaPrStatusStore.ts`
 - `useFilesViewTabsStore.ts`
 
 These stores act like centralized keyed caches. UI should consume narrow slices from them instead of re-fetching the same data in multiple places.
@@ -378,6 +379,12 @@ Important properties:
 - closed/merged associations use the same `5m` discovery cadence as missing PRs so a newer open PR (or authoritative `pr: null`) replaces them without a manual refresh
 - hydrate restores a persisted closed/merged PR but resets its `lastDiscoveryPollAt`, so revalidation runs on the first watcher tick after a reload
 - a successful refresh that returns `pr: null` replaces any previously cached PR authoritatively; a failed refresh keeps the previous one
+
+### `useGiteaPrStatusStore.ts`
+
+Gitea PR status is an in-memory cache shared by the Git panel and visible sidebar. Its entry key contains the runtime, directory, branch, instance URL, owner, repository, target remote, and source remote. A branch-to-entry pointer tells sidebar rows which resolved identity is current. Switching the selected remote changes that pointer before the next status response, so an old repository's badge cannot appear for the new choice.
+
+The Git panel requests its exact target/source pair. The visible sidebar checks configured Git remotes, then looks for a matching PR across pairs on the same Gitea instance and repository name. Background requests use the shared network budget and run one worktree at a time. The sidebar bootstraps visible, expanded worktrees and refreshes them after a confirmed Git mutation; it does not run a timer. A failed read leaves the last confirmed PR and records an error. Successful empty status clears that PR. Runtime switches clear entries and reject late responses. The store does not persist status across reloads.
 
 ## Ownership Rules
 

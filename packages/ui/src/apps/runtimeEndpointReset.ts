@@ -13,6 +13,7 @@ import { useMessageQueueStore } from '@/stores/messageQueueStore';
 import { useFileSearchStore } from '@/stores/useFileSearchStore';
 import { useGitStore } from '@/stores/useGitStore';
 import { useGitHubPrStatusStore } from '@/stores/useGitHubPrStatusStore';
+import { useGiteaPrStatusStore } from '@/stores/useGiteaPrStatusStore';
 import { useSessionFoldersStore } from '@/stores/useSessionFoldersStore';
 import { useLinearAuthStore } from '@/stores/useLinearAuthStore';
 import { useGitHubAuthStore } from '@/stores/useGitHubAuthStore';
@@ -87,6 +88,7 @@ export const resetAppForRuntimeEndpointChange = (detail: RuntimeEndpointChangedD
   useFileSearchStore.getState().resetForRuntimeSwitch();
   useGitStore.getState().resetForRuntimeSwitch(detail.runtimeKey);
   useGitHubPrStatusStore.getState().resetForRuntimeSwitch();
+  useGiteaPrStatusStore.getState().resetForRuntimeSwitch();
   useSessionFoldersStore.getState().resetForRuntimeSwitch(detail.runtimeKey);
   useFilesViewTabsStore.getState().resetForRuntimeSwitch(detail.runtimeKey);
   // Guest rail icons are instance-owned. Keep the previous catalog and the
