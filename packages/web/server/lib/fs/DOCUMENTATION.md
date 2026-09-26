@@ -26,7 +26,7 @@ Own filesystem API behavior for the web server runtime, including workspace-boun
     - `GET /api/fs/exec/:jobId`
     - `GET /api/fs/list`
     - `GET /api/fs/git-dirs` — shallow nested git repository discovery for the
-      Git tab (depth- and visit-capped readdir walk; `.git` directory, file, or
+      Git tab (depth- and visit-capped breadth-first readdir walk; `.git` directory, file, or
       symlink marks a repository boundary; junk directories and symlinks are
       never descended into)
   - Owns exec job queue state (`execJobs`) and lifecycle/TTL pruning.

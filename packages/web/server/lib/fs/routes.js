@@ -336,24 +336,24 @@ const resolveWorkspacePathFromContext = async ({ req, targetPath, resolveProject
 // Nested repository discovery bounds: only shallow walks are useful for the
 // Git tab's "pick a repository" picker, and deep/monorepo trees can explode
 // otherwise. Directories deeper than maxDepth or beyond the visit cap are
-// silently not searched.
+// silently not searched. Breadth-first traversal checks nearby repositories
+// before a large subtree can consume the visit budget.
 const GIT_DIRS_MAX_DEPTH = 3;
 const GIT_DIRS_MAX_DIRS = 100;
 const GIT_DIRS_SKIP_LIST = new Set(['node_modules', 'dist', 'build', '.venv', 'target', '.next']);
 
-// Walks rootPath and returns every nested git repository path (a directory
+// Scans rootPath and returns nested git repository paths (a directory
 // containing a `.git` entry — a directory, a worktree pointer file, or a
 // symlink). A repository boundary stops descent: nested repos inside repos
 // are not reported. The root itself, when it is a repo, yields no results.
 const findGitDirectories = async ({ rootPath, fsPromises, path: pathModule, maxDepth, maxDirs }) => {
   const results = [];
+  const pending = [{ dir: rootPath, depth: 0 }];
+  let next = 0;
   let visited = 0;
 
-  const walk = async (dir, depth) => {
-    if (visited >= maxDirs) {
-      return;
-    }
-
+  while (next < pending.length && visited < maxDirs) {
+    const { dir, depth } = pending[next++];
     let dirents;
     try {
       dirents = await fsPromises.readdir(dir, { withFileTypes: true });
@@ -363,7 +363,7 @@ const findGitDirectories = async ({ rootPath, fsPromises, path: pathModule, maxD
       if (dir === rootPath) {
         throw error;
       }
-      return;
+      continue;
     }
     visited += 1;
 
@@ -390,19 +390,15 @@ const findGitDirectories = async ({ rootPath, fsPromises, path: pathModule, maxD
       if (dir !== rootPath) {
         results.push(dir);
       }
-      return;
+      continue;
     }
 
     subdirectories.sort();
     for (const name of subdirectories) {
-      if (visited >= maxDirs) {
-        break;
-      }
-      await walk(pathModule.join(dir, name), depth + 1);
+      pending.push({ dir: pathModule.join(dir, name), depth: depth + 1 });
     }
-  };
+  }
 
-  await walk(rootPath, 0);
   return results;
 };
 

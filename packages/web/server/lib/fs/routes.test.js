@@ -1312,6 +1312,22 @@ describe('fs git-dirs', () => {
     ]);
   });
 
+  it('finds sibling repositories before a large subtree exhausts the visit cap', async () => {
+    const cacheEntries = Array.from({ length: 100 }, (_, index) => [`bucket-${index}`, 'dir']);
+    const { handler, readdir } = registerGitDirs({
+      '/workspace': [['go-cache', 'dir'], ['loom', 'dir'], ['loom-base', 'dir'], ['loom-cli', 'dir']],
+      '/workspace/go-cache': cacheEntries,
+      '/workspace/loom': [['.git', 'dir']],
+      '/workspace/loom-base': [['.git', 'dir']],
+      '/workspace/loom-cli': [['.git', 'dir']],
+    });
+
+    const res = await callGitDirs(handler, { path: '/workspace' });
+
+    expect(res.body.repositories.map((repo) => repo.name)).toEqual(['loom', 'loom-base', 'loom-cli']);
+    expect(readdir.mock.calls.length).toBeLessThanOrEqual(100);
+  });
+
   it('treats a .git file (linked worktree) as a repository boundary', async () => {
     const { handler } = registerGitDirs({
       '/workspace': [['worktree', 'dir']],
