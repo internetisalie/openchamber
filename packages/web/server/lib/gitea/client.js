@@ -1,4 +1,8 @@
+import { z } from 'zod';
 import { giteaApiUrl } from './instance.js';
+
+const messageSchema = z.object({ message: z.string() });
+const accountSchema = z.object({ login: z.string().min(1) });
 
 async function shortErrorReason(response) {
   const reader = response.body?.getReader();
@@ -14,7 +18,8 @@ async function shortErrorReason(response) {
   }
   try {
     const body = JSON.parse(new TextDecoder().decode(Buffer.concat(chunks)));
-    return typeof body?.message === 'string' ? body.message : '';
+    const parsed = messageSchema.safeParse(body);
+    return parsed.success ? parsed.data.message : '';
   } catch { return ''; }
 }
 
@@ -97,6 +102,7 @@ export async function requestGiteaPage(connection, apiPath) {
 
 export async function verifyConnection(instanceUrl, token) {
   const user = await requestGitea({ instanceUrl, token }, '/user');
-  if (typeof user?.login !== 'string' || !user.login) throw new Error('Gitea returned an invalid account');
-  return { instanceUrl, token, user: { login: user.login } };
+  const parsed = accountSchema.safeParse(user);
+  if (!parsed.success) throw new Error('Gitea returned an invalid account');
+  return { instanceUrl, token, user: { login: parsed.data.login } };
 }

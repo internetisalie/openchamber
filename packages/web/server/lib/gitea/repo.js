@@ -1,9 +1,11 @@
+import { z } from 'zod';
 import { getRemotes } from '../git/index.js';
 import { readConnections } from './storage.js';
 
 export function parseRemote(raw) {
-  if (typeof raw !== 'string') return null;
-  const value = raw.trim();
+  const parsed = z.string().safeParse(raw);
+  if (!parsed.success) return null;
+  const value = parsed.data.trim();
   if (!value) return null;
   let url;
   if (/^[^/@:]+@[^/:]+:.+/.test(value)) {

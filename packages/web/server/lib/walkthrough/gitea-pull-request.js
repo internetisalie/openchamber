@@ -1,9 +1,17 @@
+import { z } from 'zod';
 import { requestGitea } from '../gitea/client.js';
 import { resolveGiteaRepo } from '../gitea/repo.js';
 
 const fail = (message, statusCode, code) => Object.assign(new Error(message), { statusCode, code });
 const shaPattern = /^[0-9a-f]{40,64}$/i;
 const MAX_FILE_BYTES = 4_000_000;
+const fileResponseSchema = z.object({ type: z.literal('file'), encoding: z.literal('base64'), content: z.string() });
+const pullRefsSchema = z.object({
+  merge_base: z.string().regex(shaPattern),
+  head: z.object({ sha: z.string().regex(shaPattern), repo: z.object({
+    owner: z.object({ login: z.string().min(1) }), name: z.string().min(1),
+  }) }),
+});
 
 async function resolveSource(directory, source) {
   const expected = source.gitea;
@@ -20,7 +28,7 @@ export async function getGiteaPullRequestDiff(directory, source, { allowEmpty = 
   const resolved = await resolveSource(directory, source);
   const patch = await requestGitea(resolved.connection, `${resolved.root}/pulls/${source.number}.diff`,
     { accept: 'text/plain' });
-  if (typeof patch !== 'string' || patch && !patch.startsWith('diff --git ')) {
+  if (!z.string().safeParse(patch).success || patch && !patch.startsWith('diff --git ')) {
     throw fail('Gitea returned an invalid pull request diff', 502, 'invalid-gitea-diff');
   }
   if (!allowEmpty && !patch.trim()) throw fail(`Pull request #${source.number} has no diff`, 404, 'empty-diff');
@@ -29,7 +37,7 @@ export async function getGiteaPullRequestDiff(directory, source, { allowEmpty = 
 }
 
 function validPath(path) {
-  return typeof path === 'string' && path.length > 0 && path.length < 4096 &&
+  return z.string().min(1).max(4095).safeParse(path).success &&
     !path.startsWith('/') && !path.includes('\\') && !path.includes('\0') &&
     path.split('/').every((part) => part && part !== '.' && part !== '..');
 }
@@ -39,10 +47,11 @@ async function readFile(connection, owner, repo, path, ref) {
   const encodedPath = path.split('/').map(encodeURIComponent).join('/');
   const raw = await requestGitea(connection,
     `/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${encodedPath}?ref=${encodeURIComponent(ref)}`);
-  if (raw?.type !== 'file' || raw.encoding !== 'base64' || typeof raw.content !== 'string') {
+  const parsed = fileResponseSchema.safeParse(raw);
+  if (!parsed.success) {
     throw fail('This Gitea file cannot be shown in full', 415, 'unsupported-file');
   }
-  const bytes = Buffer.from(raw.content.replace(/\s/g, ''), 'base64');
+  const bytes = Buffer.from(parsed.data.content.replace(/\s/g, ''), 'base64');
   if (bytes.byteLength > MAX_FILE_BYTES) throw fail('This file is too large to show in full', 413, 'file-too-large');
   return new TextDecoder('utf-8', { fatal: true }).decode(bytes);
 }
@@ -50,15 +59,13 @@ async function readFile(connection, owner, repo, path, ref) {
 export async function getGiteaPullRequestFileContents(directory, source, { path, previousPath, status }) {
   const resolved = await resolveSource(directory, source);
   const pull = await requestGitea(resolved.connection, `${resolved.root}/pulls/${source.number}`);
-  const headSha = pull?.head?.sha;
   // Gitea exposes the PR's merge base directly; its base branch tip may include
   // unrelated commits and would not match the published three-dot patch.
-  const baseSha = pull?.merge_base;
-  const headRepo = pull?.head?.repo;
-  if (!shaPattern.test(headSha) || !shaPattern.test(baseSha) ||
-      typeof headRepo?.owner?.login !== 'string' || typeof headRepo?.name !== 'string') {
+  const refs = pullRefsSchema.safeParse(pull);
+  if (!refs.success) {
     throw fail('Gitea returned invalid pull request refs', 502, 'invalid-gitea-refs');
   }
+  const { merge_base: baseSha, head: { sha: headSha, repo: headRepo } } = refs.data;
   const [original, modified] = await Promise.all([
     status === 'A' ? '' : readFile(resolved.connection, resolved.repo.owner, resolved.repo.name,
       previousPath || path, baseSha),

@@ -4,7 +4,7 @@
 
 Give a person using the Electron app the same useful issue and pull request workflows for a connected Gitea repository that they have for GitHub. Match behavior, not the GitHub sign-in mechanism or GitHub's API shapes. A Gitea personal access token remains tied to its saved instance, and Git pushes continue to use the person's Git credentials.
 
-This plan describes the feature gap in the Gitea branch as of September 25, 2026. The existing [Gitea integration plan](gitea-integration-plan.md) records the MVP and its earlier validation. The Gitea branch remains separate while the post-fork v2.0.1 port is rebuilt. Integrate with an accepted port when it is ready; the rejected `b5d65b17f` trunk is not a base for this work.
+This plan describes the feature gap and validation as of September 25, 2026. The existing [Gitea integration plan](gitea-integration-plan.md) records the MVP and its earlier validation. The parity branch descends from the accepted `v2.0.1-internetisalie-trunk` at `89c5a3385`; four Gitea commits were transplanted onto it. The rejected `b5d65b17f` trunk is not an ancestor of this branch.
 
 ## Current comparison
 
@@ -25,7 +25,7 @@ Gitea can already post issue-style comments from OpenChamber. The current GitHub
 
 The branch-status portion of step 1 is implemented on the Gitea branch: the Git view and sidebar share instance- and remote-qualified status, recent closed PRs can be shown, and a failed refresh retains the last confirmed result. Step 2 now has repository-scoped issue/PR search, paging, direct-number lookup, connected-remote choice, and the Git panel's nested-folder selection in the attachment picker. Walkthrough and generation identity belongs to step 5, when Gitea PRs become walkthrough sources.
 
-The nested-folder choice uses the shared Git discovery route. This branch carries the breadth-first discovery fix from `fix/v2-git-repo-discovery-bfs`, so a large early subtree cannot hide Loom's sibling repositories under the scan limit. When integrating with the accepted port, keep one copy of that route change.
+The nested-folder choice uses the shared Git discovery route. The accepted fork base already contains the breadth-first discovery fix from `fix/v2-git-repo-discovery-bfs`, so a large early subtree cannot hide Loom's sibling repositories under the scan limit. The Gitea transplant does not duplicate that route change.
 
 On September 25, the isolated Electron build loaded the new picker for the connected `ad-demo` repository and returned its open PRs when searching for `OpenChamber`. Automated UI coverage switches between two same-name repositories on different instances and rejects a stale result from the first. A live second-instance acceptance check remains for step 6.
 
@@ -71,7 +71,7 @@ Done when a Gitea PR walkthrough uses its published diff, can expand file contex
 
 Run focused server contract tests, UI behavior tests, package type checks, and lint for each step. Before calling the work parity-complete, test the full flow in an isolated Electron build against a disposable Gitea repository: connect, search, attach, create, read details, comment, edit, mark ready, merge, inspect sidebar status, and generate a walkthrough. Test with a read-only token too. Keep the running `openchamber` and `openchamber-dev` services separate from this test.
 
-After the accepted v2 port exists, transplant the Gitea changes onto it and repeat the affected checks and Electron flow. Record the final supported Gitea version and any unavailable actions in the UI and module documentation.
+The Gitea commits are on the accepted v2 port. The final branch passed focused Gitea and walkthrough server tests, isolated UI tests, UI and web type checks, lint, and the web/Electron asset builds. The isolated Electron app runs this branch with the bundled OpenCode 2.0.16 server. It loaded `ad-demo` PR #21 in the PR panel and Changes selector, including its title, body, issue comment, confirmed empty review/check sections, and published file diff. Gitea 1.27.3 is the live tested server version. The repository's approval rule prevents a successful merge of the disposable PR, so the live merge-success path remains unverified; the app reports the rule and leaves the PR open. A separate read-only PAT and a second Gitea instance were unavailable for live testing, though the relevant identity and permission cases have server/UI tests. The systemd `openchamber` and `openchamber-dev` services were not changed.
 
 ## Implementation decisions
 

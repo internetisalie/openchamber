@@ -89,7 +89,8 @@ mock.module('@/components/ui/select', () => ({
 test('picker shares folder choice, isolates remote search and paging, and attaches the selected PR', async () => {
   const dom = new Window({ url: 'http://localhost' });
   const originals = new Map<string, PropertyDescriptor | undefined>();
-  const globals = { window: dom, document: dom.document, Event: dom.Event, HTMLElement: dom.HTMLElement,
+  const globals = { window: dom, document: dom.document, localStorage: dom.localStorage,
+    Event: dom.Event, HTMLElement: dom.HTMLElement,
     Element: dom.Element, Node: dom.Node, IS_REACT_ACT_ENVIRONMENT: true };
   for (const [name, value] of Object.entries(globals)) {
     originals.set(name, Object.getOwnPropertyDescriptor(globalThis, name));

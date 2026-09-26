@@ -1,7 +1,13 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { z } from 'zod';
 import { normalizeInstanceUrl } from './instance.js';
+
+const connectionSchema = z.object({
+  instanceUrl: z.string(), token: z.string().min(1), user: z.object({ login: z.string() }),
+});
+const connectionsSchema = z.object({ connections: z.array(connectionSchema) });
 
 function filePath() {
   const dataDir = process.env.OPENCHAMBER_DATA_DIR
@@ -19,12 +25,9 @@ export function readConnections() {
   } catch {
     throw new Error('Could not read Gitea connections');
   }
-  if (!Array.isArray(data?.connections)) throw new Error('Invalid Gitea connections file');
-  const connections = data.connections.map((entry) => {
-    if (typeof entry?.instanceUrl !== 'string' || typeof entry?.token !== 'string'
-      || typeof entry?.user?.login !== 'string' || !entry.token) {
-      throw new Error('Invalid Gitea connection');
-    }
+  const parsed = connectionsSchema.safeParse(data);
+  if (!parsed.success) throw new Error('Invalid Gitea connections file');
+  const connections = parsed.data.connections.map((entry) => {
     return { instanceUrl: normalizeInstanceUrl(entry.instanceUrl), token: entry.token, user: { login: entry.user.login } };
   });
   if (new Set(connections.map((entry) => entry.instanceUrl)).size !== connections.length) {

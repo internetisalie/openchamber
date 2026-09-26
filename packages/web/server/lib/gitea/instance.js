@@ -1,8 +1,11 @@
+import { z } from 'zod';
+
 export function normalizeInstanceUrl(raw) {
-  if (typeof raw !== 'string' || !raw.trim()) throw new Error('Instance URL is required');
+  const parsed = z.string().trim().min(1).safeParse(raw);
+  if (!parsed.success) throw new Error('Instance URL is required');
   let url;
   try {
-    url = new URL(raw.trim());
+    url = new URL(parsed.data);
   } catch {
     throw new Error('Enter a valid Gitea instance URL');
   }

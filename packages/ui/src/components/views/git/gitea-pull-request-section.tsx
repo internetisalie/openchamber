@@ -320,7 +320,10 @@ export function GiteaPullRequestSection({
               {currentCapabilities?.canMarkReady && actionIdentity ? <Button size="sm" variant="ghost" disabled={acting}
                 onClick={() => { void runAction('ready'); }}>{t('gitView.gitea.markReady')}</Button> : null}
               {currentCapabilities?.canMerge && actionIdentity && currentCapabilities.mergeMethods.length ? <div className="space-y-2">
-                <Select value={mergeMethod} onValueChange={(value) => { setMergeMethod(value as typeof mergeMethod); setConfirmMerge(false); }}>
+                <Select value={mergeMethod} onValueChange={(value) => {
+                  const method = currentCapabilities.mergeMethods.find((candidate) => candidate === value);
+                  if (method) { setMergeMethod(method); setConfirmMerge(false); }
+                }}>
                   <SelectTrigger size="lg" aria-label={t('gitView.gitea.mergeMethod')}><SelectValue /></SelectTrigger>
                   <SelectContent>{currentCapabilities.mergeMethods.map((method) => <SelectItem key={method} value={method}>
                     {method}</SelectItem>)}</SelectContent>
