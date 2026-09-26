@@ -20,14 +20,16 @@ afterEach(() => {
 });
 
 describe('desktop local backend discovery', () => {
-  test.each([
+  for (const [activeUrl, savedUrl] of [
     ['http://127.0.0.1:3037/', 'http://localhost:3037/'],
     ['http://localhost:3037/', 'http://127.0.0.1:3037/'],
-  ])('resolves the saved name on startup across loopback aliases: %s', (activeUrl, savedUrl) => {
-    setWindow('openchamber-ui://app/index.html', '', activeUrl);
-    expect(resolveCurrentDesktopHost([{ id: 'mini-dev', label: 'mini-dev', url: savedUrl }]))
-      .toEqual({ id: 'mini-dev', label: 'mini-dev', url: savedUrl });
-  });
+  ]) {
+    test(`resolves the saved name on startup across loopback aliases: ${activeUrl}`, () => {
+      setWindow('openchamber-ui://app/index.html', '', activeUrl);
+      expect(resolveCurrentDesktopHost([{ id: 'mini-dev', label: 'mini-dev', url: savedUrl }]))
+        .toEqual({ id: 'mini-dev', label: 'mini-dev', url: savedUrl });
+    });
+  }
 
   test('prefers an exact saved endpoint over a loopback alias', () => {
     setWindow('openchamber-ui://app/index.html', '', 'http://127.0.0.1:3037/');
@@ -37,7 +39,7 @@ describe('desktop local backend discovery', () => {
     ]).id).toBe('exact');
   });
 
-  test.each([
+  for (const savedUrl of [
     'http://localhost:3038/',
     'https://localhost:3037/',
     'http://localhost:3037/another-backend',
@@ -45,10 +47,12 @@ describe('desktop local backend discovery', () => {
     'http://remote.example:3037/',
     'http://localhost.example:3037/',
     'http://127.0.0.2:3037/',
-  ])('does not coalesce a different backend: %s', (savedUrl) => {
-    setWindow('openchamber-ui://app/index.html', '', 'http://127.0.0.1:3037/');
-    expect(resolveCurrentDesktopHost([{ id: 'other', label: 'Other', url: savedUrl }]).id).toBe('custom');
-  });
+  ]) {
+    test(`does not coalesce a different backend: ${savedUrl}`, () => {
+      setWindow('openchamber-ui://app/index.html', '', 'http://127.0.0.1:3037/');
+      expect(resolveCurrentDesktopHost([{ id: 'other', label: 'Other', url: savedUrl }]).id).toBe('custom');
+    });
+  }
 
   test('bundled UI without a local server does not become a backend', () => {
     setWindow('openchamber-ui://app/index.html', '', 'http://localhost:3037');
