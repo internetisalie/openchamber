@@ -27,7 +27,10 @@ export const buildLocalDesktopHost = (localOrigin?: string | null): DesktopHost 
 
 export const getLocalDesktopOrigin = (): string => {
   if (typeof window === 'undefined') return '';
-  return window.__OPENCHAMBER_LOCAL_ORIGIN__ || window.location.origin;
+  // An injected empty origin means the desktop shell has no local backend.
+  // The bundled UI scheme is a document origin, never an API server.
+  const origin = window.__OPENCHAMBER_LOCAL_ORIGIN__ ?? window.location.origin;
+  return normalizeHostUrl(origin) ? origin : '';
 };
 
 export const runtimeKeyForDesktopHost = (host: DesktopHost): string => {
@@ -83,7 +86,7 @@ export const resolveCurrentDesktopHost = (hosts: DesktopHost[]): ResolvedDesktop
     return { id: match.id, label: match.label, url: normalizeHostUrl(match.url) || match.url };
   }
 
-  if (currentHref.startsWith('openchamber-ui://')) {
+  if (localOrigin && currentHref.startsWith('openchamber-ui://')) {
     return { id: LOCAL_HOST_ID, label: 'Local', url: normalizedLocal };
   }
 
@@ -91,7 +94,7 @@ export const resolveCurrentDesktopHost = (hosts: DesktopHost[]): ResolvedDesktop
   // bare word "Instance"; the redaction strips anything credential-shaped.
   return {
     id: 'custom',
-    label: redactSensitiveUrl(normalizedCurrent || 'Instance'),
-    url: normalizedCurrent,
+    label: redactSensitiveUrl(runtimeApiBaseUrl || normalizedCurrent || 'Instance'),
+    url: runtimeApiBaseUrl || normalizedCurrent,
   };
 };

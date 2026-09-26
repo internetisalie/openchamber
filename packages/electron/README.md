@@ -10,6 +10,12 @@ Desktop starts the OpenChamber web server in the same Electron main process. The
 
 `main.mjs` imports `@openchamber/web/server/index.js` and calls `startWebUiServer()`. The Electron window then loads the UI from the local server in development, or from packaged `resources/web-dist` assets in packaged builds.
 
+A serverless launch with `OPENCHAMBER_SKIP_LOCAL_SERVER=1` has no local API
+backend. Its injected empty local origin stays authoritative: the bundled
+`openchamber-ui://app` document is not listed or probed as a Local instance.
+When a local backend is enabled, its configured HTTP origin remains listed even
+while it is unreachable.
+
 Electron loads `entry.mjs`, not `main.mjs`. Electron holds `ready` until the
 entry module's import graph has evaluated, and importing the server module
 graph blocks the main thread for a few hundred milliseconds, so the entry
