@@ -30,17 +30,20 @@ export function PullRequestComparisonSelector({ comparison, mobile = false }: {
     data-mobile-comparison-trigger={mobile || undefined}
     onClick={sheet ? () => changeOpen(true) : undefined}
     aria-haspopup={sheet ? 'dialog' : undefined} aria-expanded={sheet ? open : undefined}
-    aria-label={label} title={selected?.sourceRepo ? `${selected.sourceRepo.owner}/${selected.sourceRepo.repo} #${selected.number}` : label}>
+    aria-label={label} title={selected?.gitea ? `${selected.gitea.instanceUrl}/${selected.gitea.owner}/${selected.gitea.repo} #${selected.number}`
+      : selected?.sourceRepo ? `${selected.sourceRepo.owner}/${selected.sourceRepo.repo} #${selected.number}` : label}>
     <span className="truncate">{selected ? `#${selected.number}` : label}</span>
     <Icon name="arrow-down-s" className="size-3.5" />
   </Button>;
   const picker = <Command shouldFilter={false} onKeyDown={(event) => { if (event.key !== 'Escape') event.stopPropagation(); }}>
     <CommandInput autoFocus={!sheet} value={comparison.query} onValueChange={comparison.setQuery}
       placeholder={t('session.githubPrPicker.searchPlaceholder')} aria-label={t('session.githubPrPicker.searchPlaceholder')} />
-    {comparison.loading ? <div className="flex items-center gap-2 p-4 typography-meta text-muted-foreground">
+    {comparison.loading && comparison.giteaLoading && comparison.prs.length === 0 && comparison.giteaPrs.length === 0
+      ? <div className="flex items-center gap-2 p-4 typography-meta text-muted-foreground">
       <Icon name="loader-4" className="size-4 animate-spin" />{t('session.githubPrPicker.loading.pullRequests')}
-    </div> : comparison.error && comparison.prs.length === 0 ? <div className="flex flex-col items-center gap-2 p-4 typography-meta text-muted-foreground">
-      <span>{comparison.error}</span>
+    </div> : comparison.error && comparison.giteaError && comparison.prs.length === 0 && comparison.giteaPrs.length === 0
+      ? <div className="flex flex-col items-center gap-2 p-4 typography-meta text-muted-foreground">
+      <span>{comparison.giteaError}</span>
       <Button variant="outline" size="sm" onClick={() => void comparison.refresh()}>{t('diffView.actions.retry')}</Button>
     </div> : <CommandList className={mobile ? 'max-h-[min(45dvh,24rem)]' : undefined}>
       <CommandEmpty>{t('session.githubPrPicker.empty.noPullRequestsFound')}</CommandEmpty>
@@ -58,8 +61,27 @@ export function PullRequestComparisonSelector({ comparison, mobile = false }: {
           </CommandItem>;
         })}
       </CommandGroup>
-      {comparison.error && <p className="px-3 py-2 typography-meta text-muted-foreground">{comparison.error}</p>}
-      {comparison.hasMore && <Button variant="ghost" size="sm" disabled={comparison.loadingMore} onClick={() => void comparison.loadMore()}>
+      {comparison.giteaPrs.length > 0 ? <CommandGroup heading="Gitea">
+        {open && comparison.giteaPrs.map((entry) => {
+          const key = JSON.stringify([entry.repo.instanceUrl, entry.repo.owner, entry.repo.name, entry.repo.remote, entry.item.number]);
+          const active = selected?.gitea && selected.number === entry.item.number &&
+            selected.gitea.instanceUrl === entry.repo.instanceUrl && selected.gitea.owner === entry.repo.owner &&
+            selected.gitea.repo === entry.repo.name && selected.gitea.remote === entry.repo.remote;
+          return <CommandItem key={key} value={key} className={mobile ? 'min-h-11' : undefined}
+            onSelect={() => { comparison.selectGitea(entry); changeOpen(false); }}>
+            <div className="min-w-0 flex-1">
+              <div className="truncate typography-ui-label" title={entry.item.title}>#{entry.item.number} {entry.item.title}</div>
+              <div className="truncate typography-meta text-muted-foreground">{entry.repo.instanceUrl}/{entry.repo.owner}/{entry.repo.name} · {entry.repo.remote}</div>
+            </div>
+            {active && <Icon name="check" className="size-3.5" />}
+          </CommandItem>;
+        })}
+      </CommandGroup> : null}
+      {comparison.error && comparison.giteaPrs.length === 0
+        ? <p className="px-3 py-2 typography-meta text-muted-foreground">{comparison.error}</p> : null}
+      {comparison.giteaError && <p className="px-3 py-2 typography-meta text-muted-foreground">{comparison.giteaError}</p>}
+      {(comparison.hasMore || comparison.giteaHasMore) && <Button variant="ghost" size="sm"
+        disabled={comparison.loadingMore || comparison.giteaLoading} onClick={() => void comparison.loadMore()}>
         {comparison.error ? t('diffView.actions.retry') : t('session.githubPrPicker.actions.loadMore')}
       </Button>}
     </CommandList>}

@@ -1178,6 +1178,14 @@ const SETTINGS_SEARCH_ITEMS: readonly SettingsSearchItem[] = [
     isAvailable: (ctx) => !ctx.isVSCode,
   },
   {
+    id: 'integrations.gitea',
+    page: 'integrations',
+    titleKey: 'settings.integrations.gitea.title',
+    descriptionKey: 'settings.integrations.gitea.description',
+    keywords: ['gitea', 'self-hosted', 'git', 'issues', 'pull requests', 'token', 'connect'],
+    isAvailable: (ctx) => !ctx.isVSCode,
+  },
+  {
     id: 'integrations.linear.add-workspace',
     page: 'integrations',
     titleKey: 'settings.integrations.linear.actions.addWorkspace',

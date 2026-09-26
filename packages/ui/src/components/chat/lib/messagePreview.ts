@@ -57,6 +57,9 @@ const contextSummary = (payload: ContextPartPayload, t: Translate): string => {
             return `#${payload.number} ${payload.title}`;
         case 'github-pr':
             return `#${payload.number} ${payload.title}`;
+        case 'gitea-issue':
+        case 'gitea-pr':
+            return `#${payload.number} ${payload.title}`;
         case 'linear-issue':
             return `${payload.identifier} ${payload.title}`;
         case 'guest-issue':
@@ -83,6 +86,8 @@ const contextBody = (payload: ContextPartPayload): string => {
             return payload.quote;
         case 'github-issue':
         case 'github-pr':
+        case 'gitea-issue':
+        case 'gitea-pr':
         case 'linear-issue':
         case 'guest-issue':
         case 'guest-pr':

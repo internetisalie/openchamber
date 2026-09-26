@@ -18,6 +18,8 @@ function contextPreview(payload: ContextPartPayload): string {
             return payload.output.trim() || payload.terminalLabel;
         case 'github-issue':
         case 'github-pr':
+        case 'gitea-issue':
+        case 'gitea-pr':
         case 'linear-issue':
         case 'guest-issue':
         case 'guest-pr':

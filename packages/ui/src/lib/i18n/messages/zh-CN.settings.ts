@@ -1,6 +1,7 @@
 import { extensionsSettingsI18n } from './extensions.settings.i18n';
 import { guestIntegrationsI18n } from './guest-integrations.i18n';
 import { linearIntegrationI18n } from './linear-integration.i18n';
+import { giteaIntegrationI18n } from './gitea-integration.i18n';
 export const settingsDict = {
   'settings.themeImport.selectAll': '全选',
   'settings.themeImport.deselectAll': '取消全选',
@@ -2343,10 +2344,12 @@ export const settingsDict = {
   'settings.openchamber.visual.option.enterToSend.enter.label': '按 Enter 发送',
   'settings.openchamber.visual.option.enterToSend.modifier.label': '按 Ctrl/Cmd+Enter 发送',
   ...linearIntegrationI18n['zh-CN'],
+  ...giteaIntegrationI18n.en,
+  ...giteaIntegrationI18n['zh-CN'],
   ...guestIntegrationsI18n['zh-CN'],
   ...extensionsSettingsI18n['zh-CN'],
   'settings.page.integrations.title': '集成',
-  'settings.page.integrations.description': '连接 GitHub 和 Linear，让 OpenChamber 可以处理你的 issue 和拉取请求。',
+  'settings.page.integrations.description': '连接 GitHub、Gitea 和 Linear，让 OpenChamber 可以处理你的 issue 和拉取请求。',
   'settings.agents.page.field.steps': '最大步数',
   'settings.agents.page.field.stepsTooltip': '智能体在一轮中最多可以执行多少个工具步骤。',
   'settings.agents.page.field.clearStepsAria': '清除最大步数',

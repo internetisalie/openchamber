@@ -22,6 +22,8 @@ has to ask for it.
 - `store.js` — content-addressed cache entries plus mutable pointers.
 - `pull-request.js` — PR diffs and per-file contents via the shared GitHub
   octokit helper.
+- `gitea-pull-request.js` — Gitea PR diffs and merge-base/head file contents
+  through the saved instance token and the selected Git remote.
 - `model-settings.js` — the feature's own model override.
 - `languages.js` — the languages the prose may be written in.
 - `index.js` — orchestration.
@@ -56,6 +58,7 @@ written against staged code never silently re-anchors onto an unstaged edit.
 | `branch` | `branch` | `getRangeDiff` with `includeWorkingTree: true` compares the selected merge base with current files, including committed and local work in one net diff |
 | `commit` | `commit` | `getCommitDiff` compares the full selected commit hash with its first parent; root commits compare with an empty tree |
 | `pr` | `pr:<number>` | GitHub's committed pull-request diff, without local working-tree changes |
+| `pr` with `gitea` identity | `pr:<number>` | Gitea's published diff; the source key also includes instance URL, repository and remote |
 
 Changes and walkthrough resolve the current branch's base through
 `packages/ui/src/hooks/useBranchComparisonBase.ts`. An explicit choice in Changes
@@ -95,21 +98,29 @@ PR sources may include `sourceRepo: { owner, repo }`. This qualifies both the
 GitHub request and the cache/job key as `pr:<owner>/<repo>:<number>`. Existing
 number-only sources retain `pr:<number>` and resolve the directory's repository.
 The PR panel forwards its resolved repository when opening walkthrough.
+Gitea sources instead carry a normalized instance URL, owner, repository and
+selected remote. Their keys begin `gitea-pr:` and include all four identity
+fields, so the same PR number on another instance cannot reuse a pointer or job.
+Each request re-resolves the remote against saved connections before contacting
+the instance. The Changes selector can find connected Gitea PRs alongside
+GitHub PRs.
 
 `GET /api/walkthrough/pr-diff` accepts `directory` and a JSON `source` restricted
-to PRs. It returns GitHub's complete published diff as text, with no model
+to PRs. It returns the selected provider's complete published diff as text, with no model
 readiness checks or generation. Successful empty patches return 200; auth,
-GitHub and malformed-response failures remain errors. Walkthrough generation
+provider and malformed-response failures remain errors. Walkthrough generation
 keeps its existing empty-diff refusal. UI comparison behavior is documented in
 `packages/ui/src/components/views/DOCUMENTATION.md`.
 
 `GET /api/walkthrough/pr-file` takes the same `directory` and PR `source` plus
 `path`, optional `previousPath`, and `status`, and returns `{ original, modified }`
-for that one file as GitHub has it: the base side at the PR's merge base, the
+for that one file as the selected provider has it: the base side at the PR's merge base, the
 head side at the PR head. This is how the comparison view expands collapsed
 context for a PR: its patch arrives at fixed context and its commits may not be
 on disk, so the working tree is never read. Files above 5 MB answer `413`
-(`code: 'file-too-large'`).
+(`code: 'file-too-large'`). Gitea reads the original from the target repository
+and the modified file from the PR head repository, both with the saved instance
+token. It limits decoded files to 4 MB.
 
 ## No truncation
 

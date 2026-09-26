@@ -31,7 +31,7 @@ while previewing, so same-length edits in the middle invalidate cached output.
 ## Pull request comparisons
 
 DiffView, mobile Changes and walkthrough share `PullRequestComparisonSelector`
-and the selection owned by `usePullRequestComparison`. PR mode reads GitHub's
+and the selection owned by `usePullRequestComparison`. PR mode reads GitHub's or Gitea's
 published patch through `/api/walkthrough/pr-diff`. It includes no local edits
 or unpushed commits. `lib/diff/pullRequestDiff.ts` splits the response once;
 `useGitComparison` serves file patches from that same snapshot. Snapshot revisions
@@ -57,7 +57,7 @@ on panel switches; opening the picker or changing search still refreshes it.
 Working-tree mutations are unavailable for PR snapshots, and "Load full files"
 does not apply to them. Expanding collapsed context on one file works: the
 expander asks `useGitComparison.fetchFullFile`, which reads both sides of that
-file from GitHub through `/api/walkthrough/pr-file` (merge base and PR head),
+file from the selected provider through `/api/walkthrough/pr-file` (merge base and PR head),
 never from disk, so local edits and unfetched fork commits cannot leak in or
 block it. Existing inline comment controls still attach selected code to chat.
 Changes hands its PR source to walkthrough; walkthrough's Changes action opens

@@ -450,7 +450,7 @@ Stored in session metadata as a **snapshot** (`lib/linkedIssues.ts`, namespace
 pinned messages. Number, title, url, author and avatar only — the body,
 comments and state belong to GitHub, and mirroring them would mean owning their
 staleness. The stored title can drift; that is the price of a store that never
-needs refreshing. A GitHub row opens github.com. A Linear row opens the
+needs refreshing. A GitHub row opens github.com. A Gitea row keeps its instance and repository in the provider identity, and opens its Gitea URL. A Linear row opens the
 right-hand Linear panel when Linear is connected on desktop/web; otherwise it
 opens the Linear URL (no rail in VS Code or the phone shell, and none while
 disconnected).

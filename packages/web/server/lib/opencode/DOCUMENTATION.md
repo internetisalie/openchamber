@@ -812,6 +812,7 @@ within a ten-minute overall deadline.
 - `registerOpenChamberRoutes(app, dependencies)`: registers OpenChamber endpoints:
   - `GET /api/openchamber/update-check`
   - `POST /api/openchamber/update-install`
+    - `OPENCHAMBER_DISABLE_UPDATES=1` reports no update and rejects installation. Use it for installations whose packages are maintained from source.
     - Desktop-managed hosts delegate authenticated Web update requests to the Electron main process, which checks, downloads, and applies the update through `electron-updater` before restarting the host.
     - Foreground servers running under a systemd user unit queue installation in
       a separate transient unit and restart the configured service afterwards.

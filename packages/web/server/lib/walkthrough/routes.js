@@ -63,14 +63,15 @@ export function registerWalkthroughRoutes(app, { getWalkthroughService }) {
       const source = parseSource(readSource(query.get('source')));
       if (source.kind !== 'pr') return res.status(400).json({ error: 'A pull request source is required' });
       const { getPullRequestDiff } = await getWalkthroughService();
-      const { patch } = await getPullRequestDiff(directory, source.number, source.sourceRepo, { allowEmpty: true });
+      const { patch } = await getPullRequestDiff(directory, source.number, source.sourceRepo,
+        source.gitea ? { allowEmpty: true, source } : { allowEmpty: true });
       res.type('text/plain').send(patch);
     } catch (error) {
       respondWithError(res, error, 'Failed to load pull request diff');
     }
   });
 
-  // One file, both sides, straight from GitHub: the comparison view expands
+  // One file, both sides, straight from the selected PR provider: the comparison view expands
   // collapsed context on demand without touching the working tree.
   app.get('/api/walkthrough/pr-file', async (req, res) => {
     try {
@@ -84,7 +85,8 @@ export function registerWalkthroughRoutes(app, { getWalkthroughService }) {
       const previousPath = query.get('previousPath')?.trim() || undefined;
       const status = query.get('status') ?? 'M';
       const { getPullRequestFileContents } = await getWalkthroughService();
-      res.json(await getPullRequestFileContents(directory, source.number, source.sourceRepo, { path, previousPath, status }));
+      res.json(await getPullRequestFileContents(directory, source.number, source.sourceRepo,
+        { path, previousPath, status }, source.gitea ? source : undefined));
     } catch (error) {
       respondWithError(res, error, 'Failed to load pull request file');
     }

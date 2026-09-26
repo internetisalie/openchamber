@@ -5,6 +5,10 @@ import { useSessionUIStore } from '@/sync/session-ui-store';
 import { usePrefetchSessionMessages } from '@/sync/use-sync';
 import { useGitHubAuthStore } from '@/stores/useGitHubAuthStore';
 import { getGitHubPrStatusKey, useGitHubPrStatusStore } from '@/stores/useGitHubPrStatusStore';
+import { getGiteaPrBranchKey, useGiteaPrStatusStore } from '@/stores/useGiteaPrStatusStore';
+import { mapWithConcurrency } from '@/lib/concurrency';
+import { subscribeGitStatusInvalidations } from '@/lib/gitStatusInvalidation';
+import { runBackgroundNetworkTask } from '@/lib/background-network';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import type { SessionTreeItemProps } from '../sessions/SessionTreeItem';
 import { useArchivedAutoFolders } from '../folders/useArchivedAutoFolders';
@@ -339,7 +343,7 @@ const VisibleSessionProjects: React.FC<SessionProjectCollectionProps> = ({ topol
     createFolder,
     addSessionToFolder,
   });
-  const { github } = useRuntimeAPIs();
+  const { github, gitea } = useRuntimeAPIs();
   const githubAuthStatus = useGitHubAuthStore((state) => state.status);
   const githubAuthChecked = useGitHubAuthStore((state) => state.hasChecked);
   const ensureEntry = useGitHubPrStatusStore((state) => state.ensureEntry);
@@ -375,6 +379,46 @@ const VisibleSessionProjects: React.FC<SessionProjectCollectionProps> = ({ topol
     });
     if (targets.size) void refreshTargets([...targets.values()], { silent: true, markInitialResolved: true });
   }, [ensureEntry, github, githubAuthChecked, githubAuthStatus?.connected, projectSections, projectView.collapsedProjects, refreshTargets, setParams, topology.gitBranches]);
+  const refreshGiteaBranch = useGiteaPrStatusStore((state) => state.refreshBranch);
+  const resetGiteaStatus = useGiteaPrStatusStore((state) => state.resetForRuntimeSwitch);
+  React.useEffect(() => {
+    if (!gitea) return;
+    let cancelled = false;
+    const targets = new Map<string, { directory: string; branch: string }>();
+    projectSections.forEach((section) => {
+      if (projectView.collapsedProjects.has(section.project.id)) return;
+      section.groups.forEach((group) => {
+        if (group.isArchivedBucket || group.isMain) return;
+        const directory = normalizePath(group.directory ?? null);
+        const branch = group.branch?.trim() || topology.gitBranches.get(directory || '')?.trim();
+        if (directory && branch) targets.set(`${directory}\u0000${branch}`, { directory, branch });
+      });
+    });
+    const refresh = async () => {
+      try {
+        const connections = await runBackgroundNetworkTask(() => gitea.connections());
+        if (cancelled) return;
+        if (connections.length === 0) {
+          if (Object.keys(useGiteaPrStatusStore.getState().activeByBranch).length > 0) resetGiteaStatus();
+          return;
+        }
+        await mapWithConcurrency([...targets.values()], 1,
+          (target) => refreshGiteaBranch(gitea, target.directory, target.branch));
+      } catch {
+        // Keep the last confirmed PR status when the integration is unreachable.
+      }
+    };
+    void refresh();
+    const unsubscribe = subscribeGitStatusInvalidations((changedDirectory) => {
+      targets.forEach((target) => {
+        if (target.directory !== changedDirectory ||
+            !useGiteaPrStatusStore.getState().activeByBranch[getGiteaPrBranchKey(target.directory, target.branch)]) return;
+        void refreshGiteaBranch(gitea, target.directory, target.branch, true);
+      });
+    });
+    return () => { cancelled = true; unsubscribe(); };
+  }, [gitea, projectSections, projectView.collapsedProjects, refreshGiteaBranch,
+    resetGiteaStatus, topology.gitBranches]);
   const sessionOrderIndex = React.useMemo(
     () => new Map(collection.orderedSessions.map((session, index) => [session.id, index])),
     [collection.orderedSessions],

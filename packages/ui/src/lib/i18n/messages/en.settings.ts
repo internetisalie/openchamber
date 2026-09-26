@@ -1,6 +1,7 @@
 import { extensionsSettingsI18n } from './extensions.settings.i18n';
 import { guestIntegrationsI18n } from './guest-integrations.i18n';
 import { linearIntegrationI18n } from './linear-integration.i18n';
+import { giteaIntegrationI18n } from './gitea-integration.i18n';
 export const settingsDict = {
   'settings.themeImport.selectAll': 'Select all',
   'settings.themeImport.deselectAll': 'Deselect all',
@@ -2333,10 +2334,11 @@ export const settingsDict = {
   'settings.openchamber.visual.field.inputHistoryLimitAria': 'Prompts to remember',
   'settings.openchamber.visual.field.inputHistoryLimitUnit': 'prompts',
   ...linearIntegrationI18n.en,
+  ...giteaIntegrationI18n.en,
   ...guestIntegrationsI18n.en,
   ...extensionsSettingsI18n.en,
   'settings.page.integrations.title': 'Integrations',
-  'settings.page.integrations.description': 'Connect GitHub and Linear so OpenChamber can work with your issues and pull requests.',
+  'settings.page.integrations.description': 'Connect GitHub, Gitea, and Linear so OpenChamber can work with your issues and pull requests.',
   'settings.agents.page.field.steps': 'Max steps',
   'settings.agents.page.field.stepsTooltip': 'How many tool steps the agent may take in one turn before it has to stop.',
   'settings.agents.page.field.clearStepsAria': 'Clear max steps',

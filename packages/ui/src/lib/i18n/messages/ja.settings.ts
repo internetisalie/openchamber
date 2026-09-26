@@ -1,6 +1,7 @@
 import { extensionsSettingsI18n } from './extensions.settings.i18n';
 import { guestIntegrationsI18n } from './guest-integrations.i18n';
 import { linearIntegrationI18n } from './linear-integration.i18n';
+import { giteaIntegrationI18n } from './gitea-integration.i18n';
 export const settingsDict = {
   'settings.themeImport.selectAll': 'すべて選択',
   'settings.themeImport.deselectAll': 'すべて選択解除',
@@ -2343,10 +2344,12 @@ export const settingsDict = {
   'settings.openchamber.visual.option.enterToSend.enter.label': 'Enter で送信',
   'settings.openchamber.visual.option.enterToSend.modifier.label': 'Ctrl/Cmd+Enter で送信',
   ...linearIntegrationI18n.ja,
+  ...giteaIntegrationI18n.en,
+  ...giteaIntegrationI18n.ja,
   ...guestIntegrationsI18n.ja,
   ...extensionsSettingsI18n.ja,
   'settings.page.integrations.title': '連携',
-  'settings.page.integrations.description': 'GitHub と Linear を接続すると、OpenChamber が Issue やプルリクエストを扱えるようになります。',
+  'settings.page.integrations.description': 'GitHub、Gitea、Linear を接続すると、OpenChamber が Issue やプルリクエストを扱えるようになります。',
   'settings.agents.page.field.steps': '最大ステップ数',
   'settings.agents.page.field.stepsTooltip': 'エージェントが 1 ターンで実行できるツールステップの上限です。',
   'settings.agents.page.field.clearStepsAria': '最大ステップ数をクリア',

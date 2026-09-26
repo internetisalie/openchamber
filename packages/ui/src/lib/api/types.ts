@@ -1380,6 +1380,137 @@ export interface GitHubAPI {
   repoBranches(owner: string, repo: string): Promise<string[]>;
 }
 
+export interface GiteaConnection {
+  instanceUrl: string;
+  user: { login: string };
+}
+
+export interface GiteaRepository {
+  instanceUrl: string;
+  owner: string;
+  name: string;
+  remote: string;
+}
+
+export interface GiteaItem {
+  kind: 'issue' | 'pr';
+  number: number;
+  title: string;
+  body: string;
+  url: string;
+  state: 'open' | 'closed';
+  author: string | null;
+}
+
+export interface GiteaItemDetail {
+  repo: GiteaRepository;
+  item: GiteaItem;
+  pull: {
+    draft: boolean | null;
+    merged: boolean | null;
+    sourceBranch: string | null;
+    targetBranch: string | null;
+    sourceOwner: string | null;
+    headSha: string | null;
+  } | null;
+  comments: Array<{ author: string | null; body: string }>;
+  commentsTruncated: boolean;
+}
+
+export interface GiteaCommentInput {
+  directory: string;
+  remote: string;
+  kind: GiteaItem['kind'];
+  number: number;
+  body: string;
+  instanceUrl: string;
+  owner: string;
+  repo: string;
+}
+
+export interface GiteaPullIdentity {
+  directory: string;
+  remote: string;
+  number: number;
+  instanceUrl: string;
+  owner: string;
+  repo: string;
+}
+
+export interface GiteaPullActionIdentity extends GiteaPullIdentity {
+  headSha: string;
+  sourceRemote: string;
+  sourceBranch: string;
+}
+
+export interface GiteaPullCapabilities {
+  canEdit: boolean;
+  canMarkReady: boolean;
+  canMerge: boolean;
+  mergeMethods: Array<'merge' | 'rebase' | 'rebase-merge' | 'squash' | 'fast-forward-only'>;
+}
+
+export interface GiteaPullActionResult {
+  repo: GiteaRepository;
+  item: GiteaItem;
+  pull: NonNullable<GiteaItemDetail['pull']>;
+}
+
+export interface GiteaReviewComments {
+  comments: Array<{ id: number | null; reviewId: number; author: string | null;
+    body: string; path: string | null; line: number | null }>;
+  truncated: boolean;
+}
+
+export interface GiteaChecks {
+  state: string;
+  totalCount: number;
+  checks: Array<{ id: number | null; name: string; state: string;
+    description: string | null; url: string | null }>;
+}
+
+export interface GiteaPullRequestCreateInput {
+  directory: string;
+  remote: string;
+  headRemote?: string;
+  title: string;
+  body: string;
+  head: string;
+  base: string;
+  draft: boolean;
+}
+
+export interface GiteaPullRequestStatus {
+  repo: GiteaRepository;
+  item: GiteaItem | null;
+  pull: { draft: boolean | null; merged: boolean | null } | null;
+  historyIncomplete: boolean;
+}
+
+export interface GiteaAPI {
+  connections(): Promise<GiteaConnection[]>;
+  connect(instanceUrl: string, token: string, allowHttp: boolean): Promise<GiteaConnection>;
+  disconnect(instanceUrl: string): Promise<boolean>;
+  repository(directory: string, remote?: string): Promise<GiteaRepository | null>;
+  pullRequestStatus(directory: string, branch: string, remote: string, headRemote?: string): Promise<GiteaPullRequestStatus>;
+  pullRequestCreate(input: GiteaPullRequestCreateInput): Promise<GiteaItem>;
+  items(directory: string, kind: GiteaItem['kind'], options?: {
+    page?: number; remote?: string; query?: string;
+  }): Promise<{
+    repo: GiteaRepository; items: GiteaItem[]; page: number; hasMore: boolean;
+  }>;
+  item(directory: string, kind: GiteaItem['kind'], number: number, remote?: string): Promise<GiteaItemDetail>;
+  reviews(identity: GiteaPullIdentity): Promise<GiteaReviewComments>;
+  checks(identity: GiteaPullIdentity): Promise<GiteaChecks>;
+  pullCapabilities(identity: GiteaPullIdentity): Promise<GiteaPullCapabilities>;
+  pullEdit(input: GiteaPullActionIdentity & { title: string; body: string }): Promise<GiteaPullActionResult>;
+  pullReady(input: GiteaPullActionIdentity): Promise<GiteaPullActionResult>;
+  pullMerge(input: GiteaPullActionIdentity & { method: GiteaPullCapabilities['mergeMethods'][number] }): Promise<GiteaPullActionResult>;
+  comment(input: GiteaCommentInput): Promise<{ author: string | null; body: string }>;
+  pullDiff(directory: string, number: number, remote?: string,
+    expectedRepo?: GiteaRepository): Promise<string>;
+}
+
 export interface RemoteClientRecord {
   id: string;
   label: string;
@@ -1479,6 +1610,7 @@ export interface RuntimeAPIs {
   permissions: PermissionsAPI;
   notifications: NotificationsAPI;
   github?: GitHubAPI;
+  gitea?: GiteaAPI;
   linear?: LinearAPI;
   push?: PushAPI;
   diagnostics?: DiagnosticsAPI;

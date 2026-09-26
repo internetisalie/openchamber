@@ -10,11 +10,12 @@ import { useGitStatus, useGitBranches, useGitStore, useIsGitRepo } from '@/store
 import { useShallow } from 'zustand/react/shallow';
 import { getRootBranch } from '@/lib/worktrees/worktreeStatus';
 import { getRuntimeKey } from '@/lib/runtime-switch';
-import type { GitRemote } from '@/lib/api/types';
+import type { GiteaRepository, GitRemote } from '@/lib/api/types';
 import { useI18n } from '@/lib/i18n';
 import { ScrollShadow } from '@/components/ui/ScrollShadow';
 import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import { PullRequestSection } from './git/PullRequestSection';
+import { GiteaPullRequestSection } from './git/gitea-pull-request-section';
 import { NestedRepoResolutionStates } from './git/NestedRepoResolutionStates';
 import { NestedRepoPicker } from './git/NestedRepoPicker';
 import { deriveBaseBranch } from './git/baseBranch';
@@ -37,7 +38,7 @@ const remoteCacheKey = (directory: string): string => `${getRuntimeKey()}::${dir
  */
 export const PullRequestView: React.FC = () => {
   const { t } = useI18n();
-  const { git } = useRuntimeAPIs();
+  const { git, gitea } = useRuntimeAPIs();
   const currentDirectory = useEffectiveDirectory();
   // When the root is not itself a repository, the pull-request workflow
   // operates on the resolved nested repository instead.
@@ -45,6 +46,21 @@ export const PullRequestView: React.FC = () => {
   const status = useGitStatus(gitDirectory ?? null);
   const branches = useGitBranches(gitDirectory ?? null);
   const isGitRepo = useIsGitRepo(gitDirectory ?? null);
+  const repoDirectory = gitDirectory ?? currentDirectory ?? '';
+  const [giteaState, setGiteaState] = React.useState<{
+    runtimeKey: string; directory: string; repository: GiteaRepository | null; error: string | null;
+  } | null>(null);
+  React.useEffect(() => {
+    if (!gitea || !repoDirectory) return;
+    const runtimeKey = getRuntimeKey();
+    let cancelled = false;
+    void gitea.repository(repoDirectory).then((repository) => {
+      if (!cancelled) setGiteaState({ runtimeKey, directory: repoDirectory, repository, error: null });
+    }).catch((error: Error) => {
+      if (!cancelled) setGiteaState({ runtimeKey, directory: repoDirectory, repository: null, error: error.message });
+    });
+    return () => { cancelled = true; };
+  }, [gitea, repoDirectory]);
   const { ensureAll, ensureNestedRepos, selectNestedRepo } = useGitStore(useShallow((state) => ({
     ensureAll: state.ensureAll,
     ensureNestedRepos: state.ensureNestedRepos,
@@ -313,14 +329,25 @@ export const PullRequestView: React.FC = () => {
         disableHorizontal
         preventOverscroll
       >
-        <PullRequestSection
-          directory={gitDirectory ?? currentDirectory}
-          branch={currentBranch}
-          baseBranch={baseBranch}
-          trackingBranch={status?.tracking ?? undefined}
-          remotes={remotes}
-          remoteBranches={remoteBranches}
-        />
+        {gitea && repoDirectory && (giteaState?.directory !== repoDirectory || giteaState.runtimeKey !== getRuntimeKey()) ? (
+          <div className="flex justify-center py-8"><Icon name="loader-4" className="size-4 animate-spin text-muted-foreground" /></div>
+        ) : gitea && giteaState?.error ? (
+          <p role="alert" className="py-3 typography-micro text-status-error">{giteaState.error}</p>
+        ) : gitea && giteaState?.repository ? (
+          <GiteaPullRequestSection key={`${repoDirectory}:${currentBranch}:${giteaState.repository.instanceUrl}:${giteaState.repository.owner}/${giteaState.repository.name}:${giteaState.repository.remote}`}
+            directory={repoDirectory} branch={currentBranch} baseBranch={baseBranch}
+            trackingBranch={status?.tracking ?? undefined} remotes={remotes}
+            remoteBranches={remoteBranches} repository={giteaState.repository} />
+        ) : (
+          <PullRequestSection
+            directory={repoDirectory}
+            branch={currentBranch}
+            baseBranch={baseBranch}
+            trackingBranch={status?.tracking ?? undefined}
+            remotes={remotes}
+            remoteBranches={remoteBranches}
+          />
+        )}
       </ScrollableOverlay>
     </div>
   );

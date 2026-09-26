@@ -32,6 +32,7 @@ import { useSessionFoldersStore } from '@/stores/useSessionFoldersStore';
 
 type FolderScope = { scopeKey: string; directory: string | null };
 import { getGitHubPrStatusKey, usePrVisualSummary } from '@/stores/useGitHubPrStatusStore';
+import { useGiteaPrIsActive, useGiteaPrVisualSummary } from '@/stores/useGiteaPrStatusStore';
 import { useI18n } from '@/lib/i18n';
 import { useChildStoreManager } from '@/sync/sync-context';
 import { canRequestNativeDirectoryAccess, requestDirectoryAccess } from '@/lib/desktop';
@@ -307,13 +308,17 @@ function SessionGroupSectionBase(props: SessionGroupSectionProps): React.ReactNo
   const searchData = hasSessionSearchQuery ? groupSearchDataByGroup.get(group) : null;
   const isCollapsed = hasSessionSearchQuery ? false : collapsedGroups.has(groupKey);
   // PR state for the worktree sub-header (grouped display mode).
-  const groupPrKey = React.useMemo(() => {
+  const groupPrTarget = React.useMemo(() => {
     if (group.isMain || group.isArchivedBucket || hideGroupLabel) return null;
     const directory = normalizePath(group.directory ?? null);
     const branch = group.branch?.trim();
-    return directory && branch ? getGitHubPrStatusKey(directory, branch) : null;
+    return directory && branch ? { directory, branch } : null;
   }, [group.branch, group.directory, group.isArchivedBucket, group.isMain, hideGroupLabel]);
-  const groupPrSummary = usePrVisualSummary(groupPrKey);
+  const groupPrKey = groupPrTarget ? getGitHubPrStatusKey(groupPrTarget.directory, groupPrTarget.branch) : null;
+  const githubPrSummary = usePrVisualSummary(groupPrKey);
+  const giteaPrSummary = useGiteaPrVisualSummary(groupPrTarget?.directory ?? null, groupPrTarget?.branch ?? null);
+  const giteaPrActive = useGiteaPrIsActive(groupPrTarget?.directory ?? null, groupPrTarget?.branch ?? null);
+  const groupPrSummary = giteaPrActive ? giteaPrSummary : githubPrSummary;
   const groupPrColor = groupPrSummary ? `var(--pr-${groupPrSummary.visualState})` : undefined;
   const childStores = useChildStoreManager();
   const bootstrapDirectories = React.useMemo(() => {
