@@ -63,6 +63,17 @@ describe("session events", () => {
     expect(draft.sessionEventRevision?.ses_1).toBe(1)
   })
 
+  test("an authoritative refresh clears removed metadata and rejects stale repeats", () => {
+    const draft = state({ session: [session({ metadata: { pinned: true } })] })
+    const refreshed = session({ title: "Mirrored", time: { created: 1, updated: 2 } })
+    expect(apply(draft, { type: "session.refreshed", properties: { info: refreshed } })).toBe(true)
+    expect(draft.session[0].metadata).toBeUndefined()
+    expect(draft.sessionEventRevision?.ses_1).toBe(1)
+    expect(apply(draft, { type: "session.refreshed", properties: { info: refreshed } })).toBe(false)
+    expect(apply(draft, { type: "session.refreshed", properties: { info: session() } })).toBe(false)
+    expect(draft.session[0].title).toBe("Mirrored")
+  })
+
   test("a patch for an unknown session is ignored", () => {
     const draft = state()
     expect(apply(draft, { type: "session.patched", properties: { sessionID: "ses_x", patch: { title: "x" } } })).toBe(false)

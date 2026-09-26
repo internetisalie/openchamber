@@ -87,7 +87,7 @@ export const applySessionEventsToGlobalSessions = (payloads: readonly SyncEvent[
       continue
     }
 
-    if (payload.type === "session.created") {
+    if (payload.type === "session.created" || payload.type === "session.refreshed") {
       const session = stripSessionDiffSnapshots(payload.properties.info)
       const currentSession = overlay.get(session.id) ?? null
       if (!shouldSkipStaleSessionEvent(currentSession, session)) appendUpsert(session)

@@ -139,6 +139,13 @@ const openchamberAutoAcceptSchema = z.object({
 // The wire event contract is generated from the server; the stream is trusted
 // once its shape matches. Only the discriminator and location are checked here
 // because the translator narrows on `type` for everything else.
+const mirrorUpdatedSchema = z.object({
+  id: z.string(),
+  type: z.literal("session.mirror.updated"),
+  data: z.object({ sessionID: z.string().min(1) }),
+  location: z.object({ directory: z.string() }).partial().optional(),
+})
+
 const wireEventSchema = z.object({
   id: z.string(),
   type: z.string(),
@@ -191,6 +198,11 @@ function translateOpenchamberStatus(payload: unknown): SyncEvent | null {
 function translatePayload(payload: unknown, frameDirectory: string | undefined): Array<{ directory: string; event: SyncEvent }> {
   const bridged = translateOpenchamberStatus(payload) ?? translateOpenchamberArchived(payload) ?? translateOpenchamberNative(payload)
   if (bridged) return [{ directory: frameDirectory ?? GLOBAL_EVENT_DIRECTORY, event: bridged }]
+  const mirror = mirrorUpdatedSchema.safeParse(payload)
+  if (mirror.success) return [{
+    directory: mirror.data.location?.directory || frameDirectory || GLOBAL_EVENT_DIRECTORY,
+    event: { type: "session.mirror.updated", properties: { sessionID: mirror.data.data.sessionID } },
+  }]
   if (!wireEventSchema.safeParse(payload).success) return []
   // SAFETY: the discriminator and location were validated above; the rest of
   // the shape is the server's generated contract, narrowed per `type` by the
@@ -243,6 +255,8 @@ function coalesceKey(event: SyncEvent): string | undefined {
   switch (event.type) {
     case "session.status":
       return `session.status:${event.properties.sessionID}`
+    case "session.mirror.updated":
+      return `session.mirror.updated:${event.properties.sessionID}`
     case "session.patched":
       return `session.patched:${event.properties.sessionID}`
     case "message.patched":

@@ -423,6 +423,8 @@ retain their existing startup grace period.
 
 `SessionMessageLoader` is the shared authority for session message requests. Navigation, reactive chat loading, sidebar prefetch, pagination, reconnect/recovery, and optimistic reconciliation must delegate to it rather than issuing parallel initial requests.
 
+A stable OpenCode server can mirror a leaf session without publishing every message event. Its `session.mirror.updated` notice carries only `data.sessionID`; the pipeline validates and coalesces that notice, then the sync provider fetches the authoritative session record for global and loaded directory metadata. It refreshes a bounded 100-message tail through `SessionMessageLoader` only while that session is open. A failed read keeps existing state and retries up to three times with short backoff; repeated notices during a read schedule one more pass. The first mirror import emits `session.created` and also emits `session.mirror.updated` when it includes settled messages; either order is safe.
+
 Rules:
 
 1. Request identity is runtime key + normalized directory + session ID. Session IDs alone are not globally unique across runtimes or directories.
@@ -729,7 +731,7 @@ Keep this in sync with `handleDirectoryEvent` in `sync-context.tsx`:
 
 | Event type | Fields to clone |
 |---|---|
-| `session.created/patched/deleted` | `session`, `permission`, `form`, `part`, `sessionEventRevision`, `sessionDeletedRevision` (an archive patch also clears caches) |
+| `session.created/refreshed/patched/deleted` | `session`, `permission`, `form`, `part`, `sessionEventRevision`, `sessionDeletedRevision` (an archive patch also clears caches) |
 | `session.status/idle/error` | `session_status` |
 | `message.updated` | `message` |
 | `message.patched` | `message` |
