@@ -67,6 +67,34 @@ This module contains the OpenChamber message-stream WebSocket protocol and runti
 - The reusable upstream reader centralizes SSE fetch/parsing/reconnect behavior for the WS runtime and OpenCode watcher. Additional event consumers should move to it only with parity tests for their lifecycle and error semantics.
 - Browser transport concerns live in the WS bridge modules; server-side global stream ownership lives in `global-hub.js`.
 
+## Disposable v2 mirror smoke
+
+`scripts/smoke-v2-mirror.mjs` verifies the fork's mirror notice through a real
+OpenChamber server, then reads the updated title and settled messages through
+its HTTP proxy. It makes no model call. It creates an OpenCode container from
+an explicitly supplied local image and starts this checkout's OpenChamber on
+an automatically allocated loopback port. Both instances use isolated data.
+The script removes its container and stops its child process on success or
+failure. Failure logs remain in the supplied worktree scratch directory.
+
+Build the SDK and web assets first if this checkout has no build output. Run
+each command through the workspace's `run-with-worktree-scratch` wrapper:
+
+```sh
+../run-with-worktree-scratch "$PWD" bun run --cwd packages/sdk build
+../run-with-worktree-scratch "$PWD" bun run build:web
+../run-with-worktree-scratch "$PWD" env \
+  OPENCODE_MIRROR_SMOKE_DISPOSABLE=1 \
+  OPENCODE_MIRROR_SMOKE_IMAGE=opencode-fork-server:ack-smoke \
+  OPENCODE_MIRROR_SMOKE_CONTAINER_PORT=4096 \
+  OPENCODE_MIRROR_SMOKE_SCRATCH="$PWD/.agent-scratch/mirror-smoke" \
+  node scripts/smoke-v2-mirror.mjs
+```
+
+The image must contain the fork's v2 mirror API and listen on the configured
+container port. The script uses `--pull never`, random host ports, and no
+existing server URL. Docker and Node.js 22 or later must be available.
+
 ## Delta coalescing
 OpenCode publishes one `message.part.delta` per token fragment. A 5.7 KB answer measured 3,402 delta events of 1.7 characters each, 97% of all frames and 1.3 MB on the wire. The hub merges them before replay and fan-out, which cut that stream to 483 frames and 197 KB with identical text. Replay holds merged frames too, so its 2,048 entries cover about seven times more streaming time.
 

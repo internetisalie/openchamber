@@ -99,8 +99,12 @@ export type SyncEvent =
   | { type: "server.connected"; properties: Record<never, never> }
   | { type: "installation.update-available"; properties: { version: string } }
   | { type: "session.created"; properties: { info: Session } }
+  /** Complete authoritative detail read after a mirror notice. */
+  | { type: "session.refreshed"; properties: { info: Session } }
   | { type: "session.patched"; properties: { sessionID: string; patch: SessionPatch } }
   | { type: "session.deleted"; properties: { sessionID: string } }
+  /** The stable server mirrored newer leaf state; fetch its authoritative record and opened transcript. */
+  | { type: "session.mirror.updated"; properties: { sessionID: string } }
   /**
    * A session was forked. OpenCode 2.x publishes no `session.created` for the
    * fork and this event carries ids only, so the sync layer reads the fork's
@@ -884,6 +888,7 @@ export function routeWireEvent(event: OpenCodeEvent): RoutedSyncEvent[] {
 export function syncEventSessionID(event: SyncEvent): string | undefined {
   switch (event.type) {
     case "session.created":
+    case "session.refreshed":
       return event.properties.info.id
     case "message.updated":
       return event.properties.info.sessionID
@@ -893,6 +898,7 @@ export function syncEventSessionID(event: SyncEvent): string | undefined {
       return event.properties.form.sessionID
     case "session.patched":
     case "session.deleted":
+    case "session.mirror.updated":
     case "session.forked":
     case "session.revert.committed":
     case "session.status":

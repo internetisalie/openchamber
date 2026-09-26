@@ -14,6 +14,7 @@ import type {
   StructuredError,
 } from "@/lib/opencode/model"
 import { createEventPipeline } from "./event-pipeline"
+import { scheduleSessionMirrorRefresh } from "./session-mirror-refresh"
 import { isVSCodeRuntime } from "@/lib/desktop"
 import { isSurfaceAttended } from "@/lib/surfaceAttention"
 import { isMobileSurfaceRuntime } from "@/lib/runtimeSurface"
@@ -306,6 +307,7 @@ let globalBootstrapGeneration = 0
 const BOOT_DEBOUNCE_MS = 1500
 const RECONNECT_MESSAGE_LIMIT = 30
 const SESSION_MATERIALIZATION_MESSAGE_LIMIT = 30
+const MIRROR_REFRESH_MESSAGE_LIMIT = 100
 const ACTIVE_SESSION_WATCHDOG_INTERVAL_MS = 5_000
 const ACTIVE_SESSION_STATUS_POLL_INTERVAL_MS = 5_000
 const ACTIVE_SESSION_STALE_EVENT_MS = 20_000
@@ -1206,6 +1208,7 @@ const updateRoutingIndexFromEvent = (
 
   switch (payload.type) {
     case "session.created":
+    case "session.refreshed":
       setIndexedSessionDirectory(routingIndex, payload.properties.info.id, directory)
       return
 
@@ -1639,6 +1642,33 @@ export function handleEvent(
 
   const directory = resolveDirectoryFromRoutingIndex(routingIndex, rawDirectory, payload, childStores, batch)
 
+  if (payload.type === "session.mirror.updated") {
+    const { sessionID } = payload.properties
+    const isCurrent = () => expectedRuntimeKey === getRuntimeKey()
+    scheduleSessionMirrorRefresh(expectedRuntimeKey, sessionID, async () => {
+      // The notice carries only an id. Read the stable server's authoritative
+      // record so a title or directory change also reaches the global list.
+      const info = await opencodeClient.getSessionUnscoped(sessionID)
+      if (!isCurrent()) return
+      const sessionDirectory = info.directory || (directory !== "global" ? directory : "")
+      handleEvent(sessionDirectory || "global", {
+        type: "session.refreshed", properties: { info: stripSessionDiffSnapshots(info) },
+      }, childStores, routingIndex, expectedRuntimeKey)
+
+      // Only the open transcript needs its new messages now. The shared loader
+      // merges this bounded tail with existing pages and rejects stale reads.
+      if (!sessionDirectory || _activeSession !== sessionID || _activeDirectory !== sessionDirectory) return
+      const loader = getImperativeSessionMessageLoader()
+      if (!loader) return
+      const target = { directory: sessionDirectory, sessionID }
+      await loader.refreshTail(target, MIRROR_REFRESH_MESSAGE_LIMIT)
+      if (!isCurrent()) return
+      const snapshot = loader.getSnapshot(target)
+      if (snapshot.status === "error") throw snapshot.error ?? new Error("Mirrored session refresh failed")
+    }, isCurrent)
+    return
+  }
+
   // OpenCode dropped this directory's in-memory services (an hour idle, or an
   // explicit reload). Session records and messages live in its database and
   // stay valid; what went away is the live state read from that graph, so the
@@ -1889,6 +1919,7 @@ export function handleEvent(
 
   switch (payload.type) {
     case "session.created":
+    case "session.refreshed":
     case "session.patched":
     case "session.deleted":
       cloneField("session", (value) => [...value])
@@ -1951,7 +1982,7 @@ export function handleEvent(
       { directory: resolvedDirectory, sessionID }, draft.message[sessionID] ?? [],
     )
   }
-  if (reducerChanged && (payload.type === "session.patched" || payload.type === "session.deleted")) {
+  if (reducerChanged && (payload.type === "session.refreshed" || payload.type === "session.patched" || payload.type === "session.deleted")) {
     recordDirectoryRecoveryEvent(store, payload)
   }
 

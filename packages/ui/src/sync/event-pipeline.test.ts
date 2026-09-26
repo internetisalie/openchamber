@@ -30,7 +30,12 @@ function statusEvent(type: "busy" | "retry"): OpenCodeEvent {
 }
 
 /** A raw stream payload: wire events, or OpenChamber's own bridge events. */
-type StreamPayload = OpenCodeEvent | { type: string; properties: Record<string, string> }
+type StreamPayload = OpenCodeEvent | { type: string; properties: Record<string, string> } | {
+  id: string
+  type: "session.mirror.updated"
+  location?: { directory: string }
+  data: { sessionID: string }
+}
 
 function createSdk(events: StreamPayload[], streamFinished: () => void): OpenCodeClient {
   const subscribe = ({ signal }: { signal?: AbortSignal }) => ({
@@ -128,6 +133,18 @@ describe("createEventPipeline", () => {
     )
     expect(events).toHaveLength(1)
     expect(events[0]).toMatchObject({ type: "session.patched", properties: { patch: { title: "New", cost: 1, time: { updated: 1000 } } } })
+  })
+
+  test("routes mirror notices and coalesces repeated notices for one session", async () => {
+    const { directory, events } = await collect(
+      [
+        { id: "evt_mirror_1", type: "session.mirror.updated", location: { directory: "/repo" }, data: { sessionID: "ses_1" } },
+        { id: "evt_mirror_2", type: "session.mirror.updated", location: { directory: "/repo" }, data: { sessionID: "ses_1" } },
+      ],
+      1,
+    )
+    expect(directory).toBe("/repo")
+    expect(events).toEqual([{ type: "session.mirror.updated", properties: { sessionID: "ses_1" } }])
   })
 
   test("bridges openchamber session status events into session.status", async () => {

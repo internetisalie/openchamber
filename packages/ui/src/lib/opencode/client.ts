@@ -822,6 +822,12 @@ class OpencodeService {
     return projectSession(info)
   }
 
+  /** Read a session by id without applying the UI's current directory. */
+  async getSessionUnscoped(id: string): Promise<Session> {
+    const info = await call("session.get", () => this.client.session.get({ sessionID: id }))
+    return projectSession(info)
+  }
+
   async deleteSession(id: string, directory?: string | null): Promise<boolean> {
     await call("session.remove", () => this.clientFor(directory).session.remove({ sessionID: id }))
     return true

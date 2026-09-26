@@ -346,6 +346,23 @@ export function applyDirectoryEvent(
       return true
     }
 
+    case "session.refreshed": {
+      const info = event.properties.info
+      const sessions = draft.session
+      const result = Binary.search(sessions, info.id, (session) => session.id)
+      if (result.found) {
+        if (shouldSkipStaleSessionEvent(sessions[result.index], info)) return false
+        if (areJsonEquivalent(sessions[result.index], info)) return false
+        sessions[result.index] = info
+      } else {
+        sessions.splice(result.index, 0, info)
+        trimSessions(draft)
+        if (!info.parentID) draft.sessionTotal += 1
+      }
+      markSessionEvent(info.id, false)
+      return true
+    }
+
     case "session.patched": {
       const { sessionID, patch } = event.properties
       const sessions = draft.session

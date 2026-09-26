@@ -113,6 +113,15 @@ describe("request fidelity", () => {
     expect(page.cursor).toEqual({ next: "c2" })
   })
 
+  test("a mirror detail read ignores the currently selected directory", async () => {
+    opencodeClient.setDirectory("/repo/other")
+    responses.push(json({ data: sessionInfo }))
+    const info = await opencodeClient.getSessionUnscoped("ses_1")
+    expect(requests[0].url.pathname).toBe("/api/session/ses_1")
+    expect(requests[0].headers.has("x-opencode-directory")).toBe(false)
+    expect(info.directory).toBe("/repo/app")
+  })
+
   test("a global list sends no directory scope at all", async () => {
     opencodeClient.setDirectory("/repo/app")
     responses.push(json({ data: [], cursor: {} }))
