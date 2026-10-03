@@ -7,6 +7,7 @@ const originalFetch = globalThis.fetch;
 
 afterEach(() => {
   globalThis.fetch = originalFetch;
+  vi.unstubAllEnvs();
 });
 
 const jsonResponse = (payload, status = 200) => new Response(JSON.stringify(payload), {
@@ -36,6 +37,17 @@ const createApp = (overrides = {}) => {
 };
 
 describe('OpenCode upgrade routes', () => {
+  it.each(['OPENCHAMBER_DISABLE_UPDATES', 'OPENCODE_DISABLE_AUTOUPDATE'])('honors %s without contacting an upstream release source', async (flag) => {
+    vi.stubEnv(flag, '1');
+    globalThis.fetch = vi.fn(async () => jsonResponse({ version: '2.0.18-internetisalie.591c6999ebce' }));
+    const { app, dependencies } = createApp({ getOpenCodeUpgradeCapability: () => supportedCapability });
+    const response = await request(app).get('/api/opencode/upgrade-status').expect(200);
+    expect(response.body).toMatchObject({ available: false, currentVersion: '2.0.18-internetisalie.591c6999ebce', latestVersion: null });
+    expect(globalThis.fetch).toHaveBeenCalledExactlyOnceWith('http://127.0.0.1:4096/api/info', expect.anything());
+    await request(app).post('/api/opencode/upgrade').send({}).expect(409);
+    expect(dependencies.upgradeOpenCodeCli).not.toHaveBeenCalled();
+  });
+
   it('fails closed without contacting the bundled OpenCode updater', async () => {
     globalThis.fetch = vi.fn();
     const { app } = createApp();

@@ -131,6 +131,10 @@ export const registerOpenCodeRoutes = (app, dependencies) => {
 
   let upgradeInFlight = null;
   app.post('/api/opencode/upgrade', async (_req, res) => {
+    if (['1', 'true'].includes(process.env.OPENCHAMBER_DISABLE_UPDATES?.toLowerCase()) ||
+        ['1', 'true'].includes(process.env.OPENCODE_DISABLE_AUTOUPDATE?.toLowerCase())) {
+      return res.status(409).json({ success: false, code: 'UPDATES_DISABLED', error: 'OpenCode updates are disabled for this instance.' });
+    }
     const capability = getOpenCodeUpgradeCapability();
     if (!capability.supported) {
       const bundled = capability.reason === 'bundled';
@@ -161,12 +165,14 @@ export const registerOpenCodeRoutes = (app, dependencies) => {
       // are two answers: the UI announces the version either way and offers
       // the Update action only when `upgrade.supported` is true.
       const capability = getOpenCodeUpgradeCapability();
+      const updatesDisabled = ['1', 'true'].includes(process.env.OPENCHAMBER_DISABLE_UPDATES?.toLowerCase()) ||
+        ['1', 'true'].includes(process.env.OPENCODE_DISABLE_AUTOUPDATE?.toLowerCase());
       const [healthResponse, latestVersion] = await Promise.all([
         fetch(buildOpenCodeUrl('/api/info', ''), {
           method: 'GET',
           headers: { Accept: 'application/json', ...getOpenCodeAuthHeaders() },
         }),
-        fetchLatestOpenCodeVersion(),
+        updatesDisabled ? Promise.resolve(null) : fetchLatestOpenCodeVersion(),
       ]);
       const info = await healthResponse.json().catch(() => null);
       if (!healthResponse.ok) {
@@ -177,7 +183,7 @@ export const registerOpenCodeRoutes = (app, dependencies) => {
       }
       const currentVersion = typeof info?.version === 'string' ? info.version.replace(/^v/, '') : null;
       if (!currentVersion || !latestVersion) {
-        return res.json({ available: null, currentVersion, latestVersion: latestVersion || null, upgrade: capability });
+        return res.json({ available: updatesDisabled ? false : null, currentVersion, latestVersion: latestVersion || null, upgrade: capability });
       }
       // A bundled binary updates together with the desktop app, so a newer
       // OpenCode is not something the user can act on: never announce it.

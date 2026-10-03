@@ -292,7 +292,7 @@ export function DesktopHostSwitcherDialog({
       ...h,
       url: normalizeHostUrl(h.url) || h.url,
     }));
-    return [local, ...normalizedRemote];
+    return [...(local.url ? [local] : []), ...normalizedRemote];
   }, [configHosts, localOrigin]);
 
   React.useEffect(() => {
@@ -305,8 +305,8 @@ export function DesktopHostSwitcherDialog({
   }, [allHosts, runtimeEndpointEpoch]);
   const currentDefaultLabel = React.useMemo(() => {
     const id = defaultHostId || LOCAL_HOST_ID;
-    return allHosts.find((h) => h.id === id)?.label || t('desktopHostSwitcher.instance.local');
-  }, [allHosts, defaultHostId, t]);
+    return allHosts.find((h) => h.id === id)?.label || current.label;
+  }, [allHosts, defaultHostId, current.label]);
 
   const persist = React.useCallback(async (nextHosts: DesktopHost[], nextDefaultHostId: string | null) => {
     if (!isDesktopShell()) return;
@@ -665,6 +665,7 @@ export function DesktopHostSwitcherDialog({
   }, [localOrigin, t]);
 
   const switchToLocal = React.useCallback(async () => {
+    if (!localOrigin) return;
     sshSwitchTokenRef.current += 1;
     setSwitchingHostId(null);
     setSshSwitchModal((prev) => ({
@@ -1065,14 +1066,16 @@ export function DesktopHostSwitcherDialog({
         </DialogHeader>
         {sshSwitchModal.error ? (
           <div className="flex justify-end gap-2">
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              onClick={() => void switchToLocal()}
-            >
-              {t('desktopHostSwitcher.actions.switchToLocal')}
-            </Button>
+            {localOrigin && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => void switchToLocal()}
+              >
+                {t('desktopHostSwitcher.actions.switchToLocal')}
+              </Button>
+            )}
             <Button
               type="button"
               size="sm"

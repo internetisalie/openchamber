@@ -182,5 +182,6 @@ export const warmDesktopHostStatuses = async (): Promise<void> => {
   const config = await desktopHostsGet().catch(() => null);
   if (!config) return;
   pruneDesktopHostStatuses(config.hosts.map((host) => host.id));
-  await probeDesktopHosts([buildLocalDesktopHost(config.localOrigin), ...config.hosts]);
+  const local = buildLocalDesktopHost(config.localOrigin);
+  await probeDesktopHosts([...(local.url ? [local] : []), ...config.hosts]);
 };

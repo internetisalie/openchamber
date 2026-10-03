@@ -77,20 +77,15 @@ afterEach(() => {
 });
 
 describe('OpenChamber desktop host update route', () => {
-  it('does not check or install updates when disabled for an installation', async () => {
+  it.each(['web', 'desktop'])('honors disabled updates in the %s runtime before checking or installing', async (runtime) => {
     const desktopUpdater = { check: vi.fn(), install: vi.fn(), restart: vi.fn() };
-    const { app } = createApp({ environment: { OPENCHAMBER_DISABLE_UPDATES: '1' }, desktopUpdater });
-
-    await request(app).get('/api/openchamber/update-check?appType=web').expect(200, {
-      available: false,
-      disabled: true,
-    });
-    await request(app).post('/api/openchamber/update-install').expect(403, {
-      error: 'Updates are disabled for this installation.',
-    });
+    const { app } = createApp({ environment: { OPENCHAMBER_RUNTIME: runtime, OPENCHAMBER_DISABLE_UPDATES: '1' }, desktopUpdater });
+    await request(app).get('/api/openchamber/update-check?appType=web').expect(200, { available: false, disabled: true });
+    await request(app).post('/api/openchamber/update-install').expect(403, { error: 'Updates are disabled for this installation.' });
+    expect(packageManager.checkForUpdates).not.toHaveBeenCalled();
     expect(desktopUpdater.check).not.toHaveBeenCalled();
     expect(desktopUpdater.install).not.toHaveBeenCalled();
-    expect(packageManager.checkForUpdates).not.toHaveBeenCalled();
+    expect(childProcess.spawn).not.toHaveBeenCalled();
   });
 
   it('reports a restart rejection until the user retries installation', async () => {
