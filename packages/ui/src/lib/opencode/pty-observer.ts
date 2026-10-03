@@ -118,7 +118,7 @@ export const observeOpenCodePtySessions = (
         bridgeAvailable = true;
       }
 
-      const result = await listOpenCodePtySessions(controller?.signal);
+      const result = await listOpenCodePtySessions(parentSessionId, controller?.signal);
       if (closed || generation !== startedGeneration || activeRequest !== request) return 'stale' as const;
       successfulSessions = sortOpenCodePtySessions(
         result.sessions.filter((session) => session.parentSessionId === parentSessionId),

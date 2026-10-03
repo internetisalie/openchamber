@@ -31,6 +31,7 @@ let listImpl: () => Promise<{ schemaVersion: 1; revision: number; sessions: Retu
 let outputImpl: (after?: number) => Promise<{ schemaVersion: 1; revision: number; reset: boolean; data: string }>;
 let probeCalls = 0;
 let listCalls = 0;
+let listParents: string[] = [];
 let outputCalls: Array<number | undefined> = [];
 const runtimeListeners = new Set<() => void>();
 
@@ -40,8 +41,9 @@ mock.module('./pty-bridge', () => ({
     probeCalls += 1;
     return probeImpl();
   },
-  listOpenCodePtySessions: async () => {
+  listOpenCodePtySessions: async (parentSessionId: string) => {
     listCalls += 1;
+    listParents.push(parentSessionId);
     return listImpl();
   },
   readOpenCodePtyOutput: async (_id: string, after?: number) => {
@@ -74,6 +76,7 @@ beforeEach(() => {
   Object.defineProperty(browser.navigator, 'onLine', { value: true, configurable: true });
   probeCalls = 0;
   listCalls = 0;
+  listParents = [];
   outputCalls = [];
   runtimeListeners.clear();
   probeImpl = async () => ({
@@ -120,6 +123,7 @@ test('filters by parent session, orders running first, and retains successful st
 
   expect(states.some((state) => JSON.stringify(state) === JSON.stringify({ availability: 'available', ids: ['running-old', 'running-new', 'exited'], stale: false }))).toBe(true);
   expect(states.at(-1)).toEqual({ availability: 'available', ids: ['running-old', 'running-new', 'exited'], stale: true });
+  expect(listParents).toEqual(['parent', 'parent']);
 });
 
 test('does not request while hidden and stops after disposal', async () => {

@@ -67,8 +67,11 @@ describe('OpenCode PTY API', () => {
 
   test('validates parent session ownership and requests incremental output', async () => {
     response = Response.json({ schemaVersion: 1, revision: 4, sessions: [session] });
-    expect((await listOpenCodePtySessions()).sessions).toEqual([session]);
+    const controller = new AbortController();
+    expect((await listOpenCodePtySessions('ses-1', controller.signal)).sessions).toEqual([session]);
     expect(calls.at(-1)?.path).toBe('/api/plugins/opencode-pty-bridge/sessions');
+    expect(calls.at(-1)?.init.query).toEqual({ parentSessionId: 'ses-1' });
+    expect(calls.at(-1)?.init.signal).toBe(controller.signal);
 
     response = Response.json({ schemaVersion: 1, revision: 5, reset: false, data: 'ready\n' });
     expect((await readOpenCodePtyOutput('pty/1', 4)).data).toBe('ready\n');
@@ -89,6 +92,6 @@ describe('OpenCode PTY API', () => {
     delete withoutParent.parentSessionId;
     response = Response.json({ schemaVersion: 1, revision: 4, sessions: [withoutParent] });
 
-    expect((await captureError(listOpenCodePtySessions())).kind).toBe('invalid-response');
+    expect((await captureError(listOpenCodePtySessions('ses-1'))).kind).toBe('invalid-response');
   });
 });

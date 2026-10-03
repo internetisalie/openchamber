@@ -360,7 +360,10 @@ panel.
 
 The PTYs section probes `GET /api/plugins/opencode-pty-bridge` and renders only
 sessions whose authoritative `parentSessionId` equals the selected OpenCode
-session. It does not infer ownership from command, working directory, or title.
+session. List requests include `?parentSessionId=<selected session>` so bridges
+can avoid scanning unrelated sessions. The client still checks every returned
+parent ID, including when an older bridge ignores the query. It does not infer
+ownership from command, working directory, or title.
 Only a capability `404` means the bridge is absent; authentication, network,
 server, and malformed-response failures stay visible and cannot clear the last
 successful list.

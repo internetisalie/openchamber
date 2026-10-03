@@ -93,8 +93,11 @@ export const probeOpenCodePtyBridge = async (signal?: AbortSignal): Promise<Open
   return { status: 'available', capability: await parseResponse(response, capabilitySchema) };
 };
 
-export const listOpenCodePtySessions = async (signal?: AbortSignal): Promise<OpenCodePtySessionList> =>
-  parseResponse(await request(`${BRIDGE_PATH}/sessions`, signal), sessionListSchema);
+export const listOpenCodePtySessions = async (
+  parentSessionId: string,
+  signal?: AbortSignal,
+): Promise<OpenCodePtySessionList> =>
+  parseResponse(await request(`${BRIDGE_PATH}/sessions`, signal, { parentSessionId }), sessionListSchema);
 
 export const readOpenCodePtyOutput = async (
   sessionId: string,
