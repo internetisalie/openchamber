@@ -16,6 +16,12 @@ backend. Its injected empty local origin stays authoritative: the bundled
 When a local backend is enabled, its configured HTTP origin remains listed even
 while it is unreachable.
 
+Sandboxed extension frames may load `/api/guests/` pages from the window's
+configured HTTP(S) API origin, including serverless launches with bundled UI.
+This permission is limited to extension pages; it does not change top-level
+navigation or desktop IPC trust. `guest-frame-navigation.test.mjs` covers this
+boundary and rejection of unrelated origins and API paths.
+
 The current instance name matches saved `localhost` and `127.0.0.1` endpoints
 at the same scheme, port, and API path. Exact endpoint matches take precedence.
 This affects display matching only; saved addresses and transport credentials

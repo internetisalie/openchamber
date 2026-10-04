@@ -12,10 +12,10 @@ const LOCAL_SCHEMES = new Set(['about:', 'data:', 'blob:']);
 const GUEST_PATH_PREFIX = '/api/guests/';
 
 /**
- * @param {{ isMainFrame: boolean, frameOrigin: string | undefined, url: string, isAppOrigin: (url: string) => boolean }} input
+ * @param {{ isMainFrame: boolean, frameOrigin: string | undefined, url: string, isAppOrigin: (url: string) => boolean, apiBaseUrl?: string }} input
  * @returns {boolean} true when the navigation must be refused
  */
-export const shouldBlockGuestFrameNavigation = ({ isMainFrame, frameOrigin, url, isAppOrigin }) => {
+export const shouldBlockGuestFrameNavigation = ({ isMainFrame, frameOrigin, url, isAppOrigin, apiBaseUrl }) => {
   if (isMainFrame || frameOrigin !== 'null') return false;
   let target;
   try {
@@ -27,5 +27,15 @@ export const shouldBlockGuestFrameNavigation = ({ isMainFrame, frameOrigin, url,
   if (LOCAL_SCHEMES.has(target.protocol)) return false;
   // Another page of an extension on this app's server, which the same CSP governs.
   if (isAppOrigin(url) && target.pathname.startsWith(GUEST_PATH_PREFIX)) return false;
+  // Bundled UI can use an external backend without starting a local server.
+  // Trust its extension pages only; this does not grant desktop IPC privileges.
+  if (target.pathname.startsWith(GUEST_PATH_PREFIX) && !target.username && !target.password) {
+    try {
+      const api = new URL(apiBaseUrl);
+      if ((api.protocol === 'http:' || api.protocol === 'https:') && target.origin === api.origin) return false;
+    } catch {
+      // No valid configured backend: keep refusing network navigation.
+    }
+  }
   return true;
 };

@@ -36,3 +36,23 @@ test('leaves the main frame and frames with an origin of their own alone', () =>
   assert.equal(shouldBlockGuestFrameNavigation({ isMainFrame: true, frameOrigin: 'null', url: 'https://example.com/', isAppOrigin }), false);
   assert.equal(shouldBlockGuestFrameNavigation({ isMainFrame: false, frameOrigin: 'https://docs.example', url: 'https://example.com/', isAppOrigin }), false);
 });
+
+test('loads extension pages from the configured backend when bundled UI has no local server', () => {
+  const input = { isMainFrame: false, frameOrigin: 'null', isAppOrigin: () => false, apiBaseUrl: 'http://127.0.0.1:3037' };
+  assert.equal(shouldBlockGuestFrameNavigation({ ...input, url: 'http://127.0.0.1:3037/api/guests/agent-memory/index.html' }), false);
+  for (const url of [
+    'http://127.0.0.1:3037/api/session',
+    'http://127.0.0.1:3037/',
+    'http://127.0.0.1:3038/api/guests/agent-memory/index.html',
+    'https://example.com/api/guests/agent-memory/index.html',
+    'http://user:secret@127.0.0.1:3037/api/guests/agent-memory/index.html',
+  ]) assert.equal(shouldBlockGuestFrameNavigation({ ...input, url }), true, url);
+});
+
+test('uses the window backend and fails closed for missing or non-HTTP backend URLs', () => {
+  const input = { isMainFrame: false, frameOrigin: 'null', isAppOrigin: () => false, url: 'https://backend.example/api/guests/agent-memory/index.html' };
+  assert.equal(shouldBlockGuestFrameNavigation({ ...input, apiBaseUrl: 'https://backend.example/' }), false);
+  for (const apiBaseUrl of [undefined, '', 'invalid', 'file:///app', 'openchamber-ui://app', 'https://other.example']) {
+    assert.equal(shouldBlockGuestFrameNavigation({ ...input, apiBaseUrl }), true, String(apiBaseUrl));
+  }
+});
