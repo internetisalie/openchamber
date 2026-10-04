@@ -2260,6 +2260,7 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {}, 
       frameOrigin,
       url: details.url,
       isAppOrigin: isAllowedNavigationUrl,
+      apiBaseUrl: getWindowRuntimeConfig(browserWindow).apiBaseUrl,
     })) return;
     details.preventDefault();
     let host = '';
