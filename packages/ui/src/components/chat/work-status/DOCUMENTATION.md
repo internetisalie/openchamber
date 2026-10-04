@@ -386,7 +386,9 @@ Exited and killed PTYs are hidden by default. `showExitedAgentPtys` in the
 persisted UI store remembers the visibility choice across sessions and shares
 it with the dedicated view. Running and stopping PTYs remain visible. The
 collapsed section header shows the filtered count; the expanded header shows
-only the Show exited / Hide exited action. When every PTY has exited, the
+only the exited-visibility icon button: crossed-out eye when hidden, open eye
+when shown. Its tooltip and accessible label say Show exited / Hide exited.
+When every PTY has exited, the
 section keeps its empty state and toggle so those outputs can still be opened.
 
 ## Collapsed Usage headline
