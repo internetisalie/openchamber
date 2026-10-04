@@ -29,7 +29,7 @@ const settle = async () => {
 };
 
 const button = (label: string) => {
-  const match = Array.from(container.querySelectorAll('button')).find((item) => item.textContent?.includes(label));
+  const match = Array.from(container.querySelectorAll('button')).find((item) => item.getAttribute('aria-label') === label || item.textContent?.includes(label));
   if (!match) throw new Error(`Button missing: ${label}`);
   return match;
 };
@@ -81,13 +81,18 @@ test('collapsed count and expanded filter are mutually exclusive and never show 
   await act(async () => { await new Promise((resolve) => setTimeout(resolve, 15)); });
   expect(button('Agent PTYs').textContent).toBe('Agent PTYs2');
   expect(container.textContent).not.toContain('Show exited');
+  expect(container.querySelector('button[aria-label="Show exited"]')).toBeNull();
   await act(async () => button('Agent PTYs').click());
   await settle();
   expect(button('Agent PTYs').textContent).toBe('Agent PTYs');
+  expect(button('Show exited').getAttribute('aria-pressed')).toBe('false');
+  expect(button('Show exited').querySelector('use')?.getAttribute('href')).toBe('#oc-eye-off');
   expect(container.textContent).toContain('stopping-shell');
   expect(container.textContent).not.toContain('finished-shell');
   expect(container.textContent).not.toContain('unrelated-shell');
   await act(async () => button('Show exited').click());
+  expect(button('Hide exited').getAttribute('aria-pressed')).toBe('true');
+  expect(button('Hide exited').querySelector('use')?.getAttribute('href')).toBe('#oc-eye');
   expect(container.textContent).toContain('finished-shell');
   expect(container.textContent).toContain('killed-shell');
   expect(uiStore.getState().showExitedAgentPtys).toBe(true);
@@ -96,6 +101,7 @@ test('collapsed count and expanded filter are mutually exclusive and never show 
   await act(async () => button('Agent PTYs').click());
   expect(button('Agent PTYs').textContent).toBe('Agent PTYs2');
   expect(container.textContent).not.toContain('Show exited');
+  expect(container.querySelector('button[aria-label="Show exited"]')).toBeNull();
   expect(parents).toEqual(['session-one']);
 });
 
