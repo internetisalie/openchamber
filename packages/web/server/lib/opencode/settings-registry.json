@@ -669,6 +669,10 @@
       "scope": "device",
       "local": true
     },
+    "showExitedAgentPtys": {
+      "scope": "device",
+      "local": true
+    },
     "messageQueueExpanded": {
       "scope": "device",
       "local": true
