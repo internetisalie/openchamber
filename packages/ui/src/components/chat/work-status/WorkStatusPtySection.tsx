@@ -1,14 +1,15 @@
 import React from 'react';
 
 import { useI18n } from '@/lib/i18n';
-import { observeOpenCodePtySessions, type OpenCodePtySessionState } from '@/lib/opencode/pty-observer';
+import { useOpenCodePtySessions } from '@/hooks/useOpenCodePtySessions';
+import { useUIStore } from '@/stores/useUIStore';
 import type { OpenCodePtySession } from '@/lib/opencode/pty-bridge';
 import { WorkStatusCollapsibleSection, WorkStatusRow, WorkStatusValue } from './WorkStatusPrimitives';
 import { useReportWorkStatusPresence } from './presenceContext';
 import { OpenCodePtyOutputDialog } from './OpenCodePtyOutputDialog';
+import { AgentPtyExitedToggle } from './AgentPtyExitedToggle';
 
 const SECTION_ID = 'ptys';
-const EMPTY_STATE: OpenCodePtySessionState = { availability: 'pending', sessions: [], stale: false };
 
 type Props = {
   sessionId: string | null;
@@ -23,16 +24,12 @@ const statusKey = (status: OpenCodePtySession['status']) => {
 
 export const WorkStatusPtySection: React.FC<Props> = ({ sessionId, active }) => {
   const { t } = useI18n();
-  const [state, setState] = React.useState<OpenCodePtySessionState>(EMPTY_STATE);
+  const { state, sessions } = useOpenCodePtySessions(sessionId, active);
+  const expanded = useUIStore((state) => state.workStatusExpandedSections[SECTION_ID] ?? false);
   const [selectedId, setSelectedId] = React.useState<string | null>(null);
 
   React.useEffect(() => {
     setSelectedId(null);
-    if (!active || !sessionId) {
-      setState(EMPTY_STATE);
-      return;
-    }
-    return observeOpenCodePtySessions(sessionId, setState);
   }, [active, sessionId]);
 
   const selected = state.sessions.find((session) => session.id === selectedId) ?? null;
@@ -51,12 +48,12 @@ export const WorkStatusPtySection: React.FC<Props> = ({ sessionId, active }) => 
     body = <WorkStatusRow label={t('chat.workStatus.pty.authenticationError')} value={<WorkStatusValue tone="error">!</WorkStatusValue>} />;
   } else if (state.availability === 'unknown') {
     body = <WorkStatusRow label={t('chat.workStatus.pty.availabilityUnknown')} value={<WorkStatusValue tone="warning">!</WorkStatusValue>} />;
-  } else if (state.sessions.length === 0) {
-    body = <WorkStatusRow label={t('chat.workStatus.pty.none')} muted />;
+  } else if (sessions.length === 0) {
+    body = <WorkStatusRow label={t(state.sessions.length > 0 ? 'chat.workStatus.pty.noneActive' : 'chat.workStatus.pty.none')} muted />;
   } else {
     body = (
       <>
-        {state.sessions.map((session) => (
+        {sessions.map((session) => (
           <WorkStatusRow
             key={session.id}
             icon="terminal"
@@ -70,9 +67,6 @@ export const WorkStatusPtySection: React.FC<Props> = ({ sessionId, active }) => 
             ariaLabel={t('chat.workStatus.pty.openOutput', { name: session.title })}
           />
         ))}
-        {state.stale ? (
-          <WorkStatusRow label={t('chat.workStatus.pty.refreshFailed')} value={<WorkStatusValue tone="warning">!</WorkStatusValue>} />
-        ) : null}
       </>
     );
   }
@@ -83,9 +77,13 @@ export const WorkStatusPtySection: React.FC<Props> = ({ sessionId, active }) => 
         id={SECTION_ID}
         title={t('chat.workStatus.section.ptys')}
         icon="terminal"
-        summary={state.availability === 'available' ? state.sessions.length : undefined}
+        summary={!expanded && state.availability === 'available' ? sessions.length : undefined}
+        action={expanded && state.availability === 'available' ? <AgentPtyExitedToggle /> : undefined}
       >
         {body}
+        {state.stale ? (
+          <WorkStatusRow label={t('chat.workStatus.pty.refreshFailed')} value={<WorkStatusValue tone="warning">!</WorkStatusValue>} />
+        ) : null}
       </WorkStatusCollapsibleSection>
       <OpenCodePtyOutputDialog session={selected} onOpenChange={(open) => { if (!open) setSelectedId(null); }} />
     </>

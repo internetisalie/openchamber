@@ -13,6 +13,7 @@ export type BuiltInContextSurfaceId =
   | 'diff'
   | 'walkthrough'
   | 'terminal'
+  | 'agent-pty'
   | 'plan'
   | 'notes'
   | 'context'
@@ -121,6 +122,15 @@ export const CONTEXT_SURFACES: readonly ContextSurfaceDescriptor[] = [
     availability: 'always',
   },
   {
+    id: 'agent-pty',
+    descriptionKey: 'contextRail.surface.agentPty.description',
+    defaultWidthFraction: 3 / 5,
+    mode: 'agent-pty',
+    icon: 'terminal',
+    labelKey: 'chat.workStatus.section.ptys',
+    availability: 'always',
+  },
+  {
     id: 'notes',
     descriptionKey: 'contextRail.surface.notes.description',
     // As wide as the files surface: this panel now carries a sidebar and a
@@ -202,7 +212,11 @@ export const sortContextSurfaces = (
 
   for (const surface of all) {
     if (!seen.has(surface.id)) {
-      ordered.push(surface);
+      // Existing saved orders predate this restored view. Place it by
+      // Terminals once; an explicit user order still takes precedence.
+      const terminalIndex = surface.id === 'agent-pty' ? ordered.findIndex((entry) => entry.id === 'terminal') : -1;
+      if (terminalIndex >= 0) ordered.splice(terminalIndex + 1, 0, surface);
+      else ordered.push(surface);
     }
   }
 
@@ -243,6 +257,9 @@ export const getVisibleContextRailSurfaces = (options: VisibleRailSurfacesOption
       return false;
     }
     if (isPluginContextPanelMode(surface.mode) && options.isVSCode) {
+      return false;
+    }
+    if (surface.id === 'agent-pty' && options.isVSCode) {
       return false;
     }
     if (surface.id === 'plan' && !options.planModeEnabled) {

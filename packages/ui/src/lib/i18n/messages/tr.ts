@@ -13,6 +13,13 @@ import { mcpGridI18n } from './mcp-grid.i18n';
 import { pluginsGridI18n } from './plugins-grid.i18n';
 
 export const dict = {
+  "chat.workStatus.pty.showExited": "Sonlananları göster",
+  "chat.workStatus.pty.hideExited": "Sonlananları gizle",
+  "chat.workStatus.pty.noneActive": "Bu oturumda etkin PTY yok",
+  "contextRail.surface.agentPty.description": "Ajanın PTY çıktısını okuyun.",
+  "agentPtyView.selectSession": "Ajan PTY’lerini görmek için bir oturum seçin.",
+  "agentPtyView.bridgeUnavailable": "Bu sunucuda ajan PTY’leri kullanılamıyor. Görüntülemek için opencode-pty-bridge eklentisini yükleyin.",
+
   "opencodeCompatibility.bundled": "OpenCode, OpenChamber ile birlikte gelir. OpenCode v2 için OpenChamber’ı güncelleyin.",
   "opencodeCompatibility.title": "OpenCode v2 gerekli",
   "opencodeCompatibility.outdatedTitle": "OpenCode’u güncelleyin",

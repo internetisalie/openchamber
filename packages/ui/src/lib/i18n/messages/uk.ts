@@ -14,6 +14,13 @@ import { mcpGridI18n } from './mcp-grid.i18n';
 import { pluginsGridI18n } from './plugins-grid.i18n';
 
 export const dict: Record<I18nKey, string> = {
+  "chat.workStatus.pty.showExited": "Показати завершені",
+  "chat.workStatus.pty.hideExited": "Приховати завершені",
+  "chat.workStatus.pty.noneActive": "У цій сесії немає активних PTY",
+  "contextRail.surface.agentPty.description": "Переглянути вивід PTY агента.",
+  "agentPtyView.selectSession": "Виберіть сесію, щоб переглянути PTY її агента.",
+  "agentPtyView.bridgeUnavailable": "PTY агента недоступні на цьому сервері. Установіть плагін opencode-pty-bridge, щоб переглянути їх.",
+
   "opencodeCompatibility.bundled": "OpenCode входить до складу OpenChamber. Оновіть OpenChamber, щоб отримати OpenCode v2.",
   "opencodeCompatibility.title": "Потрібен OpenCode v2",
   "opencodeCompatibility.outdatedTitle": "Оновіть OpenCode",

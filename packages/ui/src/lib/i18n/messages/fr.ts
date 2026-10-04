@@ -13,6 +13,13 @@ import { mcpGridI18n } from './mcp-grid.i18n';
 import { pluginsGridI18n } from './plugins-grid.i18n';
 
 export const dict = {
+  "chat.workStatus.pty.showExited": "Afficher les terminés",
+  "chat.workStatus.pty.hideExited": "Masquer les terminés",
+  "chat.workStatus.pty.noneActive": "Aucun PTY actif pour cette session",
+  "contextRail.surface.agentPty.description": "Lire la sortie des PTY de l’agent.",
+  "agentPtyView.selectSession": "Sélectionnez une session pour afficher les PTY de son agent.",
+  "agentPtyView.bridgeUnavailable": "Les PTY d’agent ne sont pas disponibles sur ce serveur. Installez le plugin opencode-pty-bridge pour les afficher.",
+
   "opencodeCompatibility.bundled": "OpenCode est inclus dans OpenChamber. Mettez OpenChamber à jour pour obtenir OpenCode v2.",
   "opencodeCompatibility.title": "OpenCode v2 requis",
   "opencodeCompatibility.outdatedTitle": "Mettre à jour OpenCode",

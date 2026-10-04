@@ -14,6 +14,13 @@ import { mcpGridI18n } from './mcp-grid.i18n';
 import { pluginsGridI18n } from './plugins-grid.i18n';
 
 export const dict: Record<I18nKey, string> = {
+  "chat.workStatus.pty.showExited": "顯示已結束",
+  "chat.workStatus.pty.hideExited": "隱藏已結束",
+  "chat.workStatus.pty.noneActive": "此工作階段沒有使用中的 PTY",
+  "contextRail.surface.agentPty.description": "檢視代理程式的 PTY 輸出。",
+  "agentPtyView.selectSession": "選取工作階段以檢視其代理程式 PTY。",
+  "agentPtyView.bridgeUnavailable": "此伺服器無法提供代理程式 PTY。請安裝 opencode-pty-bridge 外掛程式以檢視。",
+
   "opencodeCompatibility.bundled": "OpenCode 隨 OpenChamber 一起提供。請更新 OpenChamber 以取得 OpenCode v2。",
   "opencodeCompatibility.title": "需要 OpenCode v2",
   "opencodeCompatibility.outdatedTitle": "請更新 OpenCode",

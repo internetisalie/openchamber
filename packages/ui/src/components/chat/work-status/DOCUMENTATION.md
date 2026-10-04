@@ -368,16 +368,26 @@ Only a capability `404` means the bridge is absent; authentication, network,
 server, and malformed-response failures stay visible and cannot clear the last
 successful list.
 
-Session polling runs only while the Work Status panel is visible. Output polling
-runs only while a PTY's read-only dialog is open. Both loops are single-flight,
+Session polling runs only while the Work Status panel or the dedicated Agent
+PTYs context view is visible. Opening the context panel hides Work Status, so
+these readers do not run together. Output polling runs only while a PTY's
+read-only dialog or selected output view is open. Both loops are single-flight,
 pause while the page is hidden or offline, reject stale responses after a
 runtime switch, and preserve successful state during transient failures. A
 runtime switch clears all PTY state before the new runtime is queried.
 
-The dialog reuses `TerminalViewport` for ANSI rendering, selection, links, and
+The dialog and context view share `OpenCodePtyOutput`, which reuses
+`TerminalViewport` for ANSI rendering, selection, links, and
 scrolling. Its read-only mode suppresses terminal input and exposes no spawn,
 write, resize, kill, or cleanup action. OpenChamber never logs PTY output,
 commands, arguments, or working directories.
+
+Exited and killed PTYs are hidden by default. `showExitedAgentPtys` in the
+persisted UI store remembers the visibility choice across sessions and shares
+it with the dedicated view. Running and stopping PTYs remain visible. The
+collapsed section header shows the filtered count; the expanded header shows
+only the Show exited / Hide exited action. When every PTY has exited, the
+section keeps its empty state and toggle so those outputs can still be opened.
 
 ## Collapsed Usage headline
 

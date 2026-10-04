@@ -14,6 +14,13 @@ import { mcpGridI18n } from './mcp-grid.i18n';
 import { pluginsGridI18n } from './plugins-grid.i18n';
 
 export const dict: Record<I18nKey, string> = {
+  "chat.workStatus.pty.showExited": "終了済みを表示",
+  "chat.workStatus.pty.hideExited": "終了済みを非表示",
+  "chat.workStatus.pty.noneActive": "このセッションには実行中のPTYがありません",
+  "contextRail.surface.agentPty.description": "エージェントのPTY出力を表示します。",
+  "agentPtyView.selectSession": "エージェントのPTYを表示するセッションを選択してください。",
+  "agentPtyView.bridgeUnavailable": "このサーバーではエージェントのPTYを利用できません。表示するにはopencode-pty-bridgeプラグインをインストールしてください。",
+
   "opencodeCompatibility.bundled": "OpenCode は OpenChamber に同梱されています。OpenCode v2 を利用するには OpenChamber を更新してください。",
   "opencodeCompatibility.title": "OpenCode v2 が必要です",
   "opencodeCompatibility.outdatedTitle": "OpenCode を更新してください",
