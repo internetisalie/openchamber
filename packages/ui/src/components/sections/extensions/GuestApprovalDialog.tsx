@@ -25,6 +25,7 @@ const CAPABILITY_ROWS = {
   service: { icon: 'terminal', titleKey: 'settings.extensions.capability.service', detailKey: 'settings.extensions.capability.service.detail' },
   network: { icon: 'plug', titleKey: 'settings.extensions.capability.network', detailKey: 'settings.extensions.capability.network.detail' },
   opencode: { icon: 'code-box', titleKey: 'settings.extensions.capability.opencode', detailKey: 'settings.extensions.capability.opencode.detail' },
+  origins: { icon: 'global', titleKey: 'settings.extensions.capability.origins', detailKey: 'settings.extensions.capability.origins.detail' },
 } satisfies Record<GuestCapability, { icon: IconName; titleKey: I18nKey; detailKey: I18nKey }>;
 
 type GuestApprovalDialogProps = {
@@ -44,6 +45,7 @@ export const GuestApprovalDialog: React.FC<GuestApprovalDialogProps> = ({ guest,
   const { t } = useI18n();
   const requested = guest?.capabilities.requested ?? [];
   const filesystemPatterns = guest?.filesystem ?? [];
+  const origins = guest?.origins ?? [];
   const serviceExec = guest?.service?.permissions?.exec ?? [];
   const serviceSockets = guest?.service?.permissions?.sockets ?? [];
   const providesBrowser = serviceProvides(guest?.service, 'browser');
@@ -82,6 +84,13 @@ export const GuestApprovalDialog: React.FC<GuestApprovalDialogProps> = ({ guest,
                     <ul className="mt-1 space-y-0.5">
                       {filesystemPatterns.map((pattern) => (
                         <li key={pattern} className="typography-meta break-all font-mono text-foreground">{pattern}</li>
+                      ))}
+                    </ul>
+                  ) : null}
+                  {capability === 'origins' && origins.length > 0 ? (
+                    <ul className="mt-1 space-y-0.5">
+                      {origins.map((origin) => (
+                        <li key={origin} className="typography-meta break-all font-mono text-foreground">{origin}</li>
                       ))}
                     </ul>
                   ) : null}

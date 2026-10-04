@@ -11,6 +11,8 @@ import { isMobileSurfaceRuntime } from '@/lib/runtimeSurface';
 import { GitHubIntegration } from './GitHubIntegration';
 import { LinearSettings } from './LinearSettings';
 import { GiteaIntegration } from './gitea-integration';
+import { ThirdPartyIntegrationsSection } from './ThirdPartyIntegrationsSection';
+import { CatalogExtensionsSection } from './CatalogExtensionsSection';
 
 export const IntegrationsPage: React.FC = () => {
   const { t } = useI18n();
@@ -46,7 +48,9 @@ export const IntegrationsPage: React.FC = () => {
           {builtInGuests.map((guest) => <GuestIntegrationCard key={`${runtimeKey}:${guest.id}`} guest={guest} />)}
         </SettingsSection>
       ) : null}
-      <GuestIntegrationsSection divider={hasBuiltIn} />
+      <ThirdPartyIntegrationsSection divider={hasBuiltIn} />
+      <CatalogExtensionsSection />
+      <GuestIntegrationsSection />
     </SettingsPageLayout>
   );
 };

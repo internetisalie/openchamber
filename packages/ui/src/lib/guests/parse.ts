@@ -5,6 +5,9 @@ import {
   GUEST_COMMAND_NAME,
   GUEST_OPENCODE_PLUGINS_MAX,
   GUEST_REQUEST_METHODS,
+  GUEST_FILE_EDITORS_MAX,
+  GUEST_FILE_EDITOR_PATTERNS_MAX,
+  GUEST_FILE_EDITOR_TITLE_MAX,
   GUEST_SERVICE_PROVIDES,
   GUEST_STATUS_SECTION_HEIGHT_MAX,
   GUEST_STATUS_SECTION_HEIGHT_MIN,
@@ -13,6 +16,7 @@ import {
   GUEST_TOOLS_MAX,
   GUEST_TOOL_MATCH,
   GUEST_TOOL_OUTPUTS,
+  isFileEditorPattern,
 } from '@openchamber/sdk';
 import { z } from 'zod';
 
@@ -90,6 +94,13 @@ const openCodeSchema = z.object({
   }).strict()).min(1).max(GUEST_OPENCODE_PLUGINS_MAX)
     .refine((plugins) => new Set(plugins.map((plugin) => plugin.id)).size === plugins.length),
 }).strict();
+const guestFileEditorSchema = z.object({
+  id: z.string().regex(PANEL_ID),
+  title: z.string().trim().min(1).max(GUEST_FILE_EDITOR_TITLE_MAX),
+  match: z.array(z.string().refine(isFileEditorPattern)).min(1).max(GUEST_FILE_EDITOR_PATTERNS_MAX),
+  entry: z.string().trim().min(1),
+  content: z.enum(['text', 'binary']).optional(),
+});
 
 export const guestUpdateSchema = z.object({
   version: z.string().trim().min(1).max(64),
@@ -114,15 +125,18 @@ const installedGuestSchema = z.object({
   statusHeight: z.number().int().min(GUEST_STATUS_SECTION_HEIGHT_MIN).max(GUEST_STATUS_SECTION_HEIGHT_MAX).optional(),
   integration: publicIntegrationSchema.optional(),
   filesystem: z.array(z.string().trim().min(1)).optional(),
+  origins: z.array(z.string().trim().min(1)).optional(),
   service: publicServiceSchema.optional(),
   actions: z.array(guestActionSchema).max(GUEST_ACTIONS_MAX).optional(),
   commands: z.array(guestCommandSchema).max(GUEST_COMMANDS_MAX).optional(),
   tools: z.array(guestToolSchema).max(GUEST_TOOLS_MAX).optional(),
   openCode: openCodeSchema.optional(),
+  fileEditors: z.array(guestFileEditorSchema).max(GUEST_FILE_EDITORS_MAX).optional(),
   capabilities: z.object({
     requested: z.array(z.enum(GUEST_CAPABILITIES)),
     granted: z.array(z.enum(GUEST_CAPABILITIES)),
   }),
+  enterpriseBlocked: z.array(z.enum(GUEST_CAPABILITIES)).optional(),
   source: z.enum(['bundled', 'path', 'zip', 'git']).optional(),
   path: z.string().nullable().optional(),
   enabled: z.boolean().optional(),

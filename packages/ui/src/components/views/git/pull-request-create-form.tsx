@@ -72,7 +72,7 @@ export function PullRequestCreateForm({
         <div className="typography-micro text-muted-foreground">{t('gitView.pr.field.baseBranch')}</div>
         {baseBranches.length > 0 ? (
           <Select value={base} onValueChange={onBaseChange}>
-            <SelectTrigger size="lg"><SelectValue placeholder={t('gitView.pr.placeholder.selectBaseBranch')} /></SelectTrigger>
+            <SelectTrigger size="lg" aria-label={t('gitView.pr.field.baseBranch')}><SelectValue placeholder={t('gitView.pr.placeholder.selectBaseBranch')} /></SelectTrigger>
             <SelectContent>
               {baseBranches.map((candidate) => <SelectItem key={candidate} value={candidate}>{candidate}</SelectItem>)}
             </SelectContent>

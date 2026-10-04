@@ -16,6 +16,7 @@ import { resolveGlobalSessionDirectory } from '@/stores/useGlobalSessionsStore';
 import { getWorktreeFirstSeenAt } from './worktreeFirstSeen';
 import { buildProjectWorktreeIndex } from '../worktreeIndex';
 import { isSessionArchived } from '@/lib/sessionArchive';
+import type { SpaceMark } from '@/lib/spaces/spaces-store';
 
 type Args = {
   homeDirectory: string | null;
@@ -26,6 +27,14 @@ type Args = {
   isVSCode: boolean;
   worktreeSortOrder: WorktreeSortOrder;
   sessionOwners?: ReadonlyMap<string, { scopeDirectory: string }>;
+  /** The isolated spaces of each project, by the project's normalized root. */
+  spacesByProject?: ReadonlyMap<string, readonly SpaceMark[]>;
+  /**
+   * Members of active multi-runs. They list under the project root, where the
+   * row model collapses them into one run row, instead of each lane's worktree
+   * forming its own group.
+   */
+  runKeyBySessionId?: ReadonlyMap<string, string>;
 };
 
 export const useSessionGrouping = (args: Args) => {
@@ -113,6 +122,13 @@ export const useSessionGrouping = (args: Args) => {
           workspaceByPath.set(directory, null);
         }
       }
+      // A space's group is keyed by the project's path inside the space, as its sessions are owned.
+      const projectSpaces = (normalizedProjectRoot && !args.isVSCode ? args.spacesByProject?.get(normalizedProjectRoot) : undefined) ?? [];
+      const spaceByDirectory = new Map<string, SpaceMark>();
+      for (const space of projectSpaces) {
+        const directory = normalizePath(space.directory);
+        if (directory) spaceByDirectory.set(directory, space);
+      }
 
       const getSessionWorktree = (session: Session): WorktreeMetadata | null => {
         const sessionDirectory = resolveGlobalSessionDirectory(session);
@@ -168,10 +184,11 @@ export const useSessionGrouping = (args: Args) => {
         // Worktrees aren't registered in VS Code, so the desktop directory-match
         // below would otherwise dump these sessions into the archived bucket.
         if (args.isVSCode) return normalizedProjectRoot ?? '__project_root__';
+        if (args.runKeyBySessionId?.has(session.id)) return normalizedProjectRoot ?? '__project_root__';
         const resolvedScope = args.sessionOwners?.get(session.id)?.scopeDirectory;
         if (resolvedScope) {
           if (resolvedScope === normalizedProjectRoot) return normalizedProjectRoot ?? '__project_root__';
-          if (workspaceByPath.has(resolvedScope)) return resolvedScope;
+          if (workspaceByPath.has(resolvedScope) || spaceByDirectory.has(resolvedScope)) return resolvedScope;
         }
         const metadataPath = normalizePath(args.worktreeMetadata.get(session.id)?.path ?? null);
         const normalizedDir = metadataPath ?? resolveGlobalSessionDirectory(session);
@@ -179,7 +196,7 @@ export const useSessionGrouping = (args: Args) => {
         // worktree directory is still owned by this configured project, not an
         // archive; only archived records use the archive bucket.
         if (!normalizedDir) return normalizedProjectRoot ?? '__project_root__';
-        if (normalizedDir !== normalizedProjectRoot && workspaceByPath.has(normalizedDir)) return normalizedDir;
+        if (normalizedDir !== normalizedProjectRoot && (workspaceByPath.has(normalizedDir) || spaceByDirectory.has(normalizedDir))) return normalizedDir;
         if (normalizedDir === normalizedProjectRoot) return normalizedProjectRoot ?? '__project_root__';
         return normalizedProjectRoot ?? '__project_root__';
       };
@@ -268,6 +285,7 @@ export const useSessionGrouping = (args: Args) => {
       // VS Code groups strictly by open workspace, without per-worktree subgroups.
       if (!args.isVSCode) {
         for (const [directory, worktree] of sortedWorkspaces) {
+          if (spaceByDirectory.has(directory)) continue;
           const currentBranch = gitBranchesRef.current.get(directory)?.trim() || null;
           const metadataBranch = worktree?.branch?.trim() || null;
           const label = worktree?.name || formatDirectoryName(directory, args.homeDirectory) || directory;
@@ -285,6 +303,24 @@ export const useSessionGrouping = (args: Args) => {
             sessions: groupedNodes.get(directory) ?? [],
           });
         }
+      }
+
+      // One group per space, after the worktrees, in the host's order; a space with no session
+      // yet is still a group, so the user sees it is there.
+      for (const [directory, space] of spaceByDirectory) {
+        groups.push({
+          id: `space:${space.id}`,
+          label: space.name || t('sessions.sidebar.grouping.spaceUnnamed'),
+          branch: null,
+          description: null,
+          isMain: false,
+          isArchivedBucket: false,
+          worktree: null,
+          space,
+          directory,
+          folderScopeKey: directory,
+          sessions: groupedNodes.get(directory) ?? [],
+        });
       }
 
       const archivedSessions = groupedNodes.get(archivedKey) ?? [];
@@ -305,7 +341,7 @@ export const useSessionGrouping = (args: Args) => {
 
       return groups;
     },
-    [args.homeDirectory, args.worktreeMetadata, args.sessionOrderRanks, args.isVSCode, args.worktreeSortOrder, args.sessionOwners, t],
+    [args.homeDirectory, args.worktreeMetadata, args.sessionOrderRanks, args.isVSCode, args.worktreeSortOrder, args.sessionOwners, args.spacesByProject, args.runKeyBySessionId, t],
   );
 
   return {

@@ -1,5 +1,6 @@
 import type { Session } from "@/lib/opencode/model";
 import type { SessionListOptions, SessionPage } from "@/lib/opencode/client";
+import type { SpaceMark } from "@/lib/spaces/spaces-store";
 import { runSessionListNetworkTask } from '@/lib/background-network';
 import { retry } from "@/sync/retry";
 import { stripSessionListDetails } from "@/sync/sanitize";
@@ -55,6 +56,8 @@ export async function listGlobalSessionPages(
         directory?: string;
         pageSize: number;
         onPage?: (sessions: GlobalSessionRecord[]) => void;
+        /** The first page's isolated-space marks: `null` when the page carried none. */
+        onSpaces?: (spaces: SpaceMark[] | null) => void;
     },
 ): Promise<GlobalSessionRecord[]> {
     const all: GlobalSessionRecord[] = [];
@@ -83,6 +86,7 @@ export async function listGlobalSessionPages(
             throw error;
         });
 
+        if (cursor === undefined) options.onSpaces?.(page.spaces ?? null);
         const payload = page.sessions.map((session) => stripSessionListDetails(session) as GlobalSessionRecord);
         finishPerformanceEvent("complete", {
             retryCount: Math.max(0, attempts - 1),

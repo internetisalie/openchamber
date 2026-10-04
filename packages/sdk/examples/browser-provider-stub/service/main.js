@@ -59,6 +59,8 @@ function installGuestScrollbarActivity(doc) {
   }, { capture: true, passive: true });
 }
 var GUEST_SCROLLBAR_SCRIPT = `(${installGuestScrollbarActivity.toString()})(document);`;
+// packages/sdk/src/file-editor.ts
+var patternExpressions = new Map;
 // packages/sdk/src/contract.ts
 var GUEST_FILE_STAT_KINDS = ["file", "directory", "other", "missing"];
 var GUEST_OPENCODE_RESPONSE_MAX = 4 * 1024 * 1024;
@@ -97,7 +99,10 @@ var HOST_PUSH_TYPES = new Set([
   "session-lifecycle",
   "item",
   "resolve",
-  "action"
+  "action",
+  "file-open",
+  "file-snapshot",
+  "file-saved"
 ]);
 // packages/sdk/src/service-providers.ts
 var BROWSER_PROVIDER_PATH = "/browser-control";

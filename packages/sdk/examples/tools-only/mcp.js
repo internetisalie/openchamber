@@ -1,7 +1,7 @@
 // packages/sdk/examples/tools-only/mcp.ts
 import { createInterface } from "node:readline";
 
-// ../openchamber-v2-session-grouping/node_modules/.bun/zod@4.3.6/node_modules/zod/v4/core/core.js
+// node_modules/.bun/zod@4.3.6/node_modules/zod/v4/core/core.js
 var NEVER = Object.freeze({
   status: "aborted"
 });
@@ -77,7 +77,7 @@ function config(newConfig) {
     Object.assign(globalConfig, newConfig);
   return globalConfig;
 }
-// ../openchamber-v2-session-grouping/node_modules/.bun/zod@4.3.6/node_modules/zod/v4/core/util.js
+// node_modules/.bun/zod@4.3.6/node_modules/zod/v4/core/util.js
 function getEnumValues(entries) {
   const numericValues = Object.values(entries).filter((v) => typeof v === "number");
   const values = Object.entries(entries).filter(([k, _]) => numericValues.indexOf(+k) === -1).map(([_, v]) => v);
@@ -469,7 +469,7 @@ function issue(...args) {
   return { ...iss };
 }
 
-// ../openchamber-v2-session-grouping/node_modules/.bun/zod@4.3.6/node_modules/zod/v4/core/errors.js
+// node_modules/.bun/zod@4.3.6/node_modules/zod/v4/core/errors.js
 var initializer = (inst, def) => {
   inst.name = "$ZodError";
   Object.defineProperty(inst, "_zod", {
@@ -535,7 +535,7 @@ function formatError(error, mapper = (issue) => issue.message) {
   return fieldErrors;
 }
 
-// ../openchamber-v2-session-grouping/node_modules/.bun/zod@4.3.6/node_modules/zod/v4/core/parse.js
+// node_modules/.bun/zod@4.3.6/node_modules/zod/v4/core/parse.js
 var _parse = (_Err) => (schema, value, _ctx, _params) => {
   const ctx = _ctx ? Object.assign(_ctx, { async: false }) : { async: false };
   const result = schema._zod.run({ value, issues: [] }, ctx);
@@ -612,7 +612,7 @@ var _safeEncodeAsync = (_Err) => async (schema, value, _ctx) => {
 var _safeDecodeAsync = (_Err) => async (schema, value, _ctx) => {
   return _safeParseAsync(_Err)(schema, value, _ctx);
 };
-// ../openchamber-v2-session-grouping/node_modules/.bun/zod@4.3.6/node_modules/zod/v4/core/regexes.js
+// node_modules/.bun/zod@4.3.6/node_modules/zod/v4/core/regexes.js
 var cuid = /^[cC][^\s-]{8,}$/;
 var cuid2 = /^[0-9a-z]+$/;
 var ulid = /^[0-9A-HJKMNP-TV-Za-hjkmnp-tv-z]{26}$/;
@@ -667,7 +667,7 @@ var number = /^-?\d+(?:\.\d+)?$/;
 var lowercase = /^[^A-Z]*$/;
 var uppercase = /^[^a-z]*$/;
 
-// ../openchamber-v2-session-grouping/node_modules/.bun/zod@4.3.6/node_modules/zod/v4/core/checks.js
+// node_modules/.bun/zod@4.3.6/node_modules/zod/v4/core/checks.js
 var $ZodCheck = /* @__PURE__ */ $constructor("$ZodCheck", (inst, def) => {
   var _a;
   inst._zod ?? (inst._zod = {});
@@ -1056,7 +1056,7 @@ var $ZodCheckOverwrite = /* @__PURE__ */ $constructor("$ZodCheckOverwrite", (ins
   };
 });
 
-// ../openchamber-v2-session-grouping/node_modules/.bun/zod@4.3.6/node_modules/zod/v4/core/doc.js
+// node_modules/.bun/zod@4.3.6/node_modules/zod/v4/core/doc.js
 class Doc {
   constructor(args = []) {
     this.content = [];
@@ -1094,14 +1094,14 @@ class Doc {
   }
 }
 
-// ../openchamber-v2-session-grouping/node_modules/.bun/zod@4.3.6/node_modules/zod/v4/core/versions.js
+// node_modules/.bun/zod@4.3.6/node_modules/zod/v4/core/versions.js
 var version = {
   major: 4,
   minor: 3,
   patch: 6
 };
 
-// ../openchamber-v2-session-grouping/node_modules/.bun/zod@4.3.6/node_modules/zod/v4/core/schemas.js
+// node_modules/.bun/zod@4.3.6/node_modules/zod/v4/core/schemas.js
 var $ZodType = /* @__PURE__ */ $constructor("$ZodType", (inst, def) => {
   var _a;
   inst ?? (inst = {});
@@ -2275,7 +2275,7 @@ function handleRefineResult(result, payload, input, inst) {
     payload.issues.push(issue(_iss));
   }
 }
-// ../openchamber-v2-session-grouping/node_modules/.bun/zod@4.3.6/node_modules/zod/v4/core/registries.js
+// node_modules/.bun/zod@4.3.6/node_modules/zod/v4/core/registries.js
 var _a;
 var $output = Symbol("ZodOutput");
 var $input = Symbol("ZodInput");
@@ -2325,7 +2325,7 @@ function registry() {
 }
 (_a = globalThis).__zod_globalRegistry ?? (_a.__zod_globalRegistry = registry());
 var globalRegistry = globalThis.__zod_globalRegistry;
-// ../openchamber-v2-session-grouping/node_modules/.bun/zod@4.3.6/node_modules/zod/v4/core/api.js
+// node_modules/.bun/zod@4.3.6/node_modules/zod/v4/core/api.js
 function _string(Class, params) {
   return new Class({
     type: "string",
@@ -2768,7 +2768,7 @@ function _check(fn, params) {
   ch._zod.check = fn;
   return ch;
 }
-// ../openchamber-v2-session-grouping/node_modules/.bun/zod@4.3.6/node_modules/zod/v4/core/to-json-schema.js
+// node_modules/.bun/zod@4.3.6/node_modules/zod/v4/core/to-json-schema.js
 function initializeContext(params) {
   let target = params?.target ?? "draft-2020-12";
   if (target === "draft-4")
@@ -3113,7 +3113,7 @@ var createStandardJSONSchemaMethod = (schema, io, processors = {}) => (params) =
   extractDefs(ctx, schema);
   return finalize(ctx, schema);
 };
-// ../openchamber-v2-session-grouping/node_modules/.bun/zod@4.3.6/node_modules/zod/v4/core/json-schema-processors.js
+// node_modules/.bun/zod@4.3.6/node_modules/zod/v4/core/json-schema-processors.js
 var formatMap = {
   guid: "uuid",
   url: "uri",
@@ -3400,7 +3400,7 @@ var optionalProcessor = (schema, ctx, _json, params) => {
   const seen = ctx.seen.get(schema);
   seen.ref = def.innerType;
 };
-// ../openchamber-v2-session-grouping/node_modules/.bun/zod@4.3.6/node_modules/zod/v4/classic/iso.js
+// node_modules/.bun/zod@4.3.6/node_modules/zod/v4/classic/iso.js
 var ZodISODateTime = /* @__PURE__ */ $constructor("ZodISODateTime", (inst, def) => {
   $ZodISODateTime.init(inst, def);
   ZodStringFormat.init(inst, def);
@@ -3430,7 +3430,7 @@ function duration2(params) {
   return _isoDuration(ZodISODuration, params);
 }
 
-// ../openchamber-v2-session-grouping/node_modules/.bun/zod@4.3.6/node_modules/zod/v4/classic/errors.js
+// node_modules/.bun/zod@4.3.6/node_modules/zod/v4/classic/errors.js
 var initializer2 = (inst, issues) => {
   $ZodError.init(inst, issues);
   inst.name = "ZodError";
@@ -3465,7 +3465,7 @@ var ZodRealError = $constructor("ZodError", initializer2, {
   Parent: Error
 });
 
-// ../openchamber-v2-session-grouping/node_modules/.bun/zod@4.3.6/node_modules/zod/v4/classic/parse.js
+// node_modules/.bun/zod@4.3.6/node_modules/zod/v4/classic/parse.js
 var parse3 = /* @__PURE__ */ _parse(ZodRealError);
 var parseAsync2 = /* @__PURE__ */ _parseAsync(ZodRealError);
 var safeParse2 = /* @__PURE__ */ _safeParse(ZodRealError);
@@ -3479,7 +3479,7 @@ var safeDecode = /* @__PURE__ */ _safeDecode(ZodRealError);
 var safeEncodeAsync = /* @__PURE__ */ _safeEncodeAsync(ZodRealError);
 var safeDecodeAsync = /* @__PURE__ */ _safeDecodeAsync(ZodRealError);
 
-// ../openchamber-v2-session-grouping/node_modules/.bun/zod@4.3.6/node_modules/zod/v4/classic/schemas.js
+// node_modules/.bun/zod@4.3.6/node_modules/zod/v4/classic/schemas.js
 var ZodType = /* @__PURE__ */ $constructor("ZodType", (inst, def) => {
   $ZodType.init(inst, def);
   Object.assign(inst["~standard"], {
