@@ -20,6 +20,7 @@ const GitView = lazyWithChunkRecovery(() => import('@/components/views/GitView')
 // users never render this panel; keep it out of the main bundle.
 const LinearIssuesView = lazyWithChunkRecovery(() => import('@/components/views/LinearIssuesView').then((m) => ({ default: m.LinearIssuesView })));
 const PlanView = lazyWithChunkRecovery(() => import('@/components/views/PlanView').then((m) => ({ default: m.PlanView })));
+const AgentPtyView = lazyWithChunkRecovery(() => import('@/components/views/AgentPtyView').then((m) => ({ default: m.AgentPtyView })));
 import { ProjectContextPanel } from './RightSidebarTabs';
 import { SidebarFilesTree } from './SidebarFilesTree';
 import { useThemeSystem } from '@/contexts/useThemeSystem';
@@ -182,6 +183,7 @@ const getModeLabel = (
   if (mode === 'linear') return t('contextPanel.mode.linear');
   if (mode === 'notes') return t('contextRail.surface.notes');
   if (mode === 'terminal') return t('layout.mainTab.terminal');
+  if (mode === 'agent-pty') return t('chat.workStatus.section.ptys');
   if (isPluginContextPanelMode(mode)) {
     const guest = useGuestsStore.getState().guests.find((entry) => entry.id === pluginIdFromMode(mode));
     return guest?.name ?? t('contextRail.surface.plugin');
@@ -294,6 +296,9 @@ const getTabIcon = (
 
   if (tab.mode === 'terminal') {
     return <Icon name="terminal-box" className="h-3.5 w-3.5" />;
+  }
+  if (tab.mode === 'agent-pty') {
+    return <Icon name="terminal" className="h-3.5 w-3.5" />;
   }
 
   if (tab.mode === 'plan') {
@@ -1076,6 +1081,8 @@ export const ContextPanel: React.FC = () => {
                 ? <React.Suspense fallback={null}><LinearIssuesView /></React.Suspense>
             : activeTab?.mode === 'notes'
                 ? <ProjectContextPanel />
+            : activeTab?.mode === 'agent-pty'
+                ? <React.Suspense fallback={null}><AgentPtyView visible={isOpen} /></React.Suspense>
         : activeTab?.mode === 'plan'
             ? <React.Suspense fallback={null}><PlanView
                 targetPath={activeTab.targetPath}

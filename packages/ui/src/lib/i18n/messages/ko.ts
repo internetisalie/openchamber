@@ -14,6 +14,13 @@ import { mcpGridI18n } from './mcp-grid.i18n';
 import { pluginsGridI18n } from './plugins-grid.i18n';
 
 export const dict: Record<I18nKey, string> = {
+  "chat.workStatus.pty.showExited": "종료된 항목 표시",
+  "chat.workStatus.pty.hideExited": "종료된 항목 숨기기",
+  "chat.workStatus.pty.noneActive": "이 세션에 활성 PTY가 없습니다",
+  "contextRail.surface.agentPty.description": "에이전트의 PTY 출력을 확인합니다.",
+  "agentPtyView.selectSession": "에이전트 PTY를 확인할 세션을 선택하세요.",
+  "agentPtyView.bridgeUnavailable": "이 서버에서는 에이전트 PTY를 사용할 수 없습니다. 확인하려면 opencode-pty-bridge 플러그인을 설치하세요.",
+
   "opencodeCompatibility.bundled": "OpenCode는 OpenChamber에 포함되어 있습니다. OpenCode v2를 사용하려면 OpenChamber를 업데이트하세요.",
   "opencodeCompatibility.title": "OpenCode v2가 필요합니다",
   "opencodeCompatibility.outdatedTitle": "OpenCode를 업데이트하세요",

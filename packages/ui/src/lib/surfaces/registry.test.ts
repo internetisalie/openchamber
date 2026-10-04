@@ -17,6 +17,17 @@ const baseOptions = {
 } as const;
 
 describe('getVisibleContextRailSurfaces', () => {
+  test('restores Agent PTYs immediately below Terminals, including old saved orders', () => {
+    for (const railOrder of [[], CONTEXT_SURFACES.filter((surface) => surface.id !== 'agent-pty').map((surface) => surface.id)]) {
+      const ids = getVisibleContextRailSurfaces({ ...baseOptions, railOrder }).map((surface) => surface.id);
+      expect(ids.indexOf('agent-pty')).toBe(ids.indexOf('terminal') + 1);
+    }
+    const ids = getVisibleContextRailSurfaces({ ...baseOptions, railOrder: ['agent-pty', 'context', 'terminal'] }).map((surface) => surface.id);
+    expect(ids.slice(0, 3)).toEqual(['agent-pty', 'context', 'terminal']);
+    expect(getVisibleContextRailSurfaces({ ...baseOptions, isVSCode: true }).some((surface) => surface.id === 'agent-pty')).toBe(false);
+    expect(getVisibleContextRailSurfaces({ ...baseOptions, hiddenSurfaces: ['agent-pty'] }).some((surface) => surface.id === 'agent-pty')).toBe(false);
+  });
+
   test('hides the plan surface while plan mode is disabled', () => {
     const surfaces = getVisibleContextRailSurfaces({ ...baseOptions, planModeEnabled: false });
     expect(surfaces.some((surface) => surface.id === 'plan')).toBe(false);

@@ -25,7 +25,7 @@ export type { ContextPanelMode };
 export const clampContextEditorTreeWidth = (width: number): number =>
   Math.min(480, Math.max(200, Math.round(width)));
 
-const contextPanelModeSchema = z.enum(['diff', 'walkthrough', 'file', 'context', 'plan', 'chat', 'browser', 'git', 'pr', 'linear', 'notes', 'terminal']);
+const contextPanelModeSchema = z.enum(['diff', 'walkthrough', 'file', 'context', 'plan', 'chat', 'browser', 'git', 'pr', 'linear', 'notes', 'terminal', 'agent-pty']);
 const persistedPanelWidthsSchema = z.object({
   widthByMode: z.record(z.string(), z.number().finite().optional().catch(undefined)).catch({}),
   widthFractionByMode: z.record(z.string(), z.number().positive().max(1).optional().catch(undefined)).catch({}),
@@ -804,6 +804,8 @@ interface UIStore {
   notesPanelHeight: number;
   /** Expanded collapsible sections of the in-chat work-status panel, by id. */
   workStatusExpandedSections: Record<string, boolean>;
+  /** Shared exited-PTY visibility for the session card and Agent PTYs view. */
+  showExitedAgentPtys: boolean;
   /**
    * Whether the queued-messages panel above the composer shows its list. One
    * preference for every session: the user opens or closes it once and it
@@ -1084,6 +1086,7 @@ interface UIStore {
   setContextPanelWidth: (directory: string, mode: ContextPanelMode, width: number, availableWidth?: number) => void;
   setNotesPanelHeight: (height: number) => void;
   setWorkStatusSectionExpanded: (sectionId: string, expanded: boolean) => void;
+  setShowExitedAgentPtys: (show: boolean) => void;
   setMessageQueueExpanded: (expanded: boolean) => void;
   setWorkStatusScrollTop: (scrollTop: number) => void;
   setWorkStatusPanelEnabled: (enabled: boolean) => void;
@@ -1293,6 +1296,7 @@ export const useUIStore = create<UIStore>()(
         contextEditorTreeWidth: 240,
         notesPanelHeight: 112,
         workStatusExpandedSections: {},
+        showExitedAgentPtys: false,
         messageQueueExpanded: true,
         workStatusScrollTop: 0,
         workStatusPanelEnabled: true,
@@ -1936,6 +1940,10 @@ export const useUIStore = create<UIStore>()(
                 },
               }
           ));
+        },
+
+        setShowExitedAgentPtys: (show) => {
+          set((state) => (state.showExitedAgentPtys === show ? state : { showExitedAgentPtys: show }));
         },
 
         setMessageQueueExpanded: (expanded) => {
@@ -3199,6 +3207,7 @@ export const useUIStore = create<UIStore>()(
           contextEditorTreeWidth: state.contextEditorTreeWidth,
           notesPanelHeight: state.notesPanelHeight,
           workStatusExpandedSections: state.workStatusExpandedSections,
+          showExitedAgentPtys: state.showExitedAgentPtys,
           messageQueueExpanded: state.messageQueueExpanded,
           workStatusScrollTop: state.workStatusScrollTop,
           workStatusPanelEnabled: state.workStatusPanelEnabled,

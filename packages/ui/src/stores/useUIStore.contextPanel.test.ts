@@ -14,6 +14,17 @@ beforeEach(() => {
 });
 
 describe('useUIStore context panel tabs', () => {
+  test('opens and retains the restored Agent PTYs mode and its width', () => {
+    useUIStore.getState().openContextSurface('/repo', 'agent-pty');
+    expect(getContextPanelTabs('/repo').map((tab) => tab.mode)).toEqual(['agent-pty']);
+    expect(useUIStore.getState().contextPanelByDirectory['/repo'].isOpen).toBe(true);
+    useUIStore.getState().setContextPanelWidth('/repo', 'agent-pty', 700, 1200);
+    useUIStore.getState().openContextSurface('/repo', 'context');
+    expect(useUIStore.getState().contextPanelByDirectory['/repo'].widthByMode['agent-pty']).toBe(700);
+    useUIStore.getState().openContextSurface('/repo', 'agent-pty');
+    expect(getContextPanelTabs('/repo').filter((tab) => tab.mode === 'agent-pty')).toHaveLength(1);
+  });
+
   test('opens a plugin surface tab', () => {
     useUIStore.getState().openContextPanelTab('/repo', {
       mode: 'plugin:hello',

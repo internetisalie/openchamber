@@ -13,6 +13,13 @@ import { mcpGridI18n } from './mcp-grid.i18n';
 import { pluginsGridI18n } from './plugins-grid.i18n';
 
 export const dict = {
+  "chat.workStatus.pty.showExited": "Afgesloten tonen",
+  "chat.workStatus.pty.hideExited": "Afgesloten verbergen",
+  "chat.workStatus.pty.noneActive": "Geen actieve PTY’s voor deze sessie",
+  "contextRail.surface.agentPty.description": "Lees de uitvoer van de PTY’s van de agent.",
+  "agentPtyView.selectSession": "Selecteer een sessie om de PTY’s van de agent te bekijken.",
+  "agentPtyView.bridgeUnavailable": "Agent-PTY’s zijn niet beschikbaar op deze server. Installeer de plug-in opencode-pty-bridge om ze te bekijken.",
+
   "sessions.sidebar.activity.globalTitle": "globaal",
   "chat.workStatus.section.ptys": "Agent-PTYs",
   "chat.workStatus.pty.authenticationError": "Authenticatie mislukt",

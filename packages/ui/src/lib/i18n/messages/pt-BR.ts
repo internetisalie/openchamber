@@ -14,6 +14,13 @@ import { mcpGridI18n } from './mcp-grid.i18n';
 import { pluginsGridI18n } from './plugins-grid.i18n';
 
 export const dict: Record<I18nKey, string> = {
+  "chat.workStatus.pty.showExited": "Mostrar encerrados",
+  "chat.workStatus.pty.hideExited": "Ocultar encerrados",
+  "chat.workStatus.pty.noneActive": "Nenhum PTY ativo nesta sessão",
+  "contextRail.surface.agentPty.description": "Leia a saída dos PTYs do agente.",
+  "agentPtyView.selectSession": "Selecione uma sessão para ver os PTYs do agente.",
+  "agentPtyView.bridgeUnavailable": "Os PTYs do agente não estão disponíveis neste servidor. Instale o plugin opencode-pty-bridge para vê-los.",
+
   "opencodeCompatibility.bundled": "O OpenCode está incluído no OpenChamber. Atualize o OpenChamber para obter o OpenCode v2.",
   "opencodeCompatibility.title": "OpenCode v2 necessário",
   "opencodeCompatibility.outdatedTitle": "Atualize o OpenCode",
