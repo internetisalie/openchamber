@@ -3208,6 +3208,8 @@ export const dict = {
   'markdownRenderer.code.actions.enableWrapTitle': 'Regelafbreking aanzetten',
   'markdownRenderer.code.actions.disableWrapTitle': 'Regelafbreking uitzetten',
   'markdownRenderer.table.actions.downloadTitle': 'Tabel downloaden',
+  'markdownRenderer.table.actions.expandTitle': 'Tabel uitvouwen',
+  'markdownRenderer.table.dialogTitle': 'Tabel',
   'markdownRenderer.table.toast.downloadedAsFormat': 'Tabel gedownload als {format}',
   'markdownRenderer.mermaid.actions.copyTitle': 'Kopiëren',
   'markdownRenderer.mermaid.actions.copySourceTitle': 'Broncode kopiëren',

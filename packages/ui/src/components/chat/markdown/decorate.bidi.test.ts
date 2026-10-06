@@ -13,7 +13,7 @@ const { decorateMarkdown, getMarkdownCodeText } = await import('./decorate');
 const context: Parameters<typeof decorateMarkdown>[1] = {
   labels: {
     copy: 'Copy', copied: 'Copied', enableCodeWrap: 'Wrap', disableCodeWrap: 'Unwrap',
-    copyTable: 'Copy table', downloadTable: 'Download table', copyDiagram: 'Copy diagram',
+    copyTable: 'Copy table', downloadTable: 'Download table', expandTable: 'Expand table', copyDiagram: 'Copy diagram',
     downloadDiagram: 'Download diagram', zoomInDiagram: 'Zoom in', zoomOutDiagram: 'Zoom out',
     resetDiagramView: 'Reset', previewLabel: 'Preview', previewTitle: 'Preview',
   },

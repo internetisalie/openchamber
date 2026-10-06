@@ -21,6 +21,7 @@ import {
     tryParseJsonOutput,
 } from './toolRenderers';
 import type { ToolPopupContent, DiffViewMode } from './types';
+import { isTablePopup } from './popupContent';
 import { DiffViewToggle } from './DiffViewToggle';
 import { VirtualizedCodeBlock, type CodeLine } from './parts/VirtualizedCodeBlock';
 import { JsonTreeView } from '@/components/ui/JsonTreeView';
@@ -953,7 +954,7 @@ const ToolOutputDialog: React.FC<ToolOutputDialogProps> = ({ popup, onOpenChange
                 className={cn(
                     'overflow-hidden flex flex-col min-h-0 pt-3 pb-4 px-4 gap-1',
                     '[&>button]:top-1.5',
-                    isMobile ? 'w-[95vw] max-w-[95vw]' : 'max-w-5xl',
+                    isMobile ? 'w-[95vw] max-w-[95vw]' : isTablePopup(popup) ? 'w-[96vw] max-w-[min(96vw,100rem)]' : 'max-w-5xl',
                     isMobile ? '[&>button]:right-1' : '[&>button]:top-2.5 [&>button]:right-4'
                 )}
                 style={{ maxHeight: '90vh' }}
@@ -1074,6 +1075,10 @@ const ToolOutputDialog: React.FC<ToolOutputDialogProps> = ({ popup, onOpenChange
                                             </pre>
                                         )
                                     );
+                                }
+
+                                if (tool === 'markdown-table') {
+                                    return <SimpleMarkdownRenderer content={popup.content} variant="tool" />;
                                 }
 
                                 if (isSubagentTool(tool) || tool === 'reasoning') {

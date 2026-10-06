@@ -789,6 +789,7 @@ const useDecorateContext = (
   deferCodeLineNumberSync: boolean,
   onPreviewLoopback?: (url: string) => void,
   mermaidControls: MermaidControlOptions = DEFAULT_MERMAID_CONTROLS,
+  onShowPopup?: (content: ToolPopupContent) => void,
 ): DecorateContext => {
   const { t } = useI18n();
   const labels: DecorateLabels = React.useMemo(() => ({
@@ -798,6 +799,7 @@ const useDecorateContext = (
     disableCodeWrap: t('markdownRenderer.code.actions.disableWrapTitle'),
     copyTable: t('markdownRenderer.table.actions.copyTitle'),
     downloadTable: t('markdownRenderer.table.actions.downloadTitle'),
+    expandTable: t('markdownRenderer.table.actions.expandTitle'),
     copyDiagram: t('markdownRenderer.mermaid.actions.copySourceTitle'),
     downloadDiagram: t('markdownRenderer.mermaid.actions.downloadSvgTitle'),
     zoomInDiagram: t('markdownRenderer.mermaid.actions.zoomInTitle'),
@@ -806,6 +808,19 @@ const useDecorateContext = (
     previewLabel: t('terminalView.preview.open'),
     previewTitle: t('terminalView.preview.openTitle'),
   }), [t]);
+
+  const tableDialogTitle = t('markdownRenderer.table.dialogTitle');
+  const onExpandTable = React.useMemo(
+    () => onShowPopup
+      ? (table: { markdown: string }) => onShowPopup({
+        open: true,
+        title: tableDialogTitle,
+        content: table.markdown,
+        metadata: { tool: 'markdown-table' },
+      })
+      : undefined,
+    [onShowPopup, tableDialogTitle],
+  );
 
   const codeBlockLineWrap = useUIStore((state) => state.codeBlockLineWrap);
   const setCodeBlockLineWrap = useUIStore((state) => state.setCodeBlockLineWrap);
@@ -826,8 +841,8 @@ const useDecorateContext = (
           return {};
         }
       });
-    return { labels, mermaidControls, codeBlockLineWrap, deferCodeLineNumberSync, onToggleCodeBlockLineWrap: toggleCodeBlockLineWrap, renderMermaid, onPreviewLoopback };
-  }, [currentTheme, labels, mermaidControls, codeBlockLineWrap, deferCodeLineNumberSync, toggleCodeBlockLineWrap, onPreviewLoopback]);
+    return { labels, mermaidControls, codeBlockLineWrap, deferCodeLineNumberSync, onToggleCodeBlockLineWrap: toggleCodeBlockLineWrap, renderMermaid, onPreviewLoopback, onExpandTable };
+  }, [currentTheme, labels, mermaidControls, codeBlockLineWrap, deferCodeLineNumberSync, toggleCodeBlockLineWrap, onPreviewLoopback, onExpandTable]);
 };
 
 // Runs the async render pipeline into the container and keeps a stable
@@ -1242,7 +1257,7 @@ const MarkdownRendererImpl: React.FC<MarkdownRendererProps> = ({
   useLinkInteractions({ containerRef });
 
   const syntaxVars = React.useMemo(() => getMarkdownSyntaxVars(currentTheme), [currentTheme]);
-  const ctx = useDecorateContext(currentTheme, live, effectiveDirectory ? handlePreviewLoopback : undefined, DEFAULT_MERMAID_CONTROLS);
+  const ctx = useDecorateContext(currentTheme, live, effectiveDirectory ? handlePreviewLoopback : undefined, DEFAULT_MERMAID_CONTROLS, onShowPopup);
   const { locale } = useI18n();
   const imageMode: MarkdownImageMode = variant === 'assistant' ? 'label' : 'inline';
   const settledPart = part
