@@ -857,6 +857,7 @@ const useMorphdomMarkdown = ({
   ctx,
   domCacheKey,
   tableLayoutSettled,
+  fitTables = false,
 }: {
   containerRef: React.RefObject<HTMLDivElement | null>;
   text: string;
@@ -867,6 +868,7 @@ const useMorphdomMarkdown = ({
   ctx: DecorateContext;
   domCacheKey?: DetachedMarkdownDomKey | null;
   tableLayoutSettled: boolean;
+  fitTables?: boolean;
 }) => {
   React.useEffect(() => {
     ensureMarkdownShikiTheme();
@@ -916,10 +918,10 @@ const useMorphdomMarkdown = ({
       if (renderRevisionRef.current !== renderRevision) return;
       const container = containerRef.current;
       const target = container?.querySelector<HTMLElement>('[data-markdown-content]') ?? container;
-      if (target) stabilizeMarkdownTableWidths(target);
+      if (target) stabilizeMarkdownTableWidths(target, { fit: fitTables });
     });
     tableLayoutFrameRef.current = frame;
-  }, [containerRef, tableLayoutSettled]);
+  }, [containerRef, tableLayoutSettled, fitTables]);
 
   React.useEffect(() => () => {
     const frame = tableLayoutFrameRef.current;
@@ -1343,6 +1345,8 @@ const SimpleMarkdownRendererImpl: React.FC<{
   enableFileReferences?: boolean;
   /** Render the document's raw HTML through the allowlist; only for documents a user opens to read. */
   allowRawHtml?: boolean;
+  /** Shrink table columns to the available width instead of scrolling sideways. */
+  fitTables?: boolean;
 }> = ({
   content,
   className,
@@ -1354,6 +1358,7 @@ const SimpleMarkdownRendererImpl: React.FC<{
   allowMermaidWheelEvents = false,
   enableFileReferences = true,
   allowRawHtml = false,
+  fitTables = false,
 }) => {
   const { editor, runtime } = useRuntimeAPIs();
   const currentTheme = useCurrentMermaidTheme();
@@ -1392,6 +1397,7 @@ const SimpleMarkdownRendererImpl: React.FC<{
     syntaxVars,
     ctx,
     tableLayoutSettled: true,
+    fitTables,
   });
 
   return (

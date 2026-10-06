@@ -1078,7 +1078,11 @@ const ToolOutputDialog: React.FC<ToolOutputDialogProps> = ({ popup, onOpenChange
                                 }
 
                                 if (tool === 'markdown-table') {
-                                    return <SimpleMarkdownRenderer content={popup.content} variant="tool" />;
+                                    return (
+                                        <div className="[&_[data-markdown=table-wrapper]]:w-full">
+                                            <SimpleMarkdownRenderer content={popup.content} variant="tool" fitTables />
+                                        </div>
+                                    );
                                 }
 
                                 if (isSubagentTool(tool) || tool === 'reasoning') {

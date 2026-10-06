@@ -488,7 +488,29 @@ const decorateTables = (root: HTMLElement, labels: DecorateLabels, expandable: b
   }
 };
 
-export const stabilizeMarkdownTableWidths = (root: HTMLElement): void => {
+// Narrows the widest columns until the table fits `available`, never below the
+// minimum; columns already narrower than their fair share keep their width.
+export const fitColumnWidths = (widths: number[], available: number): number[] => {
+  if (available <= 0 || widths.reduce((total, width) => total + width, 0) <= available) return widths;
+  const fitted = [...widths];
+  const open = new Set(widths.keys());
+  let remaining = available;
+  for (;;) {
+    const share = Math.max(TABLE_COLUMN_MIN_WIDTH, Math.floor(remaining / open.size));
+    const settled = [...open].filter((index) => widths[index] <= share);
+    if (settled.length === 0) {
+      for (const index of open) fitted[index] = share;
+      return fitted;
+    }
+    for (const index of settled) {
+      remaining -= widths[index];
+      open.delete(index);
+    }
+    if (open.size === 0) return fitted;
+  }
+};
+
+export const stabilizeMarkdownTableWidths = (root: HTMLElement, options: { fit?: boolean } = {}): void => {
   const tables = Array.from(root.querySelectorAll<HTMLTableElement>(
     `table[data-markdown="table"]:not([${TABLE_LAYOUT_ATTR}="fixed"])`,
   ));
@@ -558,7 +580,9 @@ export const stabilizeMarkdownTableWidths = (root: HTMLElement): void => {
     const naturalWidths = columnProbes.map((probe) => Math.ceil(probe.getBoundingClientRect().width));
     return {
       table,
-      widths: naturalWidths.map((width) => Math.min(maxColumnWidth, Math.max(TABLE_COLUMN_MIN_WIDTH, width))),
+      widths: ((widths) => (options.fit ? fitColumnWidths(widths, availableWidth) : widths))(
+        naturalWidths.map((width) => Math.min(maxColumnWidth, Math.max(TABLE_COLUMN_MIN_WIDTH, width))),
+      ),
       cappedColumns: naturalWidths.map((width) => width > maxColumnWidth),
     };
   });
