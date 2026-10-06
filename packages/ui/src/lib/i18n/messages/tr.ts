@@ -3102,6 +3102,8 @@ export const dict = {
   'markdownRenderer.code.actions.enableWrapTitle': 'Satır kaydırmayı etkinleştir',
   'markdownRenderer.code.actions.disableWrapTitle': 'Satır kaydırmayı devre dışı bırak',
   'markdownRenderer.table.actions.downloadTitle': 'Tabloyu indir',
+  'markdownRenderer.table.actions.expandTitle': 'Tabloyu genişlet',
+  'markdownRenderer.table.dialogTitle': 'Tablo',
   'markdownRenderer.table.toast.downloadedAsFormat': 'Tablo {format} olarak indirildi',
   'markdownRenderer.mermaid.actions.copyTitle': 'Kopyala',
   'markdownRenderer.mermaid.actions.copySourceTitle': 'Kaynağı kopyala',

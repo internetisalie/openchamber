@@ -20,6 +20,7 @@ import { buildGuestMessageItem, guestMessageActionsFor } from '@/lib/guests/acti
 import { runGuestAction } from '@/lib/guests/run-action';
 import type { AgentMentionInfo } from './message/types';
 import type { StreamPhase, ToolPopupContent } from './message/types';
+import { opensInChatDialog } from './message/popupContent';
 import { deriveMessageRole } from './message/messageRole';
 import { filterVisibleParts, normalizeParts } from './message/partUtils';
 import { normalizeUserDisplayParts } from './message/normalizeUserDisplayParts';
@@ -716,7 +717,7 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
 
     const handleShowPopup = React.useCallback((content: ToolPopupContent) => {
 
-        if (content.image || content.mermaid) {
+        if (opensInChatDialog(content)) {
             setPopupContent(content);
             setImagePreviewOpen(true);
         }

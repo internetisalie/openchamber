@@ -3161,6 +3161,8 @@ export const dict: Record<I18nKey, string> = {
   "markdownRenderer.code.actions.enableWrapTitle": "Увімкнути перенесення рядків",
   "markdownRenderer.code.actions.disableWrapTitle": "Вимкнути перенесення рядків",
   "markdownRenderer.table.actions.downloadTitle": "Завантажити таблицю",
+  "markdownRenderer.table.actions.expandTitle": "Розгорнути таблицю",
+  "markdownRenderer.table.dialogTitle": "Таблиця",
   "markdownRenderer.table.toast.downloadedAsFormat": "Таблицю завантажено як {format}",
   "markdownRenderer.mermaid.actions.copyTitle": "Копіювати",
   "markdownRenderer.mermaid.actions.copySourceTitle": "Копіювати джерело",

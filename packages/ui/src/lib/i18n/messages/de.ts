@@ -2978,6 +2978,8 @@ export const dict = {
   'markdownRenderer.code.actions.enableWrapTitle': 'Zeilenumbruch aktivieren',
   'markdownRenderer.code.actions.disableWrapTitle': 'Zeilenumbruch deaktivieren',
   'markdownRenderer.table.actions.downloadTitle': 'Tabelle herunterladen',
+  'markdownRenderer.table.actions.expandTitle': 'Tabelle erweitern',
+  'markdownRenderer.table.dialogTitle': 'Tabelle',
   'markdownRenderer.table.toast.downloadedAsFormat': 'Tabelle als {format} heruntergeladen',
   'markdownRenderer.mermaid.actions.copyTitle': 'Kopieren',
   'markdownRenderer.mermaid.actions.copySourceTitle': 'Quelle kopieren',

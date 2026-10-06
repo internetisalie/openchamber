@@ -3195,6 +3195,8 @@ export const dict: Record<I18nKey, string> = {
   'markdownRenderer.code.actions.enableWrapTitle': '줄 바꿈 켜기',
   'markdownRenderer.code.actions.disableWrapTitle': '줄 바꿈 끄기',
   'markdownRenderer.table.actions.downloadTitle': '표 다운로드',
+  'markdownRenderer.table.actions.expandTitle': '표 확대',
+  'markdownRenderer.table.dialogTitle': '표',
   'markdownRenderer.table.toast.downloadedAsFormat': '{format} 형식으로 다운로드됨',
   'markdownRenderer.mermaid.actions.copyTitle': '복사',
   'markdownRenderer.mermaid.actions.copySourceTitle': '소스 복사',

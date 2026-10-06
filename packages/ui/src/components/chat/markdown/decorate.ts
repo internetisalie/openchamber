@@ -18,6 +18,7 @@ export type DecorateLabels = {
   disableCodeWrap: string;
   copyTable: string;
   downloadTable: string;
+  expandTable: string;
   copyDiagram: string;
   downloadDiagram: string;
   zoomInDiagram: string;
@@ -42,6 +43,8 @@ export type DecorateContext = {
   // Renders a mermaid block source to svg/ascii using current theme colors.
   renderMermaid: (source: string) => MermaidRender;
   onPreviewLoopback?: (url: string) => void;
+  // Shows a table in the app's full-size dialog; without it a table has no expand button.
+  onExpandTable?: (table: { markdown: string }) => void;
 };
 
 const ICONS = {
@@ -54,6 +57,7 @@ const ICONS = {
   textWrap: 'text-wrap',
   image: 'file-image',
   disclosure: 'arrow-right-s',
+  expand: 'fullscreen',
 } as const satisfies Record<string, IconName>;
 
 const ICON_BTN_CLASS =
@@ -334,6 +338,71 @@ const tableToMarkdown = ({ headers, rows }: { headers: string[]; rows: string[][
   return `${head}\n${sep}\n${body}`;
 };
 
+// Inline formatting a table cell can hold, written back as markdown so the dialog renders what the message shows.
+const escapeMarkdownText = (text: string): string =>
+  text.replace(/[\\`*_[\]<>~|]/g, '\\$&').replace(/&(?=#?\w+;)/g, '\\&');
+
+const codeSpan = (text: string): string => {
+  const longest = Math.max(0, ...(text.match(/`+/g) ?? []).map((run) => run.length));
+  const fence = '`'.repeat(longest + 1);
+  const pad = text.startsWith('`') || text.endsWith('`') ? ' ' : '';
+  return `${fence}${pad}${text.replace(/\|/g, '\\|')}${pad}${fence}`;
+};
+
+const inlineMarkdown = (node: Node): string => {
+  if (node.nodeType === Node.TEXT_NODE) return escapeMarkdownText((node.textContent ?? '').replace(/\s+/g, ' '));
+  if (!(node instanceof HTMLElement)) return '';
+  // Decoration the renderer adds (link favicons) is not content.
+  if (node.getAttribute(MESSAGE_IMAGE_EXPORT_EXCLUDE_ATTRIBUTE) === 'true') return '';
+  // Rendered math keeps its source in an annotation; the surrounding MathML and glyph text is not content.
+  if (node.classList.contains('katex')) {
+    const source = node.querySelector('annotation[encoding="application/x-tex"]')?.textContent;
+    return source ? `$${source}$` : escapeMarkdownText(node.textContent ?? '');
+  }
+  const inner = Array.from(node.childNodes).map(inlineMarkdown).join('');
+  switch (node.tagName) {
+    case 'STRONG':
+    case 'B':
+      return inner ? `**${inner}**` : '';
+    case 'EM':
+    case 'I':
+      return inner ? `*${inner}*` : '';
+    case 'DEL':
+    case 'S':
+      return inner ? `~~${inner}~~` : '';
+    case 'CODE':
+      return codeSpan((node.textContent ?? '').replace(/\s+/g, ' '));
+    case 'A': {
+      const href = node.getAttribute('href')?.replace(/[ ()|<>\\]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase().padStart(2, '0')}`);
+      return href ? `[${inner}](${href})` : inner;
+    }
+    case 'IMG':
+      return node.getAttribute('src') ? `![${node.getAttribute('alt') ?? ''}](${node.getAttribute('src')})` : '';
+    case 'BR':
+      return ' ';
+    default:
+      return inner;
+  }
+};
+
+const alignmentRule = (cell: Element | undefined): string => {
+  const align = (cell?.getAttribute('align') ?? (cell as HTMLElement | undefined)?.style?.textAlign ?? '').toLowerCase();
+  return align === 'left' ? ':---' : align === 'right' ? '---:' : align === 'center' ? ':---:' : '---';
+};
+
+const tableToRichMarkdown = (table: HTMLTableElement): string => {
+  const cells = (row: Element) => Array.from(row.querySelectorAll('th, td'));
+  const headRow = table.querySelector('thead tr');
+  const head = headRow ? cells(headRow).map((cell) => inlineMarkdown(cell).trim()) : [];
+  const body = Array.from(table.querySelectorAll('tbody tr'))
+    .map((row) => cells(row).map((cell) => inlineMarkdown(cell).trim()))
+    .filter((row) => row.length > 0);
+  const width = Math.max(head.length, ...body.map((row) => row.length), 1);
+  const pad = (row: string[]) => `| ${Array.from({ length: width }, (_, i) => row[i] ?? '').join(' | ')} |`;
+  const rules = Array.from({ length: width }, (_, i) => alignmentRule(headRow ? cells(headRow)[i] : undefined));
+  return [pad(head), `| ${rules.join(' | ')} |`, ...body.map(pad)].join('\n');
+};
+
 const buildTableMenu = (action: string, items: Array<{ key: string; label: string }>): HTMLDivElement => {
   const menu = document.createElement('div');
   // Match the app's DropdownMenu look (same class tokens + surface colors).
@@ -356,7 +425,7 @@ const TABLE_COLUMN_MIN_WIDTH = 120;
 const TABLE_COLUMN_FALLBACK_MAX_WIDTH = 320;
 const TABLE_LAYOUT_ATTR = 'data-md-table-layout';
 
-const decorateTables = (root: HTMLElement, labels: DecorateLabels): void => {
+const decorateTables = (root: HTMLElement, labels: DecorateLabels, expandable: boolean): void => {
   const tables = root.querySelectorAll<HTMLTableElement>('table');
   for (const table of Array.from(tables)) {
     const existing = table.closest('[data-markdown="table-wrapper"]');
@@ -386,6 +455,7 @@ const decorateTables = (root: HTMLElement, labels: DecorateLabels): void => {
       { key: 'markdown', label: 'Markdown' },
     ]));
 
+    if (expandable) toolbar.appendChild(makeIconButton('expand', labels.expandTable, 'table-expand'));
     toolbar.appendChild(copyGroup);
     toolbar.appendChild(downloadGroup);
 
@@ -661,7 +731,7 @@ export const decorateMarkdown = (root: HTMLElement, ctx: DecorateContext): void 
   decorateInlineCode(root);
   decorateMermaid(root, ctx);
   decorateCodeBlocks(root, ctx);
-  decorateTables(root, ctx.labels);
+  decorateTables(root, ctx.labels, ctx.onExpandTable !== undefined);
   decorateLinks(root, ctx);
 };
 
@@ -785,6 +855,14 @@ export const attachMarkdownInteractions = (
     if (action === 'toggle-code-wrap') {
       event.preventDefault();
       ctx.onToggleCodeBlockLineWrap?.();
+      return;
+    }
+
+    // Expand a table into the app's full-size dialog
+    if (action === 'table-expand') {
+      event.preventDefault();
+      const table = actionEl.closest('[data-markdown="table-wrapper"]')?.querySelector('table');
+      if (table instanceof HTMLTableElement) ctx.onExpandTable?.({ markdown: tableToRichMarkdown(table) });
       return;
     }
 

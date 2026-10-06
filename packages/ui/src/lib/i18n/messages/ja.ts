@@ -3191,6 +3191,8 @@ export const dict: Record<I18nKey, string> = {
   'markdownRenderer.code.actions.enableWrapTitle': '行折り返しを有効にする',
   'markdownRenderer.code.actions.disableWrapTitle': '行折り返しを無効にする',
   'markdownRenderer.table.actions.downloadTitle': 'テーブルをダウンロード',
+  'markdownRenderer.table.actions.expandTitle': 'テーブルを拡大',
+  'markdownRenderer.table.dialogTitle': 'テーブル',
   'markdownRenderer.table.toast.downloadedAsFormat': 'テーブルを{format}としてダウンロードしました',
   'markdownRenderer.mermaid.actions.copyTitle': 'コピー',
   'markdownRenderer.mermaid.actions.copySourceTitle': 'ソースをコピー',

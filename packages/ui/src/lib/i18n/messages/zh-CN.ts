@@ -3161,6 +3161,8 @@ export const dict: Record<I18nKey, string> = {
   'markdownRenderer.code.actions.enableWrapTitle': '启用自动换行',
   'markdownRenderer.code.actions.disableWrapTitle': '禁用自动换行',
   'markdownRenderer.table.actions.downloadTitle': '下载表格',
+  'markdownRenderer.table.actions.expandTitle': '展开表格',
+  'markdownRenderer.table.dialogTitle': '表格',
   'markdownRenderer.table.toast.downloadedAsFormat': '表格已下载为 {format}',
   'markdownRenderer.mermaid.actions.copyTitle': '复制',
   'markdownRenderer.mermaid.actions.copySourceTitle': '复制源码',
