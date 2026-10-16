@@ -27,6 +27,13 @@ at the same scheme, port, and API path. Exact endpoint matches take precedence.
 This affects display matching only; saved addresses and transport credentials
 are not rewritten.
 
+Separate desktop installations can set `OPENCHAMBER_DESKTOP_APP_NAME` and
+`OPENCHAMBER_DESKTOP_ID` before startup. The defaults are `OpenChamber` and
+`openchamber.desktop`. A dev installation uses `OpenChamber Dev` and
+`openchamber-dev.desktop`, with `--class=openchamber-dev` and the matching
+`StartupWMClass` in its desktop entry. Keep its profile separate with
+`OPENCHAMBER_DESKTOP_USER_DATA_DIR`.
+
 Electron loads `entry.mjs`, not `main.mjs`. Electron holds `ready` until the
 entry module's import graph has evaluated, and importing the server module
 graph blocks the main thread for a few hundred milliseconds, so the entry
