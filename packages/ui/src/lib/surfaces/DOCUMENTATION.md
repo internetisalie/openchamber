@@ -201,9 +201,11 @@ chat/palette go through the `openContext*` actions in `useUIStore`.
   positions). Chat tab records stay open, but only the active chat tab's
   pinned chat column is mounted while the panel is open. A selected chat
   restores its state from the session stores. A closed panel mounts no chat.
-  Surfaces rendered by the zone (git, the Tracker, notes, context) remount on
+  Surfaces rendered by the zone (git, the Tracker, notes, context, Agent PTYs) remount on
   every switch, the Tracker on every switch between its tabs too. These
-  surfaces must restore their state from stores or snapshots.
+  surfaces must restore their state from stores or snapshots. `isZoneMountedContextSurface`
+  in `modes.ts` selects this render path; a zone-rendered view must be included
+  there as well as in `ContextPanel`'s content branch.
 - Portalled menus and dialogs handle their own Escape key. The panel's capture
   handler ignores their events so dismissing an overlay does not close the panel.
   Escape closes the zone it was pressed in: the frame and each keep-alive pane

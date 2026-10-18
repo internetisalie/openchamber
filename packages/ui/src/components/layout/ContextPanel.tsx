@@ -36,7 +36,7 @@ import type { IconName } from "@/components/icon/icons";
 import { GuestIcon } from './GuestRailIcon';
 import { useGuestsStore } from '@/lib/guests/store';
 import { FALLBACK_GUEST_ICON } from '@/lib/guests/icon';
-import { isPluginContextPanelMode, pluginIdFromMode } from '@/lib/surfaces/modes';
+import { isPluginContextPanelMode, isZoneMountedContextSurface, pluginIdFromMode } from '@/lib/surfaces/modes';
 import { CONTEXT_SURFACE_WIDTHS, getContextSurfaceDefaultWidth } from '@/lib/surfaces/registry';
 import { beginLayoutAnimation, cancelWhenLayoutSettled, LAYOUT_ANIMATION_EASING, runWhenLayoutSettled } from '@/lib/layoutAnimation';
 import { useLayoutAnimationMs } from '@/hooks/useLayoutAnimationMs';
@@ -332,12 +332,6 @@ const truncateTabLabel = (value: string, maxChars: number): string => {
 // Dragging a header moves its surface once the pointer has travelled this far.
 const HEADER_DRAG_DISTANCE_PX = 8;
 const HEADER_DRAG_EXCLUDED = 'button, a, input, textarea, select, label, [role="button"], [role="tab"], [role="combobox"], [role="switch"], [role="slider"], [data-sortable-tab-id], [contenteditable="true"]';
-
-// Surfaces rendered by the zone itself and remounted on every switch; the
-// rest stay alive in ContextSurfacePanes.
-const isRemountedSurface = (mode: ContextPanelMode): boolean => (
-  mode === 'context' || mode === 'git' || mode === 'pr' || mode === 'notes'
-);
 
 const CONTEXT_PANEL_DEFAULT_HEIGHT = 320;
 const CONTEXT_PANEL_MIN_HEIGHT = 160;
@@ -1215,7 +1209,7 @@ export const ContextPanel: React.FC<{ zone?: ContextZone }> = ({ zone = 'right' 
       {/* Keep-alive surfaces (ContextSurfacePanes) are portalled in here and
           take the docked surface from their own pane (ZonePane). */}
       <div ref={registerBody} className={cn('relative min-h-0 flex-1 overflow-hidden', isResizing && 'pointer-events-none')}>
-        {activeTab && isRemountedSurface(activeTab.mode) ? activeNonChatContent : null}
+        {activeTab && isZoneMountedContextSurface(activeTab.mode) ? activeNonChatContent : null}
       </div>
       </DockedPanelSurfaceContext.Provider>
       </div>
