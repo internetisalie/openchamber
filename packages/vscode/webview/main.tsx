@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { createVSCodeAPIs } from './api';
 import { createRemovalTombstones } from './inlineCommentRemovals';
 import { resolveCommentTarget } from './inlineCommentTarget';
@@ -48,7 +49,6 @@ declare global {
     __OPENCHAMBER_VSCODE_SHIKI_THEMES__?: { light?: Record<string, unknown>; dark?: Record<string, unknown> } | null;
     __OPENCHAMBER_CONNECTION__?: { status: ConnectionStatus; error?: string; cliAvailable?: boolean };
     __OPENCHAMBER_HOME__?: string;
-    __OPENCHAMBER_VSCODE_WINDOW_FOCUSED__?: boolean;
   }
 }
 
@@ -607,6 +607,19 @@ const handleLocalApiRequest = async (input: RequestInfo | URL, url: URL, init: R
     );
   }
 
+  // The web server answers this route; here the extension host reads the same
+  // provider and model lists from OpenCode (`bridge-small-model-runtime.ts`).
+  if (normalizedPathname === '/api/small-model' && method === 'GET') {
+    const directory = getRequestDirectoryHint(url, input, init);
+    try {
+      const data = await sendBridgeMessage('api:small-model:get', { directory });
+      return new Response(JSON.stringify(data), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return new Response(JSON.stringify({ error: message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+    }
+  }
+
   if (normalizedPathname === '/api/tts/status' && method === 'GET') {
     return new Response(JSON.stringify({ available: false }), {
       status: 200,
@@ -716,6 +729,17 @@ const handleLocalApiRequest = async (input: RequestInfo | URL, url: URL, init: R
       : undefined;
     const data = await sendBridgeMessage('api:files/save-markdown', { fileName, content });
     return new Response(JSON.stringify(data), { status: 200, headers: { 'Content-Type': 'application/json' } });
+  }
+
+  if (pathname === '/api/config/disabled-agents') {
+    const directory = getRequestDirectoryHint(url, input, init);
+    try {
+      const data = await sendBridgeMessage('api:config/disabled-agents', { directory });
+      return new Response(JSON.stringify(data), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return new Response(JSON.stringify({ error: message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+    }
   }
 
   if (pathname.startsWith('/api/config/agents/')) {
@@ -1186,9 +1210,9 @@ const handleLocalApiRequest = async (input: RequestInfo | URL, url: URL, init: R
     return new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });
   }
 
-  if (pathname.startsWith('/api/opencode/directory')) {
+  if (pathname === '/api/openchamber/directory') {
     const body = await extractJsonBody(input, init, method);
-    const result = await sendBridgeMessage('api:opencode/directory', { path: body.path });
+    const result = await sendBridgeMessage('api:openchamber/directory', { path: body.path });
     return new Response(JSON.stringify(result), { status: 200, headers: { 'Content-Type': 'application/json' } });
   }
 
@@ -1202,12 +1226,29 @@ const handleLocalApiRequest = async (input: RequestInfo | URL, url: URL, init: R
     }
   }
 
-  const quotaCredentialMatch = pathname.match(/^\/api\/quota\/credentials\/(ollama-cloud|cursor)(?:\/(validate|import))?$/);
+  const quotaCredentialMatch = pathname.match(/^\/api\/quota\/credentials\/(exe-dev|cursor|zenmux)(?:\/(validate|import))?$/);
   if (quotaCredentialMatch) {
     try {
       const body = method === 'PUT' ? await extractJsonBody(input, init, method) : undefined;
       const bridgeMethod = quotaCredentialMatch[2]?.toUpperCase() || method;
       const data = await sendBridgeMessage('api:quota:credentials', { providerId: quotaCredentialMatch[1], method: bridgeMethod, credential: body });
+      return new Response(JSON.stringify(data), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return new Response(JSON.stringify({ error: message }), { status: 400, headers: { 'Content-Type': 'application/json' } });
+    }
+  }
+
+  const quotaGiftResetMatch = pathname.match(/^\/api\/quota\/([^/]+)\/gift-reset\/use$/);
+  if (quotaGiftResetMatch && method === 'POST') {
+    const providerId = decodeURIComponent(quotaGiftResetMatch[1]);
+    try {
+      const body = await extractJsonBody(input, init, method);
+      const data = await sendBridgeMessage('api:quota:giftReset:use', {
+        providerId,
+        recordId: body.recordId,
+        resetType: body.resetType,
+      });
       return new Response(JSON.stringify(data), { status: 200, headers: { 'Content-Type': 'application/json' } });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -1262,6 +1303,19 @@ const handleLocalApiRequest = async (input: RequestInfo | URL, url: URL, init: R
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return new Response(JSON.stringify({ error: message }), { status: 500, headers: { 'Content-Type': 'application/json' } });
+    }
+  }
+
+  if (pathname === '/api/provider/discover-models' && method === 'POST') {
+    try {
+      const body = await extractJsonBody(input, init, method);
+      const data = await sendBridgeMessage('api:provider:discover-models', body);
+      if (data && typeof data === 'object' && 'success' in data && (data as { success?: boolean }).success === false) {
+        return jsonResponse({ error: (data as { error?: string }).error || 'Failed to discover provider models' }, 400);
+      }
+      return jsonResponse((data as { data?: unknown })?.data ?? data);
+    } catch (error) {
+      return jsonResponse({ error: error instanceof Error ? error.message : String(error) }, 500);
     }
   }
 
@@ -1755,84 +1809,27 @@ onCommand('reloadOpenCode', () => {
   });
 });
 
-const getNotificationClaimKey = (payload: { title?: unknown; body?: unknown; sessionId?: unknown; tag?: unknown } | undefined): string => {
-  const tag = typeof payload?.tag === 'string' ? payload.tag.trim() : '';
-  if (tag) return tag;
-  return [payload?.sessionId, payload?.title, payload?.body]
-    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
-    .map((value) => value.trim())
-    .join('|');
+// The extension host shows the notification and decides whether the chat is in
+// view: Chromium never displays a `new Notification()` from a webview frame.
+const showOpenChamberNotification = (payload: { title: string; body: string; sessionId: string; requireHidden: boolean }) => {
+  void sendBridgeMessage('api:notifications:show', payload).catch(() => undefined);
 };
 
-const claimOpenChamberNotification = async (payload: { title?: unknown; body?: unknown; sessionId?: unknown; tag?: unknown } | undefined): Promise<boolean> => {
-  const key = getNotificationClaimKey(payload);
-  if (!key) return true;
-  try {
-    const result = await sendBridgeMessage<{ claimed?: boolean }>('api:notifications:claim', { key });
-    return result?.claimed === true;
-  } catch {
-    return true;
-  }
-};
+const openSessionPayloadSchema = z.object({ sessionId: z.string().min(1) });
 
-const showOpenChamberNotification = (payload: { title?: unknown; body?: unknown; sessionId?: unknown; tag?: unknown; requireHidden?: unknown } | undefined) => {
-  if (typeof Notification === 'undefined') {
-    return false;
-  }
-
-  const show = async () => {
-    const isVSCodeWindowFocused = window.__OPENCHAMBER_VSCODE_WINDOW_FOCUSED__ ?? document.hasFocus();
-    if (payload?.requireHidden === true && isVSCodeWindowFocused) {
-      return false;
-    }
-    if (Notification.permission !== 'granted') {
-      return false;
-    }
-
-    const title = typeof payload?.title === 'string' && payload.title.trim().length > 0
-      ? payload.title.trim()
-      : 'OpenChamber';
-    const body = typeof payload?.body === 'string' ? payload.body : '';
-    const sessionId = typeof payload?.sessionId === 'string' && payload.sessionId.trim().length > 0
-      ? payload.sessionId.trim()
-      : '';
-    if (!await claimOpenChamberNotification({ ...payload, title, body, sessionId })) {
-      return false;
-    }
-
-    const notification = new Notification(title, { body });
-    notification.onclick = () => {
-      if (sessionId) {
-        import('@/sync/session-ui-store').then(({ useSessionUIStore }) => {
-          useSessionUIStore.getState().setCurrentSession(sessionId);
-        });
-      }
-      window.dispatchEvent(new CustomEvent('openchamber:navigate', { detail: { view: 'chat' } }));
-    };
-    return true;
-  };
-
-  if (Notification.permission === 'default') {
-    void Notification.requestPermission().then((permission) => {
-      if (permission === 'granted') {
-        void show();
-      }
-    });
-    return true;
-  }
-
-  void show();
-  return true;
-};
-
-onCommand('showNotification', (payload) => {
-  showOpenChamberNotification(payload as { title?: unknown; body?: unknown; sessionId?: unknown; requireHidden?: unknown } | undefined);
+// "Open Session" on a notification.
+onCommand('openSession', (payload) => {
+  const sessionId = openSessionPayloadSchema.safeParse(payload).data?.sessionId;
+  if (!sessionId) return;
+  void import('@/sync/session-ui-store').then(({ useSessionUIStore }) => {
+    useSessionUIStore.getState().setCurrentSession(sessionId);
+  });
+  window.dispatchEvent(new CustomEvent('openchamber:navigate', { detail: { view: 'chat' } }));
 });
 
 onCommand('viewerStateChanged', (payload) => {
   const parsed = hostViewerStateSchema.safeParse(payload);
   if (!parsed.success) return;
-  window.__OPENCHAMBER_VSCODE_WINDOW_FOCUSED__ = parsed.data.windowFocused;
   // The webview document's own focus is not whether the user sees the chat.
   reportHostViewerState(parsed.data);
 });

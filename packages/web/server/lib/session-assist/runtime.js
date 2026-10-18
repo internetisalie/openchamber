@@ -6,6 +6,7 @@ import os from 'os';
 import path from 'path';
 import { OpenCode } from '@opencode/client';
 import { readMergedSettingsSync } from '../opencode/settings-files.js';
+import { isString } from '../shared/guards.js';
 import { loadAssistContext, newestContentId } from './context.js';
 import { buildAssistPrompt, buildAssistSystemPrompt } from './prompt.js';
 
@@ -32,6 +33,28 @@ const GENERATION_TIMEOUT_MS = 120_000;
 // Enough records to look past the idle marker and a couple of switches.
 const TAIL_RECHECK_LIMIT = 8;
 const QUIET_FAILURE_CODES = new Set(['context-too-small', 'output-exhausted']);
+
+/**
+ * A one-line cause for a generation failure: the status, code, and a bounded
+ * message. A bare "generation failed" hides whether this was a cold-start 503,
+ * a provider rejection, or a bug, which is what tells a transient startup
+ * failure from a permanent one.
+ */
+const describeGenerationFailure = (error) => {
+  const parts = [];
+  const status = Number(error?.statusCode);
+  if (Number.isFinite(status)) parts.push(`status ${status}`);
+  const code = isString(error?.code) ? error.code.trim() : '';
+  if (code) parts.push(`code ${code}`);
+  // The small-model service rethrows raw SDK rejections, which are tagged
+  // objects rather than Errors. Read the message from either shape, and keep
+  // the tag when the SDK only carries that.
+  const message = isString(error?.message) ? error.message.trim() : '';
+  if (message) parts.push(message.replace(/\s+/g, ' ').slice(0, 300));
+  const tag = isString(error?._tag) ? error._tag.trim() : '';
+  if (tag) parts.push(`tag ${tag}`);
+  return parts.join(' | ');
+};
 
 const extractJsonObject = (value) => {
   const text = String(value ?? '').trim();
@@ -183,19 +206,29 @@ export const createSessionAssistRuntime = ({
     const described = await describeSmallModel({ directory, preferredProviderID, preferredModelID });
     checkCurrent();
     if (!described) return;
+    // A local server keeps one prompt cache per slot: a side request on the
+    // session's own model evicts it, and the next turn reprocesses the whole
+    // history. There only a different model may write the assist, however the
+    // session's model was picked (fallback or an explicit Small Model).
+    if (described.localEndpoint
+      && described.providerID === preferredProviderID
+      && described.modelID === preferredModelID) return;
     const system = buildAssistSystemPrompt(targets);
     const prompt = buildAssistPrompt(turns, targets, described.inputCharBudget - system.length - 512);
     if (!prompt) return;
     let generated;
     try {
       generated = await generateSmallModelText({
-        prompt: prompt.text, system, directory, sessionID: sessionId,
-        preferredProviderID, preferredModelID, restrictToPreferredProvider: true,
+        prompt: prompt.text, system, directory,
+        preferredProviderID, preferredModelID,
         onOverflow: 'error', timeoutMs: GENERATION_TIMEOUT_MS, signal,
       });
     } catch (error) {
       if (!signal.aborted && Number(error?.statusCode) !== 404 && !QUIET_FAILURE_CODES.has(error?.code)) {
-        console.warn('[session-assist] generation failed');
+        // Keep the cause: a bare "generation failed" hides whether this was a
+        // cold-start 503, a provider rejection, or a bug, which is exactly what
+        // the operator needs to tell a transient startup from a permanent one.
+        console.warn('[session-assist] generation failed', describeGenerationFailure(error));
       }
       return;
     }
@@ -224,6 +257,9 @@ export const createSessionAssistRuntime = ({
     checkCurrent();
     if (freshSession?.id !== sessionId || freshSession.revert?.messageID || freshSession.location?.directory !== session.location?.directory) return;
     if (await isSessionArchived(sessionId)) return;
+    // The archive check is a wait of its own: a turn that started meanwhile
+    // has aborted this run, and the write below must not land.
+    checkCurrent();
     const enabled = getTargets();
     if (!enabled.recap || !allowed.recap) recap = '';
     if (!enabled.suggestion || !allowed.suggestion) suggestion = '';

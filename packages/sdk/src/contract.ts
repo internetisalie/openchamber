@@ -1,7 +1,10 @@
 
 import { OPENCHAMBER_SDK_API_VERSION, OPENCHAMBER_SDK_CHANNEL } from './api-version.ts';
 import type { FileEditorChange, FileEditorDocument, FileSnapshotRequest, FileSnapshotResultPayload } from './file-editor.ts';
+import type { GuestRunningShellsSnapshot, GuestShellOutputRequest, GuestShellOutputResult, GuestShellStopResult, GuestShellsSubscription } from './shells.ts';
 import type { GuestSessionWorktree, GuestStorageRequest, GuestStorageResult, GuestWorkspaceQuery, GuestWorkspaceSnapshot, GuestWorkspaceSubscription, GuestWorkspaceUpdate, GuestWorktree } from './workspace.ts';
+import type { GuestStatusControl, GuestStatusControlEvent } from './status-controls.ts';
+import type { GuestPopoverClosedEvent, GuestPopoverContext, GuestPopoverRequest } from './popover.ts';
 
 export type HostThemeMode = 'light' | 'dark';
 
@@ -40,6 +43,14 @@ export type HostThemeTokens = {
   /** Monospace stack for code and identifiers. */
   mono: string;
   radius: string;
+  syntaxKeyword?: string;
+  syntaxString?: string;
+  syntaxNumber?: string;
+  syntaxFunction?: string;
+  syntaxType?: string;
+  syntaxComment?: string;
+  syntaxVariable?: string;
+  syntaxOperator?: string;
 };
 
 export type HostTheme = {
@@ -63,7 +74,7 @@ export type SessionSnapshot = {
  * Which host chrome mounted this iframe. Not `openSurface`. `status` is the
  * extension's section in the chat's Work Status panel.
  */
-export type GuestHostSurface = 'panel' | 'dialog' | 'page' | 'background' | 'status' | 'file';
+export type GuestHostSurface = 'panel' | 'dialog' | 'page' | 'background' | 'status' | 'file' | 'popover';
 
 export type GuestConnection = {
   connected: boolean;
@@ -170,6 +181,8 @@ export type GenerateResult = { text: string };
 export type HostResultPayload =
   | GuestStorageResult
   | GuestWorkspaceSnapshot
+  | GuestShellOutputResult
+  | GuestShellStopResult
   | GuestRequestResult
   | StartSessionResult
   | PromptResult
@@ -193,12 +206,7 @@ export const EMPTY_GUEST_CONNECTION: GuestConnection = {
   account: '',
 };
 
-export const HOST_FEATURES = ['openCodeRequest'] as const;
-export type HostFeature = (typeof HOST_FEATURES)[number];
-
 export type HostReadyContext = {
-  /** Host operations this OpenChamber build implements. */
-  features: HostFeature[];
   theme: HostTheme;
   locale: string;
   directory: string | null;
@@ -213,6 +221,15 @@ export type HostReadyContext = {
    * opened from the rail icon or the composer + menu.
    */
   item: GuestItem | null;
+  /** Present only in the host-created child frame for an active popover. */
+  popover?: GuestPopoverContext;
+  /** Optional capabilities advertised by a newer host. Absent remains compatible with older hosts. */
+  features?: {
+    openCodeRequest?: true;
+    deviceStorage?: true;
+    statusControls?: true;
+    popovers?: true;
+  };
 };
 
 export type GuestItemRole = 'user' | 'assistant';
@@ -375,7 +392,8 @@ export const GUEST_SESSION_AGENT_MAX = 80;
 export const GUEST_SETTING_VALUE_MAX = 2_000;
 export const GUEST_REQUEST_PATH_MAX = 2_000;
 export const GUEST_REQUEST_BODY_MAX = 64_000;
-export const GUEST_REQUEST_RESPONSE_MAX = 256_000;
+/** Bytes of a `request` / `serviceRequest` answer; a larger one is `RESPONSE_TOO_LARGE`, never cut off. */
+export const GUEST_REQUEST_RESPONSE_MAX = 8_000_000;
 /** OpenCode plugins may return large JSON-escaped payloads. */
 export const GUEST_OPENCODE_RESPONSE_MAX = 4 * 1024 * 1024;
 export const GUEST_REQUEST_TIMEOUT_MS = 20_000;
@@ -393,8 +411,19 @@ export const GUEST_GENERATE_SYSTEM_MAX = 8_000;
 export const GUEST_GENERATE_OUTPUT_TOKENS_MAX = 4_000;
 /** Characters in a `generate` answer. */
 export const GUEST_GENERATE_TEXT_MAX = 256_000;
-/** How long `generate` waits for the model before `HOST_TIMEOUT`. */
-export const GUEST_GENERATE_TIMEOUT_MS = 90_000;
+/**
+ * How long `generate` waits for the model before `HOST_TIMEOUT`.
+ *
+ * Must exceed the largest deadline the Small Model server can derive for a
+ * guest-shaped request, plus margin for the iframe → host bridge → HTTP chain.
+ * The server no longer cuts at a flat 60 s: it budgets 60 s base plus 40 ms per
+ * estimated token (~4 chars/token), capped at 900 s
+ * (`generationBudgetMs` in `packages/web/server/lib/small-model/index.js`,
+ * issue #5017). At the guest limits (`GUEST_GENERATE_PROMPT_MAX` +
+ * `GUEST_GENERATE_SYSTEM_MAX` = 72 000 chars ≈ 18 000 tokens) that is 780 s,
+ * so 960 s leaves the chain ~3 minutes.
+ */
+export const GUEST_GENERATE_TIMEOUT_MS = 960_000;
 /** Characters of one message's text on a `GuestMessageItem` or a `GuestSessionItem` message. */
 export const GUEST_ITEM_MESSAGE_TEXT_MAX = 200_000;
 /** `JSON.stringify` length ceiling for a `GuestSessionItem`; the host drops the oldest messages to stay under it. */
@@ -416,6 +445,8 @@ export const HOST_REQUEST_ERROR_CODES = [
   'NO_INTEGRATION',
   'NO_SERVICE',
   'SERVICE_FAILED',
+  'REQUEST_FAILED',
+  'RESPONSE_TOO_LARGE',
   'NO_SESSION',
   'SESSION_BUSY',
   'NOT_GRANTED',
@@ -587,6 +618,8 @@ export type HostConnectionMessage = Envelope & { type: 'connection'; payload: { 
 export type HostSettingsMessage = Envelope & { type: 'settings'; payload: { settings: GuestSettings } };
 export type HostSessionLifecycleMessage = Envelope & { type: 'session-lifecycle'; payload: SessionLifecycleEvent };
 export type HostItemMessage = Envelope & { type: 'item'; payload: { item: GuestItem | null } };
+export type HostStatusControlEventMessage = Envelope & { type: 'status-control-event'; payload: GuestStatusControlEvent };
+export type HostPopoverClosedMessage = Envelope & { type: 'popover-closed'; payload: GuestPopoverClosedEvent };
 /** Host → guest request. The guest answers with `resolve-result` carrying the same `id`. */
 export type HostResolveMessage = Envelope & { type: 'resolve'; id: string; payload: ResolveRequest };
 export type HostActionMessage = Envelope & { type: 'action'; id: string; payload: GuestActionItem };
@@ -601,8 +634,11 @@ export type HostResultMessage = Envelope & { type: 'result'; id: string } & (
   | { ok: false; error: string; code: HostRequestErrorCode }
 );
 
+export type HostShellsMessage = Envelope & { type: 'shells'; payload: { subscriptionId: string; snapshot: GuestRunningShellsSnapshot } };
+
 export type HostMessage =
   | (Envelope & { type: 'workspace'; payload: GuestWorkspaceUpdate })
+  | HostShellsMessage
   | HostReadyMessage
   | HostDirectoryMessage
   | HostSessionMessage
@@ -610,6 +646,8 @@ export type HostMessage =
   | HostSettingsMessage
   | HostSessionLifecycleMessage
   | HostItemMessage
+  | HostStatusControlEventMessage
+  | HostPopoverClosedMessage
   | HostResolveMessage
   | HostActionMessage
   | HostFileOpenMessage
@@ -646,6 +684,10 @@ export type GuestGenerateMessage = GuestCall<'generate', GenerateRequest>;
 export type GuestBadgeMessage = GuestCall<'badge', BadgeRequest>;
 export type GuestResizeMessage = GuestCall<'resize', ResizeRequest>;
 export type GuestOpenCommitMessage = GuestCall<'open-commit', OpenCommitRequest>;
+export type GuestStatusControlsMessage = GuestCall<'status-controls', { controls: GuestStatusControl[] }>;
+export type GuestPopoverOpenMessage = GuestCall<'popover-open', GuestPopoverRequest>;
+export type GuestPopoverCloseMessage = GuestCall<'popover-close', { id: string; reason?: 'closed' | 'escape' }>;
+export type GuestPopoverAnchorMessage = GuestCall<'popover-anchor', { id: string; active: boolean }>;
 /** Answers a host `resolve` by `id`. The host sends no `result` back for it. */
 export type GuestResolveResultMessage = Envelope & { type: 'resolve-result'; id: string; payload: ResolveResultPayload };
 /** Completes a host `action`. The host sends no `result` back. */
@@ -659,10 +701,19 @@ export type GuestFileSaveMessage = Envelope & { type: 'file-save' };
 /** The editor cannot open this file; the host shows its source instead. Fire and forget. */
 export type GuestFileUnsupportedMessage = Envelope & { type: 'file-unsupported' };
 
+export type GuestShellsSubscribeMessage = GuestCall<'shells-subscribe', GuestShellsSubscription>;
+export type GuestShellsUnsubscribeMessage = GuestCall<'shells-unsubscribe', { subscriptionId: string }>;
+export type GuestShellOutputMessage = GuestCall<'shell-output', GuestShellOutputRequest>;
+export type GuestShellStopMessage = GuestCall<'shell-stop', { shellId: string }>;
+
 export type GuestMessage =
   | GuestCall<'workspace-read', GuestWorkspaceQuery>
   | GuestCall<'workspace-subscribe', GuestWorkspaceSubscription>
   | GuestCall<'workspace-unsubscribe', { subscriptionId: string }>
+  | GuestShellsSubscribeMessage
+  | GuestShellsUnsubscribeMessage
+  | GuestShellOutputMessage
+  | GuestShellStopMessage
   | GuestCall<'storage', GuestStorageRequest>
   | GuestCall<'open-session', { sessionId: string }>
   | GuestHelloMessage
@@ -690,6 +741,10 @@ export type GuestMessage =
   | GuestBadgeMessage
   | GuestResizeMessage
   | GuestOpenCommitMessage
+  | GuestStatusControlsMessage
+  | GuestPopoverOpenMessage
+  | GuestPopoverCloseMessage
+  | GuestPopoverAnchorMessage
   | GuestActionResultMessage
   | GuestResolveResultMessage
   | GuestFileSnapshotResultMessage
@@ -733,7 +788,9 @@ export const isGenerateResult = (
 
 const HOST_PUSH_TYPES: ReadonlySet<string> = new Set([
   'workspace',
+  'shells',
   'ready', 'directory', 'session', 'connection', 'settings', 'session-lifecycle', 'item', 'resolve', 'action',
+  'status-control-event', 'popover-closed',
   'file-open', 'file-snapshot', 'file-saved',
 ]);
 

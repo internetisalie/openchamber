@@ -25,6 +25,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createShellEnvironmentLoader } from './shell-environment.mjs';
+import { isSplashColor } from './remote-page-policy.mjs';
 import { clearAppImageArgv0FromProcessEnv } from '@openchamber/web/server/lib/inherited-env.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -60,8 +61,7 @@ export const readLoginItemSettings = () => {
 export const shouldStartInBackground = (loginItemSettings = readLoginItemSettings()) => {
   return (
     process.argv.includes(BACKGROUND_START_ARG) ||
-    loginItemSettings?.wasOpenedAtLogin === true ||
-    loginItemSettings?.wasOpenedAsHidden === true
+    loginItemSettings?.wasOpenedAtLogin === true
   );
 };
 
@@ -159,9 +159,20 @@ export const readThemeSource = () => {
   return 'system';
 };
 
+// The UI language, for the few strings main shows before the renderer runs.
+export const readPreferredLocale = () => {
+  const settings = { ...readSettingsRoot(), ...readPreferencesValues() };
+  return typeof settings.locale === 'string' ? settings.locale : 'en';
+};
+
 export const getWindowIconPath = () => {
   if (process.platform !== 'win32' && process.platform !== 'linux') return undefined;
-  const iconFileName = process.platform === 'linux' ? 'icon.png' : 'icon.ico';
+  // A Windows dev copy shows the Windows icon behind construction tape
+  // (dev-icon-win.svg), like the macOS Dock's dev icon, in its taskbar, window
+  // and tray. GNOME takes the dock icon from the installed app's .desktop
+  // entry, whatever the window sets, so Linux keeps the usual icon.
+  const devWindowsIcon = isDev && process.platform === 'win32';
+  const iconFileName = devWindowsIcon ? 'dev-icon.ico' : process.platform === 'linux' ? 'icon.png' : 'icon.ico';
   const iconPath = isDev
     ? path.join(__dirname, 'resources', 'icons', iconFileName)
     : path.join(process.resourcesPath, 'icons', iconFileName);
@@ -212,6 +223,21 @@ export const macosMajorVersion = () => {
   return major === 10 ? minor : major;
 };
 
+let cachedMacTrafficLightPosition = null;
+
+/**
+ * Where macOS draws the window controls. The renderer sizes its titlebar per
+ * macOS version around this point (`Header.tsx`, `MiniChatLayout.tsx`), so
+ * change them together. macOS 26 draws 14px controls, centred in the 44px
+ * titlebar: y = (44 - 14) / 2. Older releases keep the calibrated 56px layout.
+ */
+export const macTrafficLightPosition = () => {
+  if (!cachedMacTrafficLightPosition) {
+    cachedMacTrafficLightPosition = Object.freeze(macosMajorVersion() >= 26 ? { x: 14, y: 15 } : { x: 16, y: 17 });
+  }
+  return cachedMacTrafficLightPosition;
+};
+
 const SPLASH_DEFAULTS = { bgLight: '#FFFCF0', fgLight: '#100F0F', bgDark: '#151313', fgDark: '#CECDC3' };
 
 const readSplashColor = (settings, key, fallback) => {
@@ -223,7 +249,9 @@ const readSplashColor = (settings, key, fallback) => {
     : undefined;
   const legacy = settings[`splash${key.charAt(0).toUpperCase()}${key.slice(1)}`];
   const value = typeof owned === 'string' ? owned : legacy;
-  return typeof value === 'string' && value.trim() ? value.trim() : fallback;
+  // Checked again on read: a value stored before the IPC check existed is
+  // still interpolated into the trusted splash page.
+  return isSplashColor(value) ? value : fallback;
 };
 
 const buildStartupSplashHtml = () => {
@@ -372,7 +400,9 @@ export const buildRendererAdditionalArguments = ({
   requestHeaders = {},
   bootOutcome = null,
   relayHostId = '',
+  explicitRuntime = false,
   trayEnabled = isMacMenuBarEnabled(),
+  nativeFrame = usesLinuxNativeFrame(),
 } = {}) => [
   `--openchamber-local-origin=${localOrigin}`,
   `--openchamber-api-base-url=${apiBaseUrl}`,
@@ -383,12 +413,23 @@ export const buildRendererAdditionalArguments = ({
   `--openchamber-tray-enabled=${trayEnabled ? '1' : '0'}`,
   `--openchamber-boot-outcome=${JSON.stringify(bootOutcome)}`,
   `--openchamber-relay-host-id=${relayHostId}`,
+  `--openchamber-explicit-runtime=${explicitRuntime ? '1' : '0'}`,
+  `--openchamber-native-frame=${nativeFrame ? '1' : '0'}`,
 ];
 
-export const usesFramelessChrome = process.platform === 'win32' || process.platform === 'linux';
+// Linux can opt into the desktop environment's own title bar (Settings ->
+// Desktop); it takes effect at the next start, like the window it shapes.
+const usesLinuxNativeFrame = () => (
+  process.platform === 'linux' && readSettingsRoot().desktopLinuxNativeFrame === true
+);
+
+export const usesFramelessChrome = () => (
+  process.platform === 'win32' || (process.platform === 'linux' && !usesLinuxNativeFrame())
+);
 
 export const buildMainWindowOptions = ({ bounds, backgroundColor, additionalArguments }) => {
-  const usesCustomTitleBar = process.platform === 'darwin' || usesFramelessChrome;
+  const frameless = usesFramelessChrome();
+  const usesCustomTitleBar = process.platform === 'darwin' || frameless;
   const options = {
     title: 'OpenChamber',
     width: bounds?.width ?? DEFAULT_WINDOW_WIDTH,
@@ -398,13 +439,13 @@ export const buildMainWindowOptions = ({ bounds, backgroundColor, additionalArgu
     icon: getWindowIconPath(),
     show: false,
     backgroundColor,
-    frame: usesFramelessChrome ? false : undefined,
+    frame: frameless ? false : undefined,
     autoHideMenuBar: process.platform !== 'darwin',
     // Electron's hiddenInset adds its own extra inset, which leaves the controls
     // visibly lower than the app header. Use a plain hidden title bar instead.
     titleBarStyle: usesCustomTitleBar ? 'hidden' : 'default',
     titleBarOverlay: false,
-    trafficLightPosition: process.platform === 'darwin' ? { x: 16, y: 17 } : undefined,
+    trafficLightPosition: process.platform === 'darwin' ? macTrafficLightPosition() : undefined,
     webPreferences: {
       additionalArguments,
       preload: resolvePreloadPath(),

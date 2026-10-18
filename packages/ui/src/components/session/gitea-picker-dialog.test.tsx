@@ -56,7 +56,7 @@ mock.module('@/stores/useGitStore', () => ({ useGitStore: <T,>(selector: (state:
 }) => T) => selector({ selectNestedRepo, ensureNestedRepos }) }));
 mock.module('@/lib/gitApi', () => ({ getRemotes: async () => [
   { name: 'origin' }, { name: 'upstream' },
-] }));
+], resolveGitRepositoryPrefix: async () => '', validateWorktreeDirectory: async () => true }));
 mock.module('@/components/views/git/NestedRepoPicker', () => ({
   NestedRepoPicker: ({ onSelectRepository }: { onSelectRepository: (folder: string) => void }) =>
     <button type="button" data-folder-picker onClick={() => onSelectRepository('/workspace/loom-base')}>Folder picker</button>,

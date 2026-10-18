@@ -13,6 +13,8 @@ import {
 } from '@/lib/magicPrompts';
 import { useMagicPromptsStore } from '@/stores/useMagicPromptsStore';
 import { useI18n } from '@/lib/i18n';
+import { useWaitingBlink } from '@/hooks/useDurationTicker';
+import { cn } from '@/lib/utils';
 import { SettingsPageLayout } from '@/components/sections/shared/SettingsPageLayout';
 import { SettingsSection } from '@/components/sections/shared/SettingsSection';
 import { SettingsInfoHint } from '@/components/sections/shared/SettingsInfoHint';
@@ -43,54 +45,6 @@ const PROMPT_PAGE_MAP: Record<string, PromptPageConfig> = {
     blocks: [
       { id: 'git.pr.generate.visible', titleKey: 'settings.magicPrompts.page.block.visiblePrompt' },
       { id: 'git.pr.generate.instructions', titleKey: 'settings.magicPrompts.page.block.instructions' },
-    ],
-  },
-  'github.pr.review': {
-    titleKey: 'settings.magicPrompts.page.group.githubPrReview.title',
-    descriptionKey: 'settings.magicPrompts.page.group.githubPrReview.description',
-    blocks: [
-      { id: 'github.pr.review.visible', titleKey: 'settings.magicPrompts.page.block.visiblePrompt' },
-      { id: 'github.pr.review.instructions', titleKey: 'settings.magicPrompts.page.block.instructions' },
-    ],
-  },
-  'github.issue.review': {
-    titleKey: 'settings.magicPrompts.page.group.githubIssueReview.title',
-    descriptionKey: 'settings.magicPrompts.page.group.githubIssueReview.description',
-    blocks: [
-      { id: 'github.issue.review.visible', titleKey: 'settings.magicPrompts.page.block.visiblePrompt' },
-      { id: 'github.issue.review.instructions', titleKey: 'settings.magicPrompts.page.block.instructions' },
-    ],
-  },
-  'linear.issue.review': {
-    titleKey: 'settings.magicPrompts.page.group.linearIssueReview.title',
-    descriptionKey: 'settings.magicPrompts.page.group.linearIssueReview.description',
-    blocks: [
-      { id: 'linear.issue.review.visible', titleKey: 'settings.magicPrompts.page.block.visiblePrompt' },
-      { id: 'linear.issue.review.instructions', titleKey: 'settings.magicPrompts.page.block.instructions' },
-    ],
-  },
-  'github.pr.checks.review': {
-    titleKey: 'settings.magicPrompts.page.group.githubPrFailedChecksReview.title',
-    descriptionKey: 'settings.magicPrompts.page.group.githubPrFailedChecksReview.description',
-    blocks: [
-      { id: 'github.pr.checks.review.visible', titleKey: 'settings.magicPrompts.page.block.visiblePrompt' },
-      { id: 'github.pr.checks.review.instructions', titleKey: 'settings.magicPrompts.page.block.instructions' },
-    ],
-  },
-  'github.pr.comments.review': {
-    titleKey: 'settings.magicPrompts.page.group.githubPrCommentsReview.title',
-    descriptionKey: 'settings.magicPrompts.page.group.githubPrCommentsReview.description',
-    blocks: [
-      { id: 'github.pr.comments.review.visible', titleKey: 'settings.magicPrompts.page.block.visiblePrompt' },
-      { id: 'github.pr.comments.review.instructions', titleKey: 'settings.magicPrompts.page.block.instructions' },
-    ],
-  },
-  'github.pr.comment.single': {
-    titleKey: 'settings.magicPrompts.page.group.githubSinglePrCommentReview.title',
-    descriptionKey: 'settings.magicPrompts.page.group.githubSinglePrCommentReview.description',
-    blocks: [
-      { id: 'github.pr.comment.single.visible', titleKey: 'settings.magicPrompts.page.block.visiblePrompt' },
-      { id: 'github.pr.comment.single.instructions', titleKey: 'settings.magicPrompts.page.block.instructions' },
     ],
   },
   'git.conflict.resolve': {
@@ -206,6 +160,14 @@ const PROMPT_PAGE_MAP: Record<string, PromptPageConfig> = {
       { id: 'session.fusion.codeInstructions', titleKey: 'settings.magicPrompts.page.block.codeFusionInstructions' },
     ],
   },
+  'memory.tidy': {
+    titleKey: 'settings.magicPrompts.page.group.memoryTidy.title',
+    descriptionKey: 'settings.magicPrompts.page.group.memoryTidy.description',
+    blocks: [
+      { id: 'memory.tidy.visible', titleKey: 'settings.magicPrompts.page.block.visiblePrompt' },
+      { id: 'memory.tidy.instructions', titleKey: 'settings.magicPrompts.page.block.instructions' },
+    ],
+  },
 };
 
 const hasOwn = (input: Record<string, string>, key: string) => Object.prototype.hasOwnProperty.call(input, key);
@@ -216,6 +178,7 @@ export const MagicPromptsPage: React.FC = () => {
   const tUnsafe = React.useCallback((key: string) => t(key as Parameters<typeof t>[0]), [t]);
   const selectedPromptId = useMagicPromptsStore((state) => state.selectedPromptId);
   const [loading, setLoading] = React.useState(true);
+  const blink = useWaitingBlink(loading);
   const [overrides, setOverrides] = React.useState<Record<string, string>>({});
   const [drafts, setDrafts] = React.useState<Record<string, string>>({});
   const [savingIds, setSavingIds] = React.useState<Record<string, boolean>>({});
@@ -320,7 +283,7 @@ export const MagicPromptsPage: React.FC = () => {
   if (loading) {
     return (
       <div className="py-6 px-6 flex items-center gap-2 text-muted-foreground">
-        <span className="inline-block h-1.5 w-1.5 rounded-full bg-current animate-busy-pulse" aria-label={t('settings.magicPrompts.page.loading.aria')} />
+        <span className={cn('inline-block h-1.5 w-1.5 rounded-full bg-current', blink)} aria-label={t('settings.magicPrompts.page.loading.aria')} />
         <span className="typography-ui">{t('settings.magicPrompts.page.loading.text')}</span>
       </div>
     );

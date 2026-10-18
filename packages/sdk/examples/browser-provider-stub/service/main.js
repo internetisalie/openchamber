@@ -5,8 +5,9 @@ import { deflateSync } from "node:zlib";
 var GUEST_SCROLLING_ATTRIBUTE = "data-oc-scrolling";
 var GUEST_SCROLLBAR_CSS = `
 :root {
-  --oc-scrollbar-thumb: color-mix(in srgb, var(--oc-muted, currentColor) 40%, transparent);
-  --oc-scrollbar-thumb-hover: color-mix(in srgb, var(--oc-muted, currentColor) 65%, transparent);
+  /* Quiet at rest like the app's own thumbs; hover gives a clear grab target. */
+  --oc-scrollbar-thumb: color-mix(in srgb, var(--oc-muted, currentColor) 18%, transparent);
+  --oc-scrollbar-thumb-hover: color-mix(in srgb, var(--oc-muted, currentColor) 36%, transparent);
   scrollbar-gutter: stable;
 }
 * {
@@ -74,6 +75,8 @@ var HOST_REQUEST_ERROR_CODES = [
   "NO_INTEGRATION",
   "NO_SERVICE",
   "SERVICE_FAILED",
+  "REQUEST_FAILED",
+  "RESPONSE_TOO_LARGE",
   "NO_SESSION",
   "SESSION_BUSY",
   "NOT_GRANTED",
@@ -91,6 +94,7 @@ var serviceStatusSet = new Set(SERVICE_STATUS_VALUES);
 var fileStatKindSet = new Set(GUEST_FILE_STAT_KINDS);
 var HOST_PUSH_TYPES = new Set([
   "workspace",
+  "shells",
   "ready",
   "directory",
   "session",
@@ -100,6 +104,8 @@ var HOST_PUSH_TYPES = new Set([
   "item",
   "resolve",
   "action",
+  "status-control-event",
+  "popover-closed",
   "file-open",
   "file-snapshot",
   "file-saved"
@@ -116,7 +122,8 @@ var BROWSER_CONTROL_ACTIONS = [
   "browser.forward",
   "browser.inspect",
   "browser.capture",
-  "browser.resize"
+  "browser.resize",
+  "browser.close"
 ];
 var BROWSER_PROVIDER_IDLE_MS = 10 * 60000;
 var CONTROL_ACTIONS = new Set(BROWSER_CONTROL_ACTIONS);
@@ -381,6 +388,8 @@ Name: ${page.fields.get("#name") ?? ""}`,
     case "browser.resize":
       page.viewport = request.parameters.viewport;
       return { ok: true, data: { viewport: viewport() } };
+    case "browser.close":
+      return { ok: false, error: "This browser has a single page and no tabs; there is nothing to close." };
   }
 };
 var surface = {

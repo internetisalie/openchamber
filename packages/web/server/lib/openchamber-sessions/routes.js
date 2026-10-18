@@ -1,9 +1,20 @@
+import { asNonEmptyString } from '../shared/guards.js';
 import express from 'express';
 import {
   createWorktree as createWorktreeDefault,
+  getBranches as getBranchesDefault,
+  getPathsWithoutChanges as getPathsWithoutChangesDefault,
   getWorktreeBootstrapStatus as getWorktreeBootstrapStatusDefault,
+  listStashes as listStashesDefault,
+  removeWorktree as removeWorktreeDefault,
   resolvePrimaryWorktreeRoot,
+  resolveWorktreeTopLevel as resolveWorktreeTopLevelDefault,
+  stashApply as stashApplyDefault,
+  stashDrop as stashDropDefault,
+  stashPush as stashPushDefault,
+  validateWorktreeDirectory as validateWorktreeDirectoryDefault,
 } from '../git/index.js';
+import { parseModelSelection } from '../opencode/config-v2.js';
 import { expandSnippets } from '../opencode/snippets.js';
 import { AUTO_MODEL_REF, isAutoModel } from '../routing/defaults.js';
 import { parseScheduledCommandPrompt } from '../scheduled-tasks/runtime.js';
@@ -14,12 +25,9 @@ import { createArchiveStore } from './archive-store.js';
 import { applyForkInheritance } from './fork-inheritance.js';
 import { createOpenCodeClient as defaultCreateOpenCodeClient } from './opencode-client.js';
 import { createSessionMetadataStore, createOpenCodeSessionMetadata } from './session-metadata-store.js';
-
-const asNonEmptyString = (value) => {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-};
+import { buildLinkedIssuesPatch, parseLinkOperation } from './session-linked-issues.js';
+import { createSessionWorktreeMover } from './worktree-move.js';
+import { createStartDirectoryResolver } from './worktree-start-directory.js';
 
 const asList = (value) => (Array.isArray(value) ? value : []);
 
@@ -90,12 +98,25 @@ const resolveVariant = (models, providerID, modelID, variant) => {
   return asList(model.variants).some((entry) => entry?.id === normalized) ? normalized : undefined;
 };
 
-// Config `model` is either "providerID/modelID" or the expanded object form.
-const parseConfigModel = (value) => {
-  if (typeof value === 'string') return splitModel(value);
-  const providerID = asNonEmptyString(value?.providerID);
-  const modelID = asNonEmptyString(value?.model);
-  return providerID && modelID ? { providerID, modelID } : null;
+const isModelHidden = (hiddenModels, providerID, modelID) => hiddenModels.some(
+  (hidden) => hidden?.providerID === providerID && hidden?.modelID === modelID,
+);
+
+// The pick when nothing is configured or remembered: Big Pickle, else the first
+// model. A model the user hid in the picker is skipped; configured defaults never
+// come through here, so they stay honoured even when hidden. With every model
+// hidden the session still needs one, so the unfiltered pick stands.
+const resolveFallbackModel = (models, hiddenModels) => {
+  const isVisible = (providerID, modelID) => !isModelHidden(hiddenModels, providerID, modelID);
+  const candidates = models.filter(
+    (entry) => asNonEmptyString(entry?.providerID) && asNonEmptyString(entry?.modelID),
+  );
+  const bigPickle = findCatalogModel(candidates, FALLBACK_PROVIDER_ID, FALLBACK_MODEL_ID);
+  const pick = (bigPickle && isVisible(bigPickle.providerID, bigPickle.modelID) ? bigPickle : null)
+    || candidates.find((entry) => isVisible(entry.providerID, entry.modelID))
+    || bigPickle
+    || candidates[0];
+  return pick ? { providerID: pick.providerID, modelID: pick.modelID } : null;
 };
 
 const resolveProjectDefaults = (settings, directory, projectId) => {
@@ -134,14 +155,16 @@ const fetchSelectionInputs = async ({ client, readSettingsFromDiskMigrated }) =>
     if (!info) continue;
     const agent = asNonEmptyString(info.default_agent);
     if (agent) opencodeDefaultAgent = agent;
-    const model = parseConfigModel(info.model);
+    // Config `model` is the v2 selection spelling: "provider/model#variant" or
+    // the expanded object form. The canonical parser folds both.
+    const model = parseModelSelection(info.model);
     if (model) opencodeDefaultModel = model;
   }
 
   return { settings, models, agents, opencodeDefaultAgent, opencodeDefaultModel };
 };
 
-const resolveDefaultSelection = ({ agents, models, settings, projectDefaults, opencodeDefaultAgent, opencodeDefaultModel }) => {
+const resolveDefaultSelection = ({ agents, models, settings, projectDefaults, opencodeDefaultAgent, opencodeDefaultModel, autoAvailable }) => {
   const primaryAgents = agents.filter((agent) => isPrimaryAgentMode(agent?.mode) && agent?.hidden !== true);
   let resolvedAgent = null;
   const projectDefaultAgent = asNonEmptyString(projectDefaults?.defaultAgent);
@@ -170,8 +193,11 @@ const resolveDefaultSelection = ({ agents, models, settings, projectDefaults, op
 
   let model = null;
   let variant;
-  const projectDefaultModel = parseConfigModel(projectDefaults?.defaultModel);
-  const settingsDefaultModel = parseConfigModel(settings?.defaultModel);
+  // Settings and project defaults store `provider/model` with the variant in
+  // its own field, so these two stay a plain split; the OpenCode config model
+  // can carry its variant and is parsed with the canonical parser.
+  const projectDefaultModel = splitModel(projectDefaults?.defaultModel);
+  const settingsDefaultModel = splitModel(settings?.defaultModel);
   // A saved choice is honoured even when the catalog has not listed it yet: a
   // discovery gap must not silently move the user onto another model.
   if (projectDefaultModel) {
@@ -191,19 +217,23 @@ const resolveDefaultSelection = ({ agents, models, settings, projectDefaults, op
   }
 
   if (!model && opencodeDefaultModel) {
-    model = opencodeDefaultModel;
+    model = { providerID: opencodeDefaultModel.providerID, modelID: opencodeDefaultModel.modelID };
+    variant = resolveVariant(models, model.providerID, model.modelID, opencodeDefaultModel.variant);
   }
 
-  if (!model && hasCatalogModel(models, FALLBACK_PROVIDER_ID, FALLBACK_MODEL_ID)) {
-    model = { providerID: FALLBACK_PROVIDER_ID, modelID: FALLBACK_MODEL_ID };
+  // The model last picked in a chat composer. Like a saved default it is kept
+  // through catalog gaps; a model hidden since, or Auto on a server without
+  // routing, is skipped.
+  const hiddenModels = asList(settings?.hiddenModels);
+  const lastSelectedModel = splitModel(settings?.lastSelectedModel);
+  if (!model
+    && lastSelectedModel
+    && !isModelHidden(hiddenModels, lastSelectedModel.providerID, lastSelectedModel.modelID)
+    && (autoAvailable || !isAutoModel(lastSelectedModel))) {
+    model = lastSelectedModel;
   }
 
-  if (!model) {
-    const first = models[0];
-    if (asNonEmptyString(first?.providerID) && asNonEmptyString(first?.modelID)) {
-      model = { providerID: first.providerID, modelID: first.modelID };
-    }
-  }
+  if (!model) model = resolveFallbackModel(models, hiddenModels);
 
   return {
     agent: resolvedAgent?.id,
@@ -270,6 +300,27 @@ const latestCompletedAssistantMessageID = async ({ client, sessionID }) => {
 };
 
 /**
+ * The id of the newest `idle` record OpenCode appended to the session (it
+ * marks the end of a run), null when the session has none, or undefined when
+ * the history could not be read. A later delivery compares record ids, never
+ * clock times, so a remote OpenCode with a skewed clock still matches.
+ */
+const latestIdleRecordID = async ({ client, sessionID }) => {
+  let messages;
+  try {
+    messages = await listMessages({ client, sessionID, limit: 100 });
+  } catch {
+    return undefined;
+  }
+  let latest = null;
+  for (const message of messages) {
+    if (message?.type !== 'idle' || !asNonEmptyString(message?.id)) continue;
+    if (!latest || (message.time?.created || 0) >= (latest.time?.created || 0)) latest = message;
+  }
+  return latest ? latest.id : null;
+};
+
+/**
  * Upper bound on one archive batch.
  *
  * The batch is a bounded amount of work on one request, and callers with more
@@ -318,7 +369,7 @@ const resolveRequestedDirectory = async ({ payload, readSettingsFromDiskMigrated
     }
     const validated = await validateDirectoryPath(project.path);
     return validated.ok
-      ? { ok: true, directory: validated.directory, projectId: projectID }
+      ? { ok: true, directory: validated.directory, projectId: projectID, projectPath: project.path }
       : { ok: false, status: 400, error: validated.error || 'Invalid project directory' };
   }
 
@@ -332,7 +383,7 @@ const resolveRequestedDirectory = async ({ payload, readSettingsFromDiskMigrated
     const { root } = await resolvePrimaryWorktreeRoot(validated.directory);
     project = projects.find((entry) => entry.path === root);
   }
-  return { ok: true, directory: validated.directory, ...(project ? { projectId: project.id } : {}) };
+  return { ok: true, directory: validated.directory, ...(project ? { projectId: project.id, projectPath: project.path } : {}) };
 };
 
 // createWorktree returns while the worktree is still being populated in the
@@ -343,6 +394,27 @@ const resolveRequestedDirectory = async ({ payload, readSettingsFromDiskMigrated
 // session and dispatching.
 const WORKTREE_BOOTSTRAP_TIMEOUT_MS = 60_000;
 const WORKTREE_BOOTSTRAP_POLL_MS = 150;
+
+/**
+ * A worktree from a pull or merge request: its number, and the folder and
+ * branch names when the caller chose them. The head, the fork and its remote
+ * come from the provider; a start ref or upstream would contradict them.
+ */
+const resolvePullRequestInput = (payload) => {
+  if (payload?.pullRequest === undefined) return null;
+  if (!Number.isSafeInteger(payload.pullRequest) || payload.pullRequest < 1) {
+    throw new OpenChamberControlError('pullRequest must be a pull or merge request number, such as 42', 400);
+  }
+  if (payload.worktree?.startRef !== undefined || payload.setUpstream !== undefined) {
+    throw new OpenChamberControlError('pullRequest checks out the pull request\'s own branch; do not combine it with startRef or setUpstream', 400);
+  }
+  const input = { number: payload.pullRequest };
+  const name = asNonEmptyString(payload.worktree?.name);
+  if (name) input.name = name;
+  const branchName = asNonEmptyString(payload.worktree?.branchName);
+  if (branchName) input.branchName = branchName;
+  return input;
+};
 
 const resolveWorktreeInput = (payload) => {
   if (!payload?.worktree || typeof payload.worktree !== 'object') return null;
@@ -371,6 +443,11 @@ export const createOpenChamberSessionService = (dependencies) => {
     broadcastGlobalUiEvent,
     createSessionGoal: createSessionGoalOverride,
     sessionKnowledgeRuntime = null,
+    worktreeBootstrapStore,
+    hydrateWorktreeCheckout,
+    // Creates a worktree from a pull or merge request through the Git routes'
+    // contributor pipeline. Absent where contributor worktrees are not served.
+    createChangeRequestWorktree = null,
     dataDir = null,
     archiveStore: injectedArchiveStore = null,
     sessionMetadataStore: injectedSessionMetadataStore = null,
@@ -378,14 +455,33 @@ export const createOpenChamberSessionService = (dependencies) => {
     // store, broadcast, and tell the goal loop. Falls back to store+broadcast
     // when it is absent, which is what module tests use.
     persistSessionMetadata = null,
+    // Same story for a write decided from the record at write time (the
+    // session links the UI owns). Falls back to store+broadcast in module
+    // tests.
+    updateSessionMetadata = null,
     createOpenCodeClient = defaultCreateOpenCodeClient,
     createWorktree = createWorktreeDefault,
     getWorktreeBootstrapStatus = getWorktreeBootstrapStatusDefault,
+    // What moving a session into a new worktree needs from git beyond creation.
+    removeWorktree = removeWorktreeDefault,
+    getBranches = getBranchesDefault,
+    stashPush = stashPushDefault,
+    getPathsWithoutChanges = getPathsWithoutChangesDefault,
+    stashApply = stashApplyDefault,
+    stashDrop = stashDropDefault,
+    listStashes = listStashesDefault,
+    // A project opened on a folder of its repository starts the sessions of its
+    // new worktrees in the same folder (`./worktree-start-directory.js`).
+    resolveWorktreeTopLevel = resolveWorktreeTopLevelDefault,
+    validateWorktreeDirectory = validateWorktreeDirectoryDefault,
     // Auto routing. Sessions dispatched here talk to OpenCode through the SDK,
     // not through the proxy that intercepts the Auto sentinel, so a default of
     // `openchamber/auto` (Session Defaults) is resolved here before the
     // session is switched onto it. Null when routing is not wired in.
     resolveAutoSelection = null,
+    // Whether routing can run Auto right now (the composer's own test). Null
+    // when routing is not wired in.
+    isAutoReady = null,
   } = dependencies;
 
   if ((!injectedArchiveStore || !injectedSessionMetadataStore) && !dataDir) {
@@ -408,10 +504,81 @@ export const createOpenChamberSessionService = (dependencies) => {
     directory,
   });
 
-  const waitForWorktreeBootstrapReady = async ({ directory }) => {
+  const resolveStartDirectory = createStartDirectoryResolver({ resolveWorktreeTopLevel, validateWorktreeDirectory });
+
+  const toPathKey = (value) => String(value || '').replace(/\\/g, '/').replace(/\/+$/, '');
+  const holdsPath = (outer, inner) => inner === outer || inner.startsWith(`${outer}/`);
+  // The checkout root is the directory minus its folder, in the same spelling as
+  // the project paths; git's own root has symlinks resolved. Null when unknown,
+  // and then path containment alone decides.
+  const checkoutRootOf = (directoryKey, folder) => {
+    if (folder === null) return null;
+    if (folder === '') return directoryKey;
+    return directoryKey.endsWith(`/${folder}`) ? directoryKey.slice(0, -folder.length - 1) : null;
+  };
+
+  /**
+   * A session in a linked worktree (`<wtA>/ai/src`) belongs to no registered
+   * project path. Its folder inside that checkout (`ai/src`) names the project
+   * the same way the UI does: the longest registered project in the primary
+   * checkout whose folder holds that one, so `/repo/ai` wins over `/repo`.
+   */
+  const projectPathInPrimaryCheckout = async (directory, folder, projects) => {
+    const primaryRoot = toPathKey((await resolvePrimaryWorktreeRoot(directory)).root);
+    let best = null;
+    for (const project of projects) {
+      const projectKey = toPathKey(project.path);
+      if (!holdsPath(primaryRoot, projectKey)) continue;
+      const projectFolder = projectKey.slice(primaryRoot.length).replace(/^\/+/, '');
+      if (projectFolder && !holdsPath(projectFolder, folder)) continue;
+      if (!best || projectFolder.length > best.folder.length) best = { path: project.path, folder: projectFolder };
+    }
+    return best?.path ?? null;
+  };
+
+  /**
+   * Best effort: the path of the project the directory belongs to. That is the
+   * registered project whose path contains it (the longest one, so a session in
+   * `/repo/ai/src` belongs to the project `/repo/ai`) inside the same checkout;
+   * a project that only contains the checkout, such as `/repo` around a worktree
+   * at `/repo/.worktrees/a`, does not count. Else the project whose folder holds
+   * the directory's folder in the primary checkout, else the project resolved
+   * the way a create request does, else the directory itself.
+   */
+  const projectPathFor = async (directory) => {
+    const projects = await readSettingsFromDiskMigrated()
+      .then((settings) => sanitizeProjects(settings?.projects || []))
+      .catch(() => []);
+    const directoryKey = toPathKey(directory);
+    // `prefix` is absent when git could not read the directory.
+    const prefix = (await resolveWorktreeTopLevel(directory).catch(() => null))?.prefix;
+    const folder = prefix === undefined ? null : toPathKey(prefix);
+    const checkoutRoot = checkoutRootOf(directoryKey, folder);
+    let containing = null;
+    for (const project of projects) {
+      const projectKey = toPathKey(project.path);
+      if (!holdsPath(projectKey, directoryKey)) continue;
+      if (checkoutRoot && !holdsPath(checkoutRoot, projectKey)) continue;
+      if (!containing || projectKey.length > toPathKey(containing).length) containing = project.path;
+    }
+    if (containing) return containing;
+    if (folder !== null) {
+      const inPrimaryCheckout = await projectPathInPrimaryCheckout(directory, folder, projects).catch(() => null);
+      if (inPrimaryCheckout) return inPrimaryCheckout;
+    }
+    const resolved = await resolveRequestedDirectory({
+      payload: { directory },
+      readSettingsFromDiskMigrated,
+      sanitizeProjects,
+      validateDirectoryPath,
+    }).catch(() => null);
+    return resolved?.ok ? resolved.projectPath ?? resolved.directory : directory;
+  };
+
+  const waitForWorktreeBootstrapReady = async ({ directory, bootstrapStore }) => {
     const deadline = Date.now() + WORKTREE_BOOTSTRAP_TIMEOUT_MS;
     for (;;) {
-      const status = await getWorktreeBootstrapStatus(directory);
+      const status = await getWorktreeBootstrapStatus(directory, { bootstrapStore });
       if (status?.status === 'failed') {
         throw new OpenChamberControlError(`Worktree bootstrap failed: ${status.error || 'unknown error'}`, 500);
       }
@@ -511,9 +678,15 @@ export const createOpenChamberSessionService = (dependencies) => {
     }
     if (!model || !agent) {
       const inputs = await fetchSelectionInputs({ client, readSettingsFromDiskMigrated });
+      // Asked only when the last chat pick is Auto; an unanswerable question
+      // skips that pick rather than refusing the request.
+      const autoAvailable = isAutoModel(splitModel(inputs.settings?.lastSelectedModel))
+        && isAutoReady !== null
+        && await isAutoReady().catch(() => false);
       const defaults = resolveDefaultSelection({
         ...inputs,
         projectDefaults: resolveProjectDefaults(inputs.settings, directory, projectId),
+        autoAvailable,
       });
       if (!model) {
         model = defaults.model;
@@ -589,28 +762,21 @@ export const createOpenChamberSessionService = (dependencies) => {
       throw markGoalPartial(error);
     }
 
-    // A session the agent dispatched has no UI to attach the project's
-    // standing context, so it is asked for here. Never fails the dispatch:
+    // A session the agent dispatched has no UI to write the project's
+    // standing context into it, so it is written here. `sync` never throws:
     // a session that runs without its background beats one that never runs.
-    const knowledge = sessionKnowledgeRuntime
-      ? await sessionKnowledgeRuntime.resolvePendingForSession(sessionID, directory)
-        .catch(() => ({ text: '', signature: '' }))
-      : { text: '', signature: '' };
-    // After the send is accepted, so a rejected dispatch carries it again.
-    const recordKnowledge = async () => {
-      if (knowledge.text && sessionKnowledgeRuntime) {
-        await sessionKnowledgeRuntime.recordDelivered(sessionID, directory, knowledge.signature)
-          .catch(() => undefined);
+    if (sessionKnowledgeRuntime) {
+      try {
+        const session = await client.session.get({ sessionID });
+        const sessionDirectory = asNonEmptyString(session?.location?.directory);
+        if (sessionDirectory) await sessionKnowledgeRuntime.sync(sessionID, sessionDirectory);
+      } catch (error) {
+        console.warn('[OpenChamberSessions] Failed to read session directory for knowledge sync:', error?.message || error);
       }
-    };
+    }
 
     if (resolvedCommand) {
       try {
-        // The command route takes no extra parts, so the context goes in
-        // first as a synthetic message that does not start execution.
-        if (knowledge.text) {
-          await client.session.synthetic({ sessionID, text: knowledge.text, resume: false });
-        }
         await client.session.command({
           sessionID,
           // OpenCode 2.0.8 renamed the command body field `command` to `name`.
@@ -620,13 +786,9 @@ export const createOpenChamberSessionService = (dependencies) => {
       } catch (error) {
         throw markGoalPartial(error);
       }
-      await recordKnowledge();
     } else {
       let landedMessageID = null;
       try {
-        if (knowledge.text) {
-          await client.session.synthetic({ sessionID, text: knowledge.text, resume: false });
-        }
         const sent = await client.session.prompt({ sessionID, text: expandedPrompt });
         landedMessageID = asNonEmptyString(sent?.id);
         if (goalInput.enabled) {
@@ -641,7 +803,6 @@ export const createOpenChamberSessionService = (dependencies) => {
       } catch (error) {
         throw markGoalPartial(error);
       }
-      await recordKnowledge();
       if (!landedMessageID) {
         // v2 answers a prompt with the inbox item it recorded. No item id means
         // nothing is queued, so the dispatch must not be claimed as done.
@@ -696,6 +857,45 @@ export const createOpenChamberSessionService = (dependencies) => {
     const id = asNonEmptyString(sessionID);
     if (!id) throw new OpenChamberControlError('a session id is required', 400);
     return { metadata: await sessionMetadataStore.get(id, { directory }) };
+  };
+
+  /**
+   * A metadata change decided from the record as it is when this session's
+   * write turn comes. Like `writeMetadata`, the injected writer owns the
+   * store and the broadcast; the fallback is what module tests use.
+   */
+  const updateMetadata = async (sessionID, decide, directory = '') => {
+    if (updateSessionMetadata !== null) {
+      return updateSessionMetadata(sessionID, decide, { directory });
+    }
+    const result = await sessionMetadataStore.updateSessionMetadata(sessionID, decide, { directory });
+    if (result.changed) broadcastMetadata(sessionID, result.metadata);
+    return result;
+  };
+
+  /**
+   * Link or unlink items on a session the way the UI does (`setLinkedIssue`
+   * and `addLinkedIssues`): the list transform runs against the record as it
+   * is when this session's write turn comes, so a link an agent made while
+   * the request was in flight is read by the decide step instead of being
+   * overwritten by a stale client snapshot. The whole `linked_issues` array
+   * is never accepted from a client. Answers the full metadata afterwards,
+   * like the metadata route.
+   */
+  const setSessionLinks = async (sessionID, payload = {}) => {
+    const id = asNonEmptyString(sessionID);
+    if (!id) throw new OpenChamberControlError('a session id is required', 400);
+    // The schema decides what a link operation is; a body of any other shape
+    // is a 400, not something to pre-narrow here.
+    const parsed = parseLinkOperation(payload);
+    if (!parsed.ok) throw new OpenChamberControlError(parsed.error, 400);
+    const directory = asNonEmptyString(payload?.directory) || '';
+    const { metadata } = await updateMetadata(
+      id,
+      (current) => buildLinkedIssuesPatch(current, parsed.entries, parsed.linked),
+      directory,
+    );
+    return { metadata };
   };
 
   const broadcastArchived = (sessionID, archivedAt) => {
@@ -761,16 +961,20 @@ export const createOpenChamberSessionService = (dependencies) => {
       throw new OpenChamberControlError(resolvedDirectory.error, resolvedDirectory.status || 400);
     }
 
-    const worktreeInput = resolveWorktreeInput(payload);
+    const pullRequestInput = resolvePullRequestInput(payload);
+    const worktreeInput = pullRequestInput ? null : resolveWorktreeInput(payload);
     let worktree = null;
     let sessionDirectory = resolvedDirectory.directory;
-    if (payload?.worktree && !worktreeInput) {
+    if (payload?.worktree && !worktreeInput && !pullRequestInput) {
       throw new OpenChamberControlError('worktree.name is required when worktree is provided', 400);
     }
 
     if (typeof waitForOpenCodeReady === 'function') await waitForOpenCodeReady(10_000, 250);
 
+    const projectPath = resolvedDirectory.projectPath ?? resolvedDirectory.directory;
     if (prompt) {
+      // Validated where the request points, the project's own folder: a new
+      // worktree does not exist yet, and its start folder mirrors this one.
       await validateRequestedSelection({
         directory: resolvedDirectory.directory,
         requestedModel: model,
@@ -779,10 +983,52 @@ export const createOpenChamberSessionService = (dependencies) => {
       });
     }
 
-    if (worktreeInput) {
-      worktree = await createWorktree(resolvedDirectory.directory, worktreeInput);
+    if (pullRequestInput) {
+      // Never a plain branch worktree instead: without the contributor
+      // pipeline the request is refused.
+      if (!(createChangeRequestWorktree instanceof Function)
+        || !(worktreeBootstrapStore?.read instanceof Function)
+        || !(worktreeBootstrapStore?.write instanceof Function)) {
+        throw new OpenChamberControlError('Worktrees from pull requests are not available here', 501);
+      }
+      try {
+        worktree = await createChangeRequestWorktree({ directory: resolvedDirectory.directory, ...pullRequestInput });
+      } catch (error) {
+        throw asControlError(error, `Failed to create a worktree from pull request ${pullRequestInput.number}`);
+      }
       sessionDirectory = worktree.path;
-      await waitForWorktreeBootstrapReady({ directory: sessionDirectory });
+      await waitForWorktreeBootstrapReady({
+        directory: sessionDirectory,
+        bootstrapStore: worktreeBootstrapStore,
+      });
+    } else if (worktreeInput) {
+      if (!(hydrateWorktreeCheckout instanceof Function)
+        || !(worktreeBootstrapStore?.read instanceof Function)
+        || !(worktreeBootstrapStore?.write instanceof Function)) {
+        throw new OpenChamberControlError('Worktree checkout bootstrap is not available', 501);
+      }
+      const hydrateCheckout = ({ directory, parentRemoteName }) => hydrateWorktreeCheckout({
+        directory,
+        parentDirectory: resolvedDirectory.directory,
+        parentRemoteName,
+      });
+      worktree = await createWorktree(resolvedDirectory.directory, worktreeInput, {
+        bootstrapStore: worktreeBootstrapStore,
+        hydrateCheckout,
+      });
+      sessionDirectory = worktree.path;
+      await waitForWorktreeBootstrapReady({
+        directory: sessionDirectory,
+        bootstrapStore: worktreeBootstrapStore,
+      });
+    }
+
+    let startDirectoryFallback = null;
+    if (worktree) {
+      ({ directory: sessionDirectory, fallback: startDirectoryFallback } = await resolveStartDirectory({
+        projectPath,
+        worktreeRoot: sessionDirectory,
+      }));
     }
 
     const baseUrl = openCodeBaseUrl();
@@ -826,6 +1072,8 @@ export const createOpenChamberSessionService = (dependencies) => {
       ...(goalInput.enabled ? { goalEnabled: true } : {}),
       ...(goalInput.tokenBudget ? { goalTokenBudget: goalInput.tokenBudget } : {}),
     };
+    // Set when the project's folder could not be used and the session started at the worktree root.
+    if (startDirectoryFallback) result.startDirectoryFallback = startDirectoryFallback;
 
     try {
       emitSessionCreatedEvent?.({
@@ -906,6 +1154,7 @@ export const createOpenChamberSessionService = (dependencies) => {
         client,
         sessionID: targetSessionID,
       });
+      const baselineIdleRecordId = await latestIdleRecordID({ client, sessionID: targetSessionID });
 
       const dispatch = await dispatchPrompt({
         client,
@@ -928,6 +1177,7 @@ export const createOpenChamberSessionService = (dependencies) => {
         ...(action === 'fork' ? { sourceSessionId: sourceSessionID } : {}),
         ...(targetSession?.title ? { title: targetSession.title } : {}),
         ...(baselineAssistantMessageId ? { baselineAssistantMessageId } : {}),
+        ...(baselineIdleRecordId !== undefined ? { baselineIdleRecordId } : {}),
         model: dispatch.model,
         ...(dispatch.agent ? { agent: dispatch.agent } : {}),
         ...(dispatch.variant ? { variant: dispatch.variant } : {}),
@@ -979,16 +1229,77 @@ export const createOpenChamberSessionService = (dependencies) => {
     }
   };
 
+  const worktreeMover = createSessionWorktreeMover({
+    createWorktree,
+    removeWorktree,
+    getBranches,
+    stashPush,
+    getPathsWithoutChanges,
+    stashApply,
+    stashDrop,
+    listStashes,
+    resolvePrimaryWorktreeRoot,
+    bootstrapStore: worktreeBootstrapStore,
+    waitForWorktreeReady: (directory) => waitForWorktreeBootstrapReady({ directory, bootstrapStore: worktreeBootstrapStore }),
+    resolveStartDirectory: async ({ sourceDirectory, worktreeRoot }) => resolveStartDirectory({
+      projectPath: await projectPathFor(sourceDirectory),
+      worktreeRoot,
+    }),
+    hydrateCheckout: hydrateWorktreeCheckout,
+    // The move is global in v2: no directory header, the session id names it.
+    moveSession: (sessionID, directory) => clientFor(undefined).session.move({ sessionID, directory }),
+  });
+
+  /**
+   * Move an existing session into a new worktree of its repository, carrying
+   * the files the agent names along (`./worktree-move.js`). The worktree needs
+   * the same bootstrap as `create` gives a new one.
+   */
+  const moveToWorktree = async (sessionID, payload = {}) => {
+    if (!(hydrateWorktreeCheckout instanceof Function)
+      || !(worktreeBootstrapStore?.read instanceof Function)
+      || !(worktreeBootstrapStore?.write instanceof Function)) {
+      throw new OpenChamberControlError('Worktree checkout bootstrap is not available', 501);
+    }
+    await waitForOpenCodeReady?.(10_000, 250);
+    return worktreeMover.move({
+      sessionId: sessionID,
+      directory: asNonEmptyString(payload.directory),
+      name: asNonEmptyString(payload.worktree?.name),
+      branchName: asNonEmptyString(payload.worktree?.branchName),
+      startRef: asNonEmptyString(payload.worktree?.startRef),
+      existingBranch: asNonEmptyString(payload.worktree?.existingBranch),
+      carry: payload.carry,
+    });
+  };
+
+  // The control service's session reads resolve projectId through the same
+  // lookup as create/send/fork, so an unknown project or a missing project
+  // folder fails the same way everywhere.
+  const resolveDirectory = async (payload) => {
+    const resolved = await resolveRequestedDirectory({
+      payload,
+      readSettingsFromDiskMigrated,
+      sanitizeProjects,
+      validateDirectoryPath,
+    });
+    if (!resolved.ok) throw new OpenChamberControlError(resolved.error, resolved.status || 400);
+    return resolved.directory;
+  };
+
   return {
     create,
+    resolveDirectory,
     archive,
     unarchive,
     archiveStore,
     sessionMetadataStore,
     setMetadata,
     getMetadata,
+    setSessionLinks,
     send: (sessionID, payload) => runExisting('send', sessionID, payload),
     fork: (sessionID, payload) => runExisting('fork', sessionID, payload),
+    moveToWorktree,
   };
 };
 
@@ -1056,6 +1367,15 @@ export const registerOpenChamberSessionRoutes = (app, dependencies) => {
     } catch (error) {
       console.error('[OpenChamberSessions] failed to unarchive sessions:', error);
       return sendServiceError(res, error, 'Failed to unarchive sessions');
+    }
+  });
+
+  app.post('/api/openchamber/sessions/:sessionId/links', express.json({ limit: '1mb' }), async (req, res) => {
+    try {
+      return res.json(await service.setSessionLinks(req.params.sessionId, req.body));
+    } catch (error) {
+      console.error('[OpenChamberSessions] failed to update session links:', error);
+      return sendServiceError(res, error, 'Failed to update session links');
     }
   });
 

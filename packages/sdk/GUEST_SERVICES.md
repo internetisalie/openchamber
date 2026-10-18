@@ -111,6 +111,7 @@ Error codes:
 - `DISABLED` — extension paused in Settings → Extensions (service stopped; tokens/grants stay)
 - `SERVICE_FAILED` — process crashed or never became ready; nothing was sent to it
 - `REQUEST_FAILED` — the request was sent but got no usable answer (timeout, dropped connection); the service may have acted on it
+- `RESPONSE_TOO_LARGE` — the service answered with more than `GUEST_REQUEST_RESPONSE_MAX` bytes; it acted on the request, the answer is dropped whole
 - Existing: `HOST_TIMEOUT`, `HOST_REJECTED`, `HOST_UNAVAILABLE`, `BAD_PATH`
 
 Server routes (authenticated UI session):
@@ -155,6 +156,7 @@ Ship `service/main.js` already built. Same packaging rule as `panel/main.js`.
 | Panel open | Status via `serviceStatus`. Dead service restarts on the next `serviceRequest`. |
 | Uninstall | SIGTERM, then kill after timeout. Clear grant and socket overrides. Path-install does not delete the user's folder. |
 | Host quit | Kill every guest service. |
+| Host crash | The service keeps running until the next host start, which stops it (SIGTERM, then kill after timeout) before spawning any service. |
 | Crash | Status `failed`. Panel sees `SERVICE_FAILED` / status. Manual retry, not silent loops. |
 
 ## Security invariants
@@ -170,7 +172,7 @@ Ship `service/main.js` already built. Same packaging rule as `panel/main.js`.
 
 ## Browser provider (`provides: ["browser"]`)
 
-The host's `openchamber_web` tool gives agents ten `browser.*` actions. By default a connected desktop app answers them with its browser panel; on a server with no desktop client the agent gets nothing. A service that declares `provides: ["browser"]` can answer instead, from a browser it runs itself (headless Chrome over CDP, for instance). The agent sees one tool either way.
+The host's `openchamber_web` tool gives agents eleven `browser.*` actions. By default a connected desktop app answers them with its browser panel; on a server with no desktop client the agent gets nothing. A service that declares `provides: ["browser"]` can answer instead, from a browser it runs itself (headless Chrome over CDP, for instance). The agent sees one tool either way.
 
 The user picks the provider in Settings → General → OpenChamber Tools → Browser provider. The dropdown lists installed, enabled, fully approved extensions with the role; with none it shows only "OpenChamber Web", disabled. The choice is `browserProvider` in the instance's `settings.json` (`builtin` or the extension id) and is read on every action, so it applies to the next action without a restart. Pausing, removing, or withdrawing approval from the selected extension puts `builtin` back and every open client shows a toast saying so; the same happens on the next action if the extension became unusable any other way.
 
@@ -217,8 +219,9 @@ Parameters the host sends and `data` the service answers; types are exported fro
 | `browser.inspect` | `selector` | `selector`, `tag`, `label`, `bounds`, `inViewport`, `styles` (computed, as strings) |
 | `browser.capture` | `label?` | `base64`, `mime`, `width`, `height`, `url`, `title`, `viewport`; the host writes the file into the project and returns its path |
 | `browser.resize` | `viewport` (`mobile`/`tablet`/`desktop`/`fill`) | `viewport` |
+| `browser.close` | none (see `tabId` below) | `closed: true`, optional `tabId`; a provider with a single page answers `ok: false` instead |
 
-Every action may carry `tabId` (`BrowserTabTarget`): an id from the `tabs` your snapshot listed (`[{ id, title, url, active }]`, `active` being the tab the user sees), passed through from the agent untouched. Without it, act on the tab the user sees, except `browser.open`: without `tabId` it opens a new background tab and answers its id as `tabId` (`BrowserOpenData`), so the agent never replaces the user's page. Refuse an id you did not issue with `ok: false`; never act on another tab instead. A provider with one page lists no tabs and refuses every id.
+Every action may carry `tabId` (`BrowserTabTarget`): an id from the `tabs` your snapshot listed (`[{ id, title, url, active }]`, `active` being the tab the user sees), passed through from the agent untouched. Without it, act on the tab the user sees, except `browser.open`: without `tabId` it opens a new background tab and answers its id as `tabId` (`BrowserOpenData`), so the agent never replaces the user's page. Refuse an id you did not issue with `ok: false`; never act on another tab instead. A provider with one page lists no tabs and refuses every id. `browser.close` is the exception to "the tab the user sees": it closes a tab the agent opened, so without `tabId` it closes the one this caller opened most recently and refuses a tab it did not open.
 
 `viewport` in answers is `{ mode, width, height }` (`mode` may be `custom`; `fill` has `null` sizes). Snapshot `elements` carry `selector`, `tag`, `bounds`, and only the fields that apply (`inViewport`, `type`, `role`, `label`, `disabled`, `missingAccessibleName`). Keep `text` and `elements` bounded yourself; report what was dropped with the truncation fields.
 

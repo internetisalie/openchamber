@@ -15,6 +15,7 @@ Object.assign(globalThis, {
 
 const labels: DecorateContext['labels'] = {
   copy: 'Copy', copied: 'Copied', enableCodeWrap: 'Wrap', disableCodeWrap: 'Do not wrap',
+  enableTableWrap: 'Wrap cells', disableTableWrap: 'Unwrap cells',
   copyTable: 'Copy table', downloadTable: 'Download table', expandTable: 'Expand table',
   copyDiagram: 'Copy diagram', downloadDiagram: 'Download diagram',
   zoomInDiagram: 'Zoom in', zoomOutDiagram: 'Zoom out', resetDiagramView: 'Reset',
@@ -25,6 +26,7 @@ const context = (onExpandTable?: DecorateContext['onExpandTable']): DecorateCont
   labels,
   mermaidControls: { download: false, copy: false, showPanZoomControls: false },
   codeBlockLineWrap: false,
+  tableCellWrap: false,
   renderMermaid: () => ({}),
   onExpandTable,
 });

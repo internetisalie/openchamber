@@ -64,6 +64,7 @@ const renderSections = (
       projectRepoStatus: new Map(),
       projectRootBranches: new Map(),
       gitBranches: new Map(),
+      sessionOrderRanks: new Map(),
       lastRepoStatus: false,
       buildGroupedSessions: grouping.buildGroupedSessions,
       hasSessionSearchQuery: query.length > 0,

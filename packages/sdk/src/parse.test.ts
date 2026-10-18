@@ -64,6 +64,24 @@ describe('parseManifest', () => {
     });
   });
 
+  test('preserves optional Work Status visibility and expansion settings', () => {
+    const result = parseManifest({
+      ...validBlock,
+      contributes: {
+        ...validBlock.contributes,
+        statusSection: {
+          entry: 'status/index.html',
+          defaultExpanded: false,
+          requiresProject: true,
+        },
+      },
+    });
+    expect(result).toMatchObject({ ok: true, manifest: { contributes: { statusSection: {
+      entry: 'status/index.html', defaultExpanded: false, requiresProject: true,
+    } } } });
+    expect(parseManifest({ ...validBlock, contributes: { ...validBlock.contributes, statusSection: { entry: 'status/index.html', defaultExpanded: 'no' } } })).toMatchObject({ ok: false, code: 'invalid-status-section' });
+  });
+
   test('reads package.json openchamber', () => {
     const result = parseManifest({
       openchamber: validBlock,
@@ -238,10 +256,6 @@ describe('parseManifest', () => {
   });
 
   test('rejects malformed, duplicate, oversized, or non-strict OpenCode plugin declarations', () => {
-    const attempt = (openCode: unknown) => parseManifestJson(JSON.stringify({
-      apiVersion: 1,
-      contributes: { panel: validBlock.contributes.panel, openCode },
-    }));
     const cases = [
       { plugins: [] },
       { plugins: [{ id: 'Upper', methods: ['GET'] }] },
@@ -254,17 +268,19 @@ describe('parseManifest', () => {
       { plugins: new Array(9).fill(null).map((_, index) => ({ id: `plugin-${index}`, methods: ['GET'] })) },
     ];
     for (const openCode of cases) {
-      expect(attempt(openCode)).toMatchObject({ ok: false, code: 'invalid-opencode' });
+      expect(parseManifestJson(JSON.stringify({
+        apiVersion: 1,
+        contributes: { panel: validBlock.contributes.panel, openCode },
+      }))).toMatchObject({ ok: false, code: 'invalid-opencode' });
     }
   });
 
   test('rejects filesystem patterns that are relative, escape, or are empty', () => {
-    const attempt = (filesystem: unknown) => parseManifest({
+    const attempt = (filesystem: string[]) => parseManifest({
       apiVersion: 1,
       contributes: {
         panel: validBlock.contributes.panel,
-        // Junk on purpose: this is what an untrusted package.json may carry.
-        filesystem: filesystem as string[],
+        filesystem,
       },
     });
     for (const bad of [['relative/path'], ['~/../etc/passwd'], ['/a//b'], ['/a/'], [], ['/x\\y'], ['~'], new Array(17).fill('/ok')]) {

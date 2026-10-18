@@ -34,7 +34,7 @@ describe('document raw HTML', () => {
   test('renders GitHub-style README markup: pictures, badges and aligned blocks', () => {
     const html = renderDocument(README_HEAD);
 
-    expect(html).toContain('<h1><picture><source media="(prefers-color-scheme: dark)" srcset="docs/logo-dark.svg"><img src="docs/logo-light.svg" width="32" height="32" align="absmiddle" style="height:32px"></picture> OpenChamber</h1>');
+    expect(html).toContain('<h1><picture><source media="(prefers-color-scheme: dark)" srcset="docs/logo-dark.svg"><img src="docs/logo-light.svg" width="32" height="32" align="absmiddle" style="aspect-ratio:32/32"></picture> OpenChamber</h1>');
     expect(html).toContain('<img src="https://img.shields.io/github/stars/openchamber/openchamber?style=flat" alt="GitHub stars"></a>');
     expect(html).toContain('<a href="https://www.blacksmith.sh/"><picture><source media="(prefers-color-scheme: dark)" srcset="docs/blacksmith-dark.svg"><img src="docs/blacksmith-light.svg" height="28" alt="CI powered by Blacksmith" style="height:28px"></picture></a>');
     expect(html).toContain('<p align="center"><sub>small</sub> <kbd>Ctrl</kbd></p>');
@@ -58,6 +58,45 @@ describe('document raw HTML', () => {
       expect(forbidden.test(renderDocument(markdown))).toBe(false);
     });
   }
+
+  test('scales a GitHub screenshot with both sizes by its ratio, and drops HTML comments', () => {
+    const html = renderDocument('<!-- template hint -->\n\n<img width="1920" height="906" alt="before" src="https://github.com/user-attachments/assets/1" />');
+
+    expect(html).toContain('<img width="1920" height="906" alt="before" src="https://github.com/user-attachments/assets/1" style="aspect-ratio:1920/906">');
+    expect(html).not.toContain('template hint');
+  });
+
+  test('draws a Linear clip, named in its alt text, as a player', () => {
+    const html = renderDocument('![demo.mp4](https://uploads.linear.app/a/b/c?signature=x)');
+
+    expect(html).toContain('<video src="https://uploads.linear.app/a/b/c?signature=x" title="demo.mp4" controls="" preload="metadata" playsinline="">');
+    expect(html).not.toContain('<img');
+  });
+
+  test('keeps a picture as an image and a clip inside a link as one', () => {
+    expect(renderDocument('![shot.png](https://uploads.linear.app/a/b/c)')).toContain('<img src="https://uploads.linear.app/a/b/c" alt="shot.png">');
+    expect(renderDocument('[![demo.mp4](https://cdn.test/demo.mp4)](https://example.test)')).toContain('<img src="https://cdn.test/demo.mp4"');
+  });
+
+  test('draws a GitHub clip, a bare asset URL on its own line, as a player', () => {
+    const asset = 'https://github.com/user-attachments/assets/48da4bef-60a5-413f-8693-05821396ee3c';
+
+    expect(renderDocument(`Before\n\n${asset}\n\nAfter`)).toContain(`<video src="${asset}" controls="" preload="metadata" playsinline="">`);
+    expect(renderDocument(`See ${asset} for the clip`)).not.toContain('<video');
+    expect(renderDocument('https://cdn.test/page')).not.toContain('<video');
+  });
+
+  test('draws a remote clip in output only when asked, and a local one as its label', () => {
+    expect(renderMarkdownSync('![demo.mp4](https://cdn.test/a)', 'label')).toContain('<video src="https://cdn.test/a" title="demo.mp4" controls="" preload="none" playsinline="">');
+    expect(renderMarkdownSync('![demo](./out/demo.mp4)', 'label')).toContain('data-openchamber-markdown-image-source="./out/demo.mp4"');
+  });
+
+  test('gives a raw video controls and drops autoplay', () => {
+    const html = renderDocument('<video src="https://cdn.test/demo.mp4" autoplay></video>');
+
+    expect(html).toContain('controls=""');
+    expect(html).not.toContain('autoplay');
+  });
 
   test('keeps the task-list checkbox marked renders, disabled', () => {
     const html = renderDocument('- [x] done');

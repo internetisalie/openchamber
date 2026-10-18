@@ -8,7 +8,9 @@ import { GuestIntegrationCard, GuestIntegrationsSection } from './GuestIntegrati
 import { useGuestsStore } from '@/lib/guests/store';
 import { isGuestActive } from '@/lib/guests/capabilities';
 import { isMobileSurfaceRuntime } from '@/lib/runtimeSurface';
+import { useEnterpriseMode } from '@/stores/useEnterprisePolicyStore';
 import { GitHubIntegration } from './GitHubIntegration';
+import { GitLabSettings } from '@/components/sections/openchamber/GitLabSettings';
 import { LinearSettings } from './LinearSettings';
 import { GiteaIntegration } from './gitea-integration';
 import { ThirdPartyIntegrationsSection } from './ThirdPartyIntegrationsSection';
@@ -18,7 +20,9 @@ export const IntegrationsPage: React.FC = () => {
   const { t } = useI18n();
   // GitHub sign-in is an OpenChamber server feature; the VS Code extension
   // uses the editor's own GitHub session instead.
+  // Hosting providers are OpenChamber server features; VS Code uses its own Git integration.
   const hasGitHub = !isVSCodeRuntime();
+  const hasGitLab = !isVSCodeRuntime();
   const hasLinear = Boolean(getRegisteredRuntimeAPIs()?.linear);
   const hasGitea = Boolean(getRegisteredRuntimeAPIs()?.gitea);
   const guests = useGuestsStore((state) => state.guests);
@@ -26,7 +30,11 @@ export const IntegrationsPage: React.FC = () => {
   const builtInGuests = !isVSCodeRuntime() && !isMobileSurfaceRuntime()
     ? guests.filter((guest) => guest.source === 'bundled' && guest.integration && isGuestActive(guest))
     : [];
-  const hasBuiltIn = hasGitHub || hasLinear || hasGitea || builtInGuests.length > 0;
+  const hasBuiltIn = hasGitHub || hasGitLab || hasLinear || hasGitea || builtInGuests.length > 0;
+  // Each card here installs a plugin that adds a model provider. In enterprise
+  // mode providers come from the administrator's OpenCode config, whose
+  // `provider.use` policy also governs plugin providers, so none is offered.
+  const hasThirdParty = !useEnterpriseMode();
 
   return (
     <SettingsPageLayout
@@ -43,13 +51,14 @@ export const IntegrationsPage: React.FC = () => {
           contentClassName="space-y-3"
         >
           {hasGitHub ? <GitHubIntegration /> : null}
+          {hasGitLab ? <GitLabSettings /> : null}
           {hasLinear ? <LinearSettings /> : null}
           {hasGitea ? <GiteaIntegration key={runtimeKey} /> : null}
           {builtInGuests.map((guest) => <GuestIntegrationCard key={`${runtimeKey}:${guest.id}`} guest={guest} />)}
         </SettingsSection>
       ) : null}
-      <ThirdPartyIntegrationsSection divider={hasBuiltIn} />
-      <CatalogExtensionsSection />
+      {hasThirdParty ? <ThirdPartyIntegrationsSection divider={hasBuiltIn} /> : null}
+      <CatalogExtensionsSection divider={hasBuiltIn || hasThirdParty} />
       <GuestIntegrationsSection />
     </SettingsPageLayout>
   );

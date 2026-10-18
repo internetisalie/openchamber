@@ -20,10 +20,11 @@ has to ask for it.
   `PROMPT_VERSION`.
 - `schema.js` — response schema, response normalization, tolerant JSON parsing.
 - `store.js` — content-addressed cache entries plus mutable pointers.
-- `pull-request.js` — PR diffs and per-file contents via the shared GitHub
-  octokit helper.
-- `gitea-pull-request.js` — Gitea PR diffs and merge-base/head file contents
-  through the saved instance token and the selected Git remote.
+- `pull-request.js` — PR diffs and per-file contents: GitHub through the
+  shared octokit helper, GitLab merge requests through the readers the runtime
+  injects from the GitLab module (`readGitLabChangeRequestPatch`/`File`).
+- `gitea-pull-request.js` reads Gitea patches and merge-base/head file contents
+  through the saved instance connection and selected Git remote.
 - `model-settings.js` — the feature's own model override.
 - `languages.js` — the languages the prose may be written in.
 - `index.js` — orchestration.
@@ -57,14 +58,24 @@ written against staged code never silently re-anchors onto an unstaged edit.
 | `working-tree` (`all` \| `staged` \| `working`) | `staged`, `working` | Untracked files are fetched individually because `git diff` omits them |
 | `branch` | `branch` | `getRangeDiff` with `includeWorkingTree: true` compares the selected merge base with current files, including committed and local work in one net diff |
 | `commit` | `commit` | `getCommitDiff` compares the full selected commit hash with its first parent; root commits compare with an empty tree |
-| `pr` | `pr:<number>` | GitHub's committed pull-request diff, without local working-tree changes |
-| `pr` with `gitea` identity | `pr:<number>` | Gitea's published diff; the source key also includes instance URL, repository and remote |
+| `pr` | `pr:<number>` | The provider's committed pull-request diff, without local working-tree changes. Every read carries a validated repository binding context |
 
-Changes and walkthrough resolve the current branch's base through
-`packages/ui/src/hooks/useBranchComparisonBase.ts`. An explicit choice in Changes
-outranks reflog detection. Both toolbars use
+Changes, mobile Changes and walkthrough resolve the current branch's base
+through `packages/ui/src/hooks/useBranchComparisonBase.ts`, which takes the
+first candidate that names a ref (`resolveBranchComparisonBase` in
+`packages/ui/src/components/views/git/baseBranch.ts`): an explicit choice, then
+the base of the branch's open pull request as the status store already holds it,
+then reflog detection, then the repository's default branch. The pull request's
+base outranks the reflog because it is what the branch merges into and survives
+a rebase or restack. Each candidate is qualified by `qualifyBaseRef`: the range
+API names refs literally, a bare name resolves to the bound remote's copy
+(`origin/main`, what the pull request compares against) and to the local branch
+only when the remote has none, an explicit `refs/heads/` choice stays local, and
+a base outside the bound remote is not a comparison this repository can make. A
+chosen base that no longer resolves, or a candidate naming the branch or its own
+remote copy, gives way to the next. The toolbars use
 `packages/ui/src/components/views/git/BranchComparisonSelector.tsx` to select or
-change the base directly. Walkthrough allows selecting Branch before a base is
+change the base directly; its Automatic item drops the choice. Walkthrough allows selecting Branch before a base is
 known and waits for a valid choice before loading or generating. Opening
 walkthrough from Changes carries the selected base and head; later selections
 in either toolbar update both comparisons.
@@ -94,27 +105,38 @@ PR mode uses the same searchable, paginated selector as Changes. Its list loads
 only while PR mode is visible. Selection ownership and handoff rules are in
 `packages/ui/src/stores/DOCUMENTATION.md`.
 
-PR sources may include `sourceRepo: { owner, repo }`. This qualifies both the
-GitHub request and the cache/job key as `pr:<owner>/<repo>:<number>`. Existing
-number-only sources retain `pr:<number>` and resolve the directory's repository.
-The PR panel forwards its resolved repository when opening walkthrough.
-Gitea sources instead carry a normalized instance URL, owner, repository and
-selected remote. Their keys begin `gitea-pr:` and include all four identity
-fields, so the same PR number on another instance cannot reuse a pointer or job.
-Each request re-resolves the remote against saved connections before contacting
-the instance. The Changes selector can find connected Gitea PRs alongside
-GitHub PRs.
+PR sources may include `sourceRepo: { owner, repo }`. `owner` is a single
+segment on GitHub and a namespace path on GitLab (`group/subgroup`), matching
+what each provider's project mapper produces. It qualifies the cache/job
+key as `pr:<owner>/<repo>:<number>`, so equal numbers in different repositories
+stay apart. Number-only sources keep `pr:<number>` and read the repository behind
+the bound primary remote. A named repository is honoured only inside the bound
+repository's network, the repository and the upstream it was forked from, which
+is what the bound pull request list reads with the same account. A name outside
+that network fails with `409 PULL_REQUEST_REPOSITORY_MISMATCH` before any GitHub
+request. The PR panel forwards the project of the pull request it shows.
 
-`GET /api/walkthrough/pr-diff` accepts `directory` and a JSON `source` restricted
-to PRs. It returns the selected provider's complete published diff as text, with no model
-readiness checks or generation. Successful empty patches return 200; auth,
-provider and malformed-response failures remain errors. Walkthrough generation
+Gitea PR sources carry `gitea` identity with the normalized instance URL, owner,
+repository, and remote. Every provider read re-resolves that remote against a
+saved connection. These requests use that authority independently of the
+GitHub/GitLab binding context. Cache and job keys include all Gitea identity
+fields, so equal PR numbers on different instances stay separate.
+
+`GET /api/walkthrough/pr-diff` accepts `directory`, a JSON `source` restricted
+to PRs, and the same bound read-context fields as the other walkthrough routes.
+It validates that context against the binding and reads with its exact account;
+without one it reads nothing. It returns GitHub's complete published diff as
+text, with no model readiness checks or generation. A GitLab context returns
+the merge request's diff, rebuilt by `gitlab/resources.js` into the same git
+patch shape from GitLab's per-file hunks (GitLab diffs against the merge base,
+like GitHub). Successful empty patches return 200; auth,
+GitHub and malformed-response failures remain errors. Walkthrough generation
 keeps its existing empty-diff refusal. UI comparison behavior is documented in
 `packages/ui/src/components/views/DOCUMENTATION.md`.
 
 `GET /api/walkthrough/pr-file` takes the same `directory` and PR `source` plus
 `path`, optional `previousPath`, and `status`, and returns `{ original, modified }`
-for that one file as the selected provider has it: the base side at the PR's merge base, the
+for that one file as the provider has it: the base side at the PR's merge base, the
 head side at the PR head. This is how the comparison view expands collapsed
 context for a PR: its patch arrives at fixed context and its commits may not be
 on disk, so the working tree is never read. Files above 5 MB answer `413`
@@ -296,13 +318,17 @@ scope.
 
 **Cache entries** (`entries/<sha256>.json`) are immutable and content-addressed.
 The key covers walkthrough version, prompt version, repo root, source, provider,
-model, output language, and every file's path/status/hunk-ids. The key is computed from the
+model, output language, and every file's path/status/hunk-ids. PR keys also cover
+the validated source-control provider, normalized instance, immutable account ID,
+repository ID, binding revision, directory, trusted primary remote, and PR number. The key is computed from the
 *current* diff, so a hit means the walkthrough was written about exactly this
 code; there is no freshness question to ask of an entry, because staleness is a
 miss. Returning the working tree to an earlier state therefore costs nothing.
 
 **Pointers** (`pointers/<sha256(repoRoot + source)>.json`) are mutable and hold
-`{ cacheKey, generatedAt, repoRoot, sourceKey }`. They answer what the cache
+`{ cacheKey, generatedAt, repoRoot, sourceKey }`. PR pointer keys and payloads
+also contain the full validated read context. Scoped PR reads never consult old
+unscoped pointer files or cache entries. Pointers answer what the cache
 cannot: which walkthrough was last shown here, and has the code moved since. A
 pointer whose entry has been evicted reads as "no walkthrough" — truthful, and
 the next generation overwrites it.
@@ -370,7 +396,9 @@ A dropped connection and a deliberate cancel are indistinguishable at the
 socket, so tying generation to the request lifetime meant an accidental refresh
 threw away a minute of paid-for work. Instead:
 
-- Jobs live in a module-level map keyed by repository + source. A second
+- Jobs live in a module-level map keyed by repository + source. PR jobs add the
+  validated provider, normalized instance, immutable account ID, repository ID,
+  binding revision, directory, trusted primary remote, and PR number. A second
   `generate` for the same source **attaches to the running job** rather than
   starting a rival one — pressing the button again after a refresh costs
   nothing extra.
@@ -431,6 +459,19 @@ be used for this: it re-runs the whole git pipeline.
   `null`. Memory-only and safe to poll.
 - `POST /api/walkthrough/cancel` — `{ directory, source }`; aborts a running
   generation.
+
+For a PR source, all four routes also require flat `provider`, `instance`,
+`accountId`, `repositoryId`, `bindingRevision`, and `primaryRemote` fields in the
+query or JSON body. They do not accept a nested context object. The source-control
+binding service validates these immutable fields before walkthrough service,
+cache, job, credential, repository-coordinate, or provider work. The server
+accepts a validated GitHub or GitLab context and refuses any other provider with
+`422 UNSUPPORTED_WALKTHROUGH_PROVIDER`. It resolves the exact bound
+account and trusted primary remote, with no active-account or default-remote
+fallback, and every successful PR response echoes the trusted `readContext`.
+An exact-account `401` reconciles the account through the source-control binding
+service before credential invalidation; `403` and network failures leave the
+account and binding intact.
 
 There is deliberately no delete route: regeneration covers the need, and an
 endpoint nothing calls is a maintenance surface that rots untested.
