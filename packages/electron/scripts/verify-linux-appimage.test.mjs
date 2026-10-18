@@ -79,6 +79,8 @@ test('verifies an unpacked directory without AppImage desktop metadata', () => {
   const root = createPayload();
   try {
     fs.rmSync(path.join(root, 'openchamber.desktop'));
+    fs.rmSync(path.join(root, '.DirIcon'));
+    fs.rmSync(path.join(root, 'usr'), { recursive: true });
     const result = verifyExtractedPayload({
       root,
       targetArchitecture: 'x64',

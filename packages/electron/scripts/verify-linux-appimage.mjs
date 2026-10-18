@@ -111,8 +111,8 @@ export const verifyExtractedPayload = ({
       if (!desktop.split(/\r?\n/).includes(entry)) throw new Error(`Desktop identity mismatch: missing ${entry}`);
     }
     if (!/^Exec=AppRun(?:\s|$)/m.test(desktop)) throw new Error('Desktop identity mismatch: expected AppImage AppRun entrypoint');
+    assertThemeIcon(root);
   }
-  assertThemeIcon(root);
 
   assertElfArchitecture(path.join(root, 'openchamber'), targetArchitecture, 'Electron executable');
   const cliPath = path.join(root, 'resources', 'opencode-cli', 'opencode');
