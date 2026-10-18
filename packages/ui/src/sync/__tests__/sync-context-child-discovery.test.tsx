@@ -40,7 +40,7 @@ const listSessionsPage = async (options: SessionListOptions = {}): Promise<Sessi
     }
     return { sessions: [childSession], cursor: {} }
   }
-  if (options.limit === 500) {
+  if (options.limit === 100) {
     // Bootstrap's own list: hang. Resolving it would replace the store's
     // sessions after discovery merged them; in production the two race and the
     // next watchdog tick re-discovers merged children.

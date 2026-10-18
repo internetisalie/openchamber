@@ -65,7 +65,7 @@ type GlobalSessionsState = {
   resetForRuntimeSwitch: () => void;
 };
 
-const PAGE_SIZE = 500;
+const PAGE_SIZE = 200;
 const DIRECTORY_SESSION_REFRESH_CONCURRENCY = 2;
 let directorySessionRefreshActive = 0;
 const directorySessionRefreshWaiters: Array<() => void> = [];

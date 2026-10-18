@@ -2508,7 +2508,7 @@ export function SyncProvider(props: {
               // arrive together and are split here. Children must be present
               // for pending forms to scope to them right after a restart.
               const { active } = splitGlobalSessionsByArchived(
-                await listGlobalSessionPages(listSessionPage, { directory: dir, pageSize: 500 }),
+                await listGlobalSessionPages(listSessionPage, { directory: dir, pageSize: 100 }),
               )
               const allSessions = active
                 .filter((s) => !!s?.id)

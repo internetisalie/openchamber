@@ -65,6 +65,19 @@ describe("global session mutation reconciliation", () => {
     expect(useGlobalSessionsStore.getState().activeSessions.map((item) => item.id)).toEqual(["created"])
   })
 
+  test("uses bounded pages and follows the cursor without truncating the sidebar", async () => {
+    const requests: Array<{ limit: number | undefined; cursor: string | undefined }> = []
+    opencodeClient.listSessionsPage = async (options = {}) => {
+      requests.push({ limit: options.limit, cursor: options.cursor })
+      return options.cursor
+        ? { sessions: [session("last-page")], cursor: {} }
+        : { sessions: [session("first-page")], cursor: { next: "next-page" } }
+    }
+    await useGlobalSessionsStore.getState().loadSessions()
+    expect(requests).toEqual([{ limit: 200, cursor: undefined }, { limit: 200, cursor: "next-page" }])
+    expect(useGlobalSessionsStore.getState().activeSessions.map((item) => item.id).sort()).toEqual(["first-page", "last-page"])
+  })
+
   test("does not resurrect a session deleted after a full load starts", async () => {
     const stale = session("deleted")
     useGlobalSessionsStore.getState().applySnapshot([stale], [])
