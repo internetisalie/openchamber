@@ -322,7 +322,26 @@ The macOS menu bar item is enabled by default and can be disabled in General set
 
 ## Bundled OpenCode CLI
 
-Packaged Desktop builds include the official OpenCode CLI release pinned by `opencodeCli.version` in `packages/electron/package.json` (OpenChamber requires OpenCode 2.x). OpenCode 2.x ships on npm rather than as GitHub release assets, so `prepare:opencode-cli` downloads the platform package tarball (`@opencode/cli-<os>-<arch>`, the same one OpenCode's own installer uses), caches it under `packages/electron/.cache/opencode-cli`, stages `opencode` or `opencode.exe` into `resources/opencode-cli`, and verifies `opencode --version` before packaging. Re-running the step is fast when the staged binary already matches the pinned version. The target architecture comes from `OPENCHAMBER_TARGET_ARCH` or `ELECTRON_BUILDER_ARCH`, falling back to the build host. A Windows build for another architecture does not run the binary, because the arm64 release job runs on an x64 runner that cannot start it; there the step checks the version in the package's `package.json` instead; on Windows `verify:opencode-cli` and `verify:opencode-cli:packaged` also read the binary's PE header (`scripts/windows-executable.mjs`) and fail when it was built for another architecture.
+The fork's Linux x64 release pins `2.0.32-internetisalie.b505ae437739` and its
+binary SHA-256 in `opencodeCli`. `prepare:opencode-cli` downloads the
+`opencode-linux-x64-baseline` asset from that exact fork GitHub release. It checks
+downloaded, cached and staged bytes and runs the version check before replacing
+the staged executable. A failed download or verification preserves the previous
+staged executable. Corrupt cache entries fail the build and need removal before
+retrying. The Docker image uses the same release asset and SHA-256.
+
+This fork artifact is Linux x64 only. Other platforms fail explicitly when the
+fork version is selected. They need separately built and validated fork artifacts
+before release. An explicit official-version packaging override still uses the
+npm path described below; it does not produce a fork release artifact.
+
+Official-version overrides use npm's platform package tarball
+`@opencode/cli-<os>-<arch>`. The preparer caches it under
+`packages/electron/.cache/opencode-cli`, stages the executable and verifies its
+version. The target architecture comes from `OPENCHAMBER_TARGET_ARCH` or
+`ELECTRON_BUILDER_ARCH`, falling back to the build host. Windows cross-builds
+check the package version and PE architecture because an x64 host cannot run the
+arm64 executable.
 
 Managed local Desktop startup prefers OpenCode binaries in this order:
 

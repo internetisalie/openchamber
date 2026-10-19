@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { resolveTargetArchitecture } from './target-architecture.mjs';
 import { parseOpenCodeCliVersion, readPinnedOpenCodeCliVersion } from './opencode-cli-version.mjs';
 import { readPeArchitecture } from './windows-executable.mjs';
+import { prepareForkOpenCodeCli } from './prepare-fork-opencode-cli.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const electronRoot = path.resolve(__dirname, '..');
@@ -123,6 +124,19 @@ const main = async () => {
   }
 
   const targetArchitecture = resolveTargetArchitecture();
+  if (version.includes('-internetisalie.')) {
+    const pin = JSON.parse(fs.readFileSync(path.join(electronRoot, 'package.json'), 'utf8')).opencodeCli;
+    if (version !== pin.version) throw new Error('Fork OpenCode version overrides require a matching package pin and SHA-256.');
+    await prepareForkOpenCodeCli({
+      version,
+      sha256: pin.sha256,
+      platform: process.platform,
+      architecture: targetArchitecture.node,
+      outputBinary: outputBinaryPath('opencode'),
+      cacheRoot,
+    });
+    return;
+  }
   const artifact = artifactForPlatform(process.platform, targetArchitecture);
   const outputBinary = outputBinaryPath(artifact.binary);
   // A Windows build for another architecture is not run here: an x64 runner
