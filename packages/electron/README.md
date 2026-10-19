@@ -279,6 +279,10 @@ The same fork release attaches installable `@openchamber/sdk` and
 `@openchamber/web` npm archives with checksums after testing them in a clean
 consumer directory.
 
+The supported fork release target is Linux x64. Validated fork tags publish as
+regular GitHub releases. Use numbered revisions such as
+`v2.4.0-internetisalie.2`; source commit hashes belong in release provenance.
+
 ## Platform Notes
 
 macOS packaging needs Xcode/build tools for notarized builds and icon asset compilation.
@@ -322,7 +326,7 @@ The macOS menu bar item is enabled by default and can be disabled in General set
 
 ## Bundled OpenCode CLI
 
-The fork's Linux x64 release pins `2.0.32-internetisalie.b505ae437739` and its
+The fork's Linux x64 release pins `2.0.32-internetisalie.1` and its
 binary SHA-256 in `opencodeCli`. `prepare:opencode-cli` downloads the
 `opencode-linux-x64-baseline` asset from that exact fork GitHub release. It checks
 downloaded, cached and staged bytes and runs the version check before replacing
