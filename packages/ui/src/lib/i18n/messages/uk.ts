@@ -25,6 +25,8 @@ import { integrationsCatalogI18n } from './integrations-catalog.i18n';
 import { diffFindI18n } from './diff-find.i18n';
 
 export const dict: Record<I18nKey, string> = {
+  'updateDialog.manualInstall.description': 'Оновлення на місці вимкнено для цього форку. Встановіть перевірений випуск internetisalie вручну.',
+  'updateDialog.manualInstall.openReleases': 'Відкрити випуски форку',
   "chat.workStatus.pty.showExited": "Показати завершені",
   "chat.workStatus.pty.hideExited": "Приховати завершені",
   "chat.workStatus.pty.noneActive": "У цій сесії немає активних PTY",

@@ -73,7 +73,6 @@ const { handleSystemBridgeMessage } = await import('./bridge-system-runtime.ts')
 const deps = {
   resolveUserPath: (value) => value,
   fetchModelsMetadata: async () => ({}),
-  updateCheckUrl: 'https://example.com/update-check',
   clientReloadDelayMs: 800,
 };
 
@@ -285,18 +284,21 @@ describe('VS Code system bridge api:quota:giftReset:use', () => {
 });
 
 describe('VS Code v2 migration bridge', () => {
-  test('waits for the manager to finish installing and restarting', async () => {
+  test('refuses before calling the manager installer', async () => {
     let completed = false;
     const manager = { installV2: async () => { completed = true; } };
     const response = await handleSystemBridgeMessage({ id: 'install', type: 'api:opencode/install-v2' }, { manager }, deps);
-    expect(completed).toBe(true);
-    expect(response).toEqual({ id: 'install', type: 'api:opencode/install-v2', success: true, data: { success: true } });
+    expect(completed).toBe(false);
+    expect(response.success).toBe(false);
+    expect(response.error).toContain('In-place updates are disabled');
   });
 
-  test('does not claim success without a manager or after installation failure', async () => {
+  test('returns the same refusal without a manager or with a failing installer', async () => {
     const response = await handleSystemBridgeMessage({ id: 'missing', type: 'api:opencode/install-v2' }, undefined, deps);
     expect(response.success).toBe(false);
     const manager = { installV2: async () => { throw new Error('Installation failed'); } };
-    await expect(handleSystemBridgeMessage({ id: 'failed', type: 'api:opencode/install-v2' }, { manager }, deps)).rejects.toThrow('Installation failed');
+    const refused = await handleSystemBridgeMessage({ id: 'failed', type: 'api:opencode/install-v2' }, { manager }, deps);
+    expect(refused.success).toBe(false);
+    expect(refused.error).toContain('In-place updates are disabled');
   });
 });

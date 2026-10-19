@@ -1,192 +1,60 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import express from 'express';
 import request from 'supertest';
 import { registerOpenCodeRoutes } from './routes.js';
 
-const originalFetch = globalThis.fetch;
-
-beforeEach(() => {
-  vi.stubEnv('OPENCHAMBER_DISABLE_UPDATES', '');
-  vi.stubEnv('OPENCODE_DISABLE_AUTOUPDATE', '');
-});
-
-afterEach(() => {
-  globalThis.fetch = originalFetch;
-  vi.unstubAllEnvs();
-});
-
-const jsonResponse = (payload, status = 200) => new Response(JSON.stringify(payload), {
-  status,
-  headers: { 'Content-Type': 'application/json' },
-});
-
-const supportedCapability = { supported: true, manager: 'opencode', reason: null };
-
-const createApp = (overrides = {}) => {
+afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+const createApp = () => {
   const app = express();
-  app.use(express.json());
-  const dependencies = {
-    getOpenCodeUpgradeCapability: () => ({
-      supported: false,
-      manager: 'openchamber',
-      reason: 'bundled',
-    }),
-    buildOpenCodeUrl: (pathname) => `http://127.0.0.1:4096${pathname}`,
-    getOpenCodeAuthHeaders: () => ({}),
-    upgradeOpenCodeCli: vi.fn(async () => {}),
-    refreshOpenCodeAfterConfigChange: vi.fn(async () => {}),
-    ...overrides,
-  };
-  registerOpenCodeRoutes(app, dependencies);
-  return { app, dependencies };
+  const replace = vi.fn(async () => { throw new Error('Replacement attempted'); });
+  registerOpenCodeRoutes(app, {
+    getOpenCodeUpgradeCapability: () => ({ supported: false, manager: 'administrator', reason: 'manual-install' }),
+    getOpenCodeCompatibility: async () => ({ canInstall: true }),
+    installOpenCodeV2: replace, upgradeOpenCodeCli: replace,
+    buildOpenCodeUrl: () => 'http://127.0.0.1:4096/api/info', getOpenCodeAuthHeaders: () => ({}),
+  });
+  return { app, replace };
 };
 
-describe('OpenCode upgrade routes', () => {
-  it.each(['OPENCHAMBER_DISABLE_UPDATES', 'OPENCODE_DISABLE_AUTOUPDATE'])('honors %s without contacting an upstream release source', async (flag) => {
-    vi.stubEnv(flag, '1');
-    globalThis.fetch = vi.fn(async () => jsonResponse({ version: '2.0.18-internetisalie.591c6999ebce' }));
-    const { app, dependencies } = createApp({ getOpenCodeUpgradeCapability: () => supportedCapability });
-    const response = await request(app).get('/api/opencode/upgrade-status').expect(200);
-    expect(response.body).toMatchObject({ available: false, currentVersion: '2.0.18-internetisalie.591c6999ebce', latestVersion: null });
-    expect(globalThis.fetch).toHaveBeenCalledExactlyOnceWith('http://127.0.0.1:4096/api/info', expect.anything());
-    await request(app).post('/api/opencode/upgrade').send({}).expect(409);
-    expect(dependencies.upgradeOpenCodeCli).not.toHaveBeenCalled();
-  });
-
-  it('uses the configured registry for the v2 package version without exposing URL credentials', async () => {
-    const previousRegistry = process.env.npm_config_registry;
-    const previousUserConfig = process.env.npm_config_userconfig;
-    process.env.npm_config_userconfig = `${import.meta.dirname}/missing-test.npmrc`;
-    process.env.npm_config_registry = 'https://user:p%40ss@mirror.example.com/npm/';
-    globalThis.fetch = vi.fn(async (input) => jsonResponse({ version: String(input).endsWith('/api/info') ? '2.0.21' : '2.0.22' }));
-    const { app } = createApp({ getOpenCodeUpgradeCapability: () => supportedCapability });
-    try {
-      const response = await request(app).get('/api/opencode/upgrade-status').expect(200);
-      expect(response.body).toMatchObject({ available: true, currentVersion: '2.0.21', latestVersion: '2.0.22' });
-      const call = globalThis.fetch.mock.calls.find(([url]) => String(url).includes('mirror.example.com'));
-      expect(String(call[0])).toBe('https://mirror.example.com/npm/@opencode%2Fcli/latest');
-      expect(new Headers(call[1].headers).get('Authorization')).toBe(`Basic ${Buffer.from('user:p@ss').toString('base64')}`);
-    } finally {
-      if (previousRegistry === undefined) delete process.env.npm_config_registry;
-      else process.env.npm_config_registry = previousRegistry;
-      if (previousUserConfig === undefined) delete process.env.npm_config_userconfig;
-      else process.env.npm_config_userconfig = previousUserConfig;
-    }
-  });
-
-  it('fails closed without contacting the bundled OpenCode updater', async () => {
-    globalThis.fetch = vi.fn();
-    const { app } = createApp();
-
-    await request(app)
-      .post('/api/opencode/upgrade')
-      .send({})
-      .expect(409, {
-        success: false,
-        code: 'OPENCODE_UPGRADE_MANAGED_BY_OPENCHAMBER',
-        error: 'OpenCode is bundled with OpenChamber Desktop and updates with the app.',
-      });
-
-    expect(globalThis.fetch).not.toHaveBeenCalled();
-  });
-
-  it('never announces a newer version for a bundled binary: it updates with the desktop app', async () => {
-    globalThis.fetch = vi.fn(async (url) => {
-      if (String(url).includes('registry.npmjs.org')) return jsonResponse({ version: '2.0.3' });
-      if (String(url).includes('api.github.com')) return jsonResponse({ tag_name: 'v2.0.3' });
-      return jsonResponse({ version: '1.18.8', pid: 1, urls: [], paths: { tmp: '/tmp' } });
-    });
-    const { app } = createApp();
-
-    const response = await request(app)
-      .get('/api/opencode/upgrade-status')
-      .expect(200);
-
-    expect(response.body).toEqual({
-      available: false,
-      currentVersion: '1.18.8',
-      latestVersion: '2.0.3',
-      upgrade: {
-        supported: false,
-        manager: 'openchamber',
-        reason: 'bundled',
-      },
-    });
-  });
-
-  it('runs the managed CLI and leaves restart to the existing Reload action', async () => {
-    globalThis.fetch = vi.fn();
-    const { app, dependencies } = createApp({ getOpenCodeUpgradeCapability: () => supportedCapability });
-    await request(app).post('/api/opencode/upgrade').send({ target: 'ignored', binary: 'ignored' })
-      .expect(200, { success: true });
-    expect(dependencies.upgradeOpenCodeCli).toHaveBeenCalledExactlyOnceWith();
-    expect(dependencies.refreshOpenCodeAfterConfigChange).not.toHaveBeenCalled();
-    expect(globalThis.fetch).not.toHaveBeenCalled();
-  });
-
-  it.each(['external', 'unavailable'])('rejects %s on the server', async (reason) => {
-    const { app, dependencies } = createApp({ getOpenCodeUpgradeCapability: () => ({ supported: false, reason }) });
-    await request(app).post('/api/opencode/upgrade').send({}).expect(409);
-    expect(dependencies.upgradeOpenCodeCli).not.toHaveBeenCalled();
-  });
-
-  it('shares an installation between concurrent requests and allows retry after failure', async () => {
-    let fail;
-    let started;
-    const began = new Promise((resolve) => { started = resolve; });
-    const upgradeOpenCodeCli = vi.fn(() => { started(); return new Promise((_resolve, reject) => { fail = reject; }); });
-    let arrived;
-    let requests = 0;
-    const bothArrived = new Promise((resolve) => { arrived = resolve; });
-    const { app } = createApp({ getOpenCodeUpgradeCapability: () => {
-      requests += 1;
-      if (requests === 2) arrived();
-      return supportedCapability;
-    }, upgradeOpenCodeCli });
-    const first = request(app).post('/api/opencode/upgrade').send({}).then((response) => response);
-    await began;
-    const second = request(app).post('/api/opencode/upgrade').send({}).then((response) => response);
-    await bothArrived;
-    fail(new Error('Installation failed'));
-    const responses = await Promise.all([first, second]);
-    expect(responses.map((response) => response.status)).toEqual([500, 500]);
-    expect(upgradeOpenCodeCli).toHaveBeenCalledTimes(1);
-    upgradeOpenCodeCli.mockResolvedValueOnce();
-    await request(app).post('/api/opencode/upgrade').send({}).expect(200);
-    expect(upgradeOpenCodeCli).toHaveBeenCalledTimes(2);
-  });
+it.each(['/api/opencode/upgrade', '/api/opencode/install-v2'])('refuses direct %s requests without invoking an installer', async (route) => {
+  const { app, replace } = createApp();
+  const fetch = vi.fn();
+  vi.stubGlobal('fetch', fetch);
+  const result = await request(app).post(route).send({ force: true, version: 'latest' }).expect(409);
+  expect(result.body.code).toBe('FORK_MANUAL_UPDATE_REQUIRED');
+  expect(replace).not.toHaveBeenCalled();
+  expect(fetch).not.toHaveBeenCalled();
 });
 
-describe('OpenCode v1 migration routes', () => {
-  it('rejects external, bundled and unsupported runtimes before running an installer', async () => {
-    for (const installation of ['external', 'bundled', 'managed']) {
-      const installOpenCodeV2 = vi.fn();
-      const { app } = createApp({
-        getOpenCodeCompatibility: async () => ({ state: 'incompatible', version: '1.18.30', installation, canInstall: false }),
-        installOpenCodeV2,
-      });
-      await request(app).post('/api/opencode/install-v2').send({ binary: '/untrusted', command: 'untrusted' }).expect(409);
-      expect(installOpenCodeV2).not.toHaveBeenCalled();
-    }
-  });
+it('checks the OpenCode fork and compares numbered revisions', async () => {
+  vi.stubEnv('OPENCHAMBER_DISABLE_UPDATES', '');
+  vi.stubEnv('OPENCODE_DISABLE_AUTOUPDATE', '');
+  const fetch = vi.fn(async (url) => Response.json(String(url).endsWith('/api/info')
+    ? { version: '2.0.32-internetisalie.1' }
+    : { tag_name: 'v2.0.32-internetisalie.2', draft: false, prerelease: false }));
+  vi.stubGlobal('fetch', fetch);
+  const { app } = createApp();
+  const result = await request(app).get('/api/opencode/upgrade-status').expect(200);
+  expect(result.body).toMatchObject({ available: true, latestVersion: '2.0.32-internetisalie.2', upgrade: { supported: false } });
+  expect(fetch.mock.calls.map(([url]) => url)).toEqual(['http://127.0.0.1:4096/api/info', 'https://api.github.com/repos/internetisalie/opencode/releases/latest']);
+});
 
-  it('shares installation and restart across concurrent requests and permits retry after failure', async () => {
-    let finish;
-    const installOpenCodeV2 = vi.fn(() => new Promise((resolve) => { finish = resolve; }));
-    const { app } = createApp({
-      getOpenCodeCompatibility: async () => ({ state: 'incompatible', version: '1.18.30', installation: 'managed', canInstall: true }),
-      installOpenCodeV2,
-    });
-    const first = request(app).post('/api/opencode/install-v2').then(response => response);
-    const second = request(app).post('/api/opencode/install-v2').then(response => response);
-    await vi.waitFor(() => expect(installOpenCodeV2).toHaveBeenCalledTimes(1));
-    finish();
-    const replies = await Promise.all([first, second]);
-    expect(replies.map(reply => reply.status)).toEqual([200, 200]);
-    installOpenCodeV2.mockRejectedValueOnce(new Error('private installer output'));
-    const failed = await request(app).post('/api/opencode/install-v2').expect(500);
-    expect(JSON.stringify(failed.body)).not.toContain('private installer output');
-    installOpenCodeV2.mockResolvedValueOnce(undefined);
-    await request(app).post('/api/opencode/install-v2').expect(200);
-  });
+it.each(['OPENCHAMBER_DISABLE_UPDATES', 'OPENCODE_DISABLE_AUTOUPDATE'])('honors %s without a release request', async (flag) => {
+  vi.stubEnv(flag, '1');
+  const fetch = vi.fn(async () => Response.json({ version: '2.0.32-internetisalie.1' }));
+  vi.stubGlobal('fetch', fetch);
+  const { app } = createApp();
+  const result = await request(app).get('/api/opencode/upgrade-status').expect(200);
+  expect(result.body).toMatchObject({ available: false, latestVersion: null });
+  expect(fetch).toHaveBeenCalledTimes(1);
+});
+
+it('preserves unknown status when the fork feed fails', async () => {
+  vi.stubEnv('OPENCHAMBER_DISABLE_UPDATES', '');
+  vi.stubEnv('OPENCODE_DISABLE_AUTOUPDATE', '');
+  vi.stubGlobal('fetch', async (url) => String(url).endsWith('/api/info')
+    ? Response.json({ version: '2.0.32-internetisalie.1' }) : new Response('', { status: 404 }));
+  const { app } = createApp();
+  const result = await request(app).get('/api/opencode/upgrade-status').expect(500);
+  expect(result.body.available).toBeNull();
 });

@@ -1,103 +1,34 @@
-import { beforeEach, describe, expect, mock, test } from 'bun:test'
+import { afterEach, describe, expect, test } from 'bun:test';
+import { parseUpdateCheckResponse, useUpdateStore } from './useUpdateStore';
 
-let restartAttempts = 0
-let restartOutcome: 'pending' | 'reject' | 'success' = 'pending'
+const originalFetch = globalThis.fetch;
+afterEach(() => { globalThis.fetch = originalFetch; useUpdateStore.getState().reset(); });
 
-const desktop = await import('@/lib/desktop')
-// restartToApplyUpdate is the seam for the real quitAndInstall() flow; Squirrel
-// accepts one install per app session, so the store must not invoke it twice.
-mock.module('@/lib/desktop', () => ({
-  ...desktop,
-  isVSCodeRuntime: () => false,
-  isWebRuntime: () => false,
-  isElectronShell: () => true,
-  isDesktopLocalOriginActive: () => true,
-  restartToApplyUpdate: () => {
-    restartAttempts += 1
-    if (restartOutcome === 'pending') {
-      return new Promise<boolean>(() => {})
-    }
-    if (restartOutcome === 'reject') {
-      return Promise.reject(new Error('The command is disabled and cannot be executed'))
-    }
-    return Promise.resolve(true)
-  },
-}))
-
-const { parseUpdateCheckResponse, useUpdateStore } = await import('./useUpdateStore')
-const { getUpdateInstallErrorMessage } = await import('@/lib/updateInstallError')
-
-const updaterDisabledError = () => getUpdateInstallErrorMessage(new Error('The command is disabled and cannot be executed'))
-
-describe('useUpdateStore restartToUpdate', () => {
-  beforeEach(() => {
-    restartAttempts = 0
-    restartOutcome = 'pending'
-    useUpdateStore.setState({
-      checking: false,
-      available: true,
-      downloading: false,
-      downloaded: true,
-      installing: false,
-      info: null,
-      progress: null,
-      error: null,
-      runtimeType: 'desktop',
-      lastChecked: null,
-      nextCheckInSec: null,
-    })
-  })
-
-  test('a second click while the restart is in flight does not touch the updater again', async () => {
-    void useUpdateStore.getState().restartToUpdate()
-    await useUpdateStore.getState().restartToUpdate()
-
-    expect(restartAttempts).toBe(1)
-    expect(useUpdateStore.getState().installing).toBe(true)
-    expect(useUpdateStore.getState().error).toBeNull()
-  })
-
-  test('a failed install re-enables the restart button and surfaces the installer error', async () => {
-    restartOutcome = 'reject'
-
-    await useUpdateStore.getState().restartToUpdate()
-
-    expect(useUpdateStore.getState().installing).toBe(false)
-    expect(useUpdateStore.getState().error).toBe(updaterDisabledError())
-
-    // The retry path from #3204 stays intact: after the failure the button is
-    // clickable and invoking it again reaches the updater once more.
-    restartOutcome = 'success'
-    await useUpdateStore.getState().restartToUpdate()
-
-    expect(restartAttempts).toBe(2)
-    expect(useUpdateStore.getState().error).toBeNull()
-  })
-
-  test('a successful restart keeps the restarting state until the app quits', async () => {
-    restartOutcome = 'success'
-
-    await useUpdateStore.getState().restartToUpdate()
-
-    expect(useUpdateStore.getState().installing).toBe(true)
-    expect(useUpdateStore.getState().error).toBeNull()
-  })
-
-  test('dismiss clears the restarting state', async () => {
-    restartOutcome = 'success'
-    await useUpdateStore.getState().restartToUpdate()
-    useUpdateStore.getState().dismiss()
-
-    expect(useUpdateStore.getState().installing).toBe(false)
-    expect(useUpdateStore.getState().downloaded).toBe(false)
-  })
-})
-
-describe('parseUpdateCheckResponse', () => {
-  test('keeps the reasons the server cannot install an update and drops unknown ones', () => {
-    expect(parseUpdateCheckResponse({ available: true, installBlocked: 'manual-install' }).installBlocked).toBe('manual-install')
-    expect(parseUpdateCheckResponse({ available: true, installBlocked: 'service-manager' }).installBlocked).toBe('service-manager')
-    expect(parseUpdateCheckResponse({ available: true, installBlocked: 'desktop-host' }).installBlocked).toBe('desktop-host')
-    expect(parseUpdateCheckResponse({ available: true, installBlocked: 'something-else' }).installBlocked).toBeUndefined()
-  })
-})
+describe('fork-only update state', () => {
+  test('forces manual installation and constructs fork links for older remote servers', () => {
+    const info = parseUpdateCheckResponse({ available: true, version: '2.4.0-internetisalie.3', releaseUrl: 'https://upstream.invalid', updateCommand: 'npm install -g @openchamber/web', installBlocked: undefined });
+    expect(info.installBlocked).toBe('manual-install');
+    expect(info.releaseUrl).toBe('https://github.com/internetisalie/openchamber/releases/tag/v2.4.0-internetisalie.3');
+    expect(info.updateCommand).toBeUndefined();
+  });
+  test('rejects upstream metadata and unknown availability', () => {
+    expect(() => parseUpdateCheckResponse({ available: true, version: '2.4.1' })).toThrow();
+    expect(() => parseUpdateCheckResponse({ available: null })).toThrow();
+  });
+  test('cached downloaded state cannot trigger installation or restart', async () => {
+    useUpdateStore.setState({ downloaded: true, available: true, runtimeType: 'desktop' });
+    await expect(useUpdateStore.getState().downloadUpdate()).rejects.toThrow('disabled');
+    await expect(useUpdateStore.getState().restartToUpdate()).rejects.toThrow('disabled');
+    useUpdateStore.getState().reset();
+  });
+  test('failed checks preserve the last known fork release and expose the error', async () => {
+    const info = parseUpdateCheckResponse({ available: true, version: '2.4.0-internetisalie.4' });
+    useUpdateStore.setState({ info, available: true });
+    globalThis.fetch = async () => new Response('', { status: 503 });
+    await useUpdateStore.getState().checkForUpdates();
+    expect(useUpdateStore.getState().info).toEqual(info);
+    expect(useUpdateStore.getState().available).toBe(true);
+    expect(useUpdateStore.getState().error).not.toBeNull();
+    expect(useUpdateStore.getState().checking).toBe(false);
+  });
+});

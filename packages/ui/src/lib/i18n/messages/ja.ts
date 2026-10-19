@@ -25,6 +25,8 @@ import { integrationsCatalogI18n } from './integrations-catalog.i18n';
 import { diffFindI18n } from './diff-find.i18n';
 
 export const dict: Record<I18nKey, string> = {
+  'updateDialog.manualInstall.description': 'このフォークでは既存のインストールを直接更新できません。検証済みの internetisalie リリースを手動でインストールしてください。',
+  'updateDialog.manualInstall.openReleases': 'フォークのリリースを開く',
   "chat.workStatus.pty.showExited": "終了済みを表示",
   "chat.workStatus.pty.hideExited": "終了済みを非表示",
   "chat.workStatus.pty.noneActive": "このセッションには実行中のPTYがありません",

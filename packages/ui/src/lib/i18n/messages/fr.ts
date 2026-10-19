@@ -24,6 +24,8 @@ import { integrationsCatalogI18n } from './integrations-catalog.i18n';
 import { diffFindI18n } from './diff-find.i18n';
 
 export const dict = {
+  'updateDialog.manualInstall.description': 'Les mises à jour sur place sont désactivées pour ce fork. Installez manuellement une version vérifiée de internetisalie.',
+  'updateDialog.manualInstall.openReleases': 'Ouvrir les versions du fork',
   "chat.workStatus.pty.showExited": "Afficher les terminés",
   "chat.workStatus.pty.hideExited": "Masquer les terminés",
   "chat.workStatus.pty.noneActive": "Aucun PTY actif pour cette session",

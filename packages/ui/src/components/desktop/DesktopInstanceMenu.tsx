@@ -256,13 +256,7 @@ function DesktopInstanceMenuContent({ className }: Props): React.ReactNode {
         open={remoteUpdateDialogOpen}
         onOpenChange={setRemoteUpdateDialogOpen}
         info={remoteUpdateInfo}
-        downloading={false}
-        downloaded={false}
-        progress={null}
         error={remoteUpdateError}
-        onDownload={() => {}}
-        onRestart={() => {}}
-        runtimeType="web"
       />
     </>
   );

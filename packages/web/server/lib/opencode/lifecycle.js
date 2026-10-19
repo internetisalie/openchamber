@@ -774,6 +774,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
       { ...inheritedEnv },
       {
         ...managedOpenCodeEnv,
+        OPENCODE_DISABLE_AUTOUPDATE: '1',
         PATH: inheritedEnv.PATH,
         // OpenCode 2 reads OPENCODE_PASSWORD before the legacy name, so a
         // user's own OPENCODE_PASSWORD would otherwise win and every request

@@ -207,7 +207,7 @@
     },
     "publish": {
       "provider": "github",
-      "owner": "openchamber",
+      "owner": "internetisalie",
       "repo": "openchamber"
     }
   }

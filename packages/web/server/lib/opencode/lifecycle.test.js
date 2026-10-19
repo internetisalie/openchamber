@@ -1045,6 +1045,7 @@ describe('OpenCode lifecycle', () => {
       DATABASE_URL: 'postgres://db',
       PATH: '/opt/tools/bin',
       OPENCODE_PASSWORD: 'user-password',
+      OPENCODE_DISABLE_AUTOUPDATE: 'false',
       OPENCHAMBER_AGENT_TOOL_TOKEN: 'user-token',
     }));
     const getManagedOpenCodeEnv = vi.fn(async () => ({ OPENCHAMBER_AGENT_TOOL_TOKEN: 'ephemeral' }));
@@ -1057,10 +1058,11 @@ describe('OpenCode lifecycle', () => {
     expect(options.env.PATH).toBe('/opt/tools/bin:/home/user/.bun/bin:/usr/local/bin:/usr/bin');
     expect(options.env.OPENCODE_PASSWORD).toBe('password');
     expect(options.env.OPENCHAMBER_AGENT_TOOL_TOKEN).toBe('ephemeral');
+    expect(options.env.OPENCODE_DISABLE_AUTOUPDATE).toBe('1');
     expect(runtime.getManagedOpenCodeProcessEnv().DATABASE_URL).toBe('postgres://db');
     // The replaced values are recorded as OpenChamber's; the user's are not.
     const injected = injectedEnvKeys(options.env);
-    for (const key of ['OPENCODE_PASSWORD', 'OPENCODE_SERVER_PASSWORD', 'OPENCHAMBER_AGENT_TOOL_TOKEN']) {
+    for (const key of ['OPENCODE_PASSWORD', 'OPENCODE_SERVER_PASSWORD', 'OPENCHAMBER_AGENT_TOOL_TOKEN', 'OPENCODE_DISABLE_AUTOUPDATE']) {
       expect(injected.has(key)).toBe(true);
     }
     expect(injected.has('DATABASE_URL')).toBe(false);
@@ -1083,6 +1085,7 @@ describe('OpenCode lifecycle', () => {
       PATH: '/untrusted/path',
       OPENCODE_PASSWORD: 'untrusted-password',
       OPENCODE_SERVER_PASSWORD: 'untrusted-password',
+      OPENCODE_DISABLE_AUTOUPDATE: 'false',
     }));
 
     const runtime = createRuntime({ getManagedOpenCodeEnv });
@@ -1095,6 +1098,7 @@ describe('OpenCode lifecycle', () => {
     expect(options.env.PATH).toBe('/home/user/.bun/bin:/usr/local/bin:/usr/bin');
     expect(options.env.OPENCODE_PASSWORD).toBe('password');
     expect(options.env.OPENCODE_SERVER_PASSWORD).toBe('password');
+    expect(options.env.OPENCODE_DISABLE_AUTOUPDATE).toBe('1');
 
     await server.close();
   });

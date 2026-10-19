@@ -4,20 +4,13 @@ import { Icon } from "@/components/icon/Icon";
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { redactSensitiveUrl } from '@/lib/desktopHosts';
+import { openExternalUrl } from '@/lib/url';
 import {
   getDesktopRecoveryConfig,
   type RecoveryVariant,
 } from './desktopRecoveryConfig';
 
 export type { RecoveryVariant } from './desktopRecoveryConfig';
-
-/** Updating an incompatible remote host from the recovery screen. */
-export type ServerUpdateState =
-  | { kind: 'idle' }
-  | { kind: 'updating' }
-  | { kind: 'refused'; error: string | null }
-  | { kind: 'auth' }
-  | { kind: 'timeout' };
 
 export type DesktopConnectionRecoveryProps = {
   variant: RecoveryVariant;
@@ -27,33 +20,9 @@ export type DesktopConnectionRecoveryProps = {
   onUseLocal?: () => void;
   onUseRemote?: () => void;
   isRetrying?: boolean;
-  onUpdateServer?: () => void;
-  serverUpdate?: ServerUpdateState;
 };
 
-const MANUAL_SERVER_UPDATE_COMMAND = 'openchamber update';
-
-function ServerUpdateFailure({ state }: { state: ServerUpdateState }) {
-  const { t } = useI18n();
-  if (state.kind === 'idle' || state.kind === 'updating') return null;
-  const message = state.kind === 'refused'
-    ? t('onboarding.desktopRecovery.remoteIncompatible.updateRefused')
-    : state.kind === 'auth'
-      ? t('onboarding.desktopRecovery.remoteIncompatible.updateAuth')
-      : t('onboarding.desktopRecovery.remoteIncompatible.updateTimeout');
-  return (
-    <div className="space-y-2">
-      <p className="typography-meta text-[var(--status-error)]">{message}</p>
-      {state.kind === 'refused' && state.error && (
-        <p className="typography-meta text-muted-foreground">{state.error}</p>
-      )}
-      <p className="typography-meta text-muted-foreground">{t('onboarding.desktopRecovery.remoteIncompatible.manualUpdate')}</p>
-      <code className="block select-text rounded-md border border-border bg-background/50 px-3 py-2 font-mono text-sm text-foreground">
-        {MANUAL_SERVER_UPDATE_COMMAND}
-      </code>
-    </div>
-  );
-}
+const FORK_RELEASES_URL = 'https://github.com/internetisalie/openchamber/releases';
 
 /** Maps iconKey from config to actual icon component */
 function getRecoveryIcon(iconKey: 'local' | 'remote'): React.ReactNode {
@@ -73,10 +42,7 @@ export function DesktopConnectionRecovery({
   onUseLocal,
   onUseRemote,
   isRetrying = false,
-  onUpdateServer,
-  serverUpdate = { kind: 'idle' },
 }: DesktopConnectionRecoveryProps) {
-  const updatingServer = serverUpdate.kind === 'updating';
   const { t } = useI18n();
   const config = getDesktopRecoveryConfig(variant, hostLabel, hostUrl);
   const retryLabelKey = (config.retryLabelKey ?? 'onboarding.desktopRecovery.actions.retryConnection') as Parameters<typeof t>[0];
@@ -130,32 +96,24 @@ export function DesktopConnectionRecovery({
 
         {/* Action buttons */}
         <div className="flex flex-col gap-2">
-          {onUpdateServer && (
+          {variant === 'remote-incompatible' && (
             <>
               <Button
-                onClick={onUpdateServer}
-                disabled={updatingServer || isRetrying}
+                onClick={() => void openExternalUrl(FORK_RELEASES_URL)}
                 className="w-full"
               >
-                <Icon name={updatingServer ? 'loader' : 'download'} className={cn('h-4 w-4', updatingServer && 'animate-spin')} />
-                {updatingServer
-                  ? t('onboarding.desktopRecovery.remoteIncompatible.updatingServer')
-                  : t('onboarding.desktopRecovery.remoteIncompatible.updateServer')}
+                <Icon name="external-link" className="size-4" />
+                {t('updateDialog.manualInstall.openReleases')}
               </Button>
-              {updatingServer && (
-                <p className="typography-meta text-center text-muted-foreground">
-                  {t('onboarding.desktopRecovery.remoteIncompatible.updatingHint')}
-                </p>
-              )}
-              <ServerUpdateFailure state={serverUpdate} />
+              <p className="typography-meta text-center text-muted-foreground">{t('updateDialog.manualInstall.description')}</p>
             </>
           )}
 
           {config.showRetry && onRetry && (
             <Button
               onClick={onRetry}
-              disabled={isRetrying || updatingServer}
-              variant={onUpdateServer ? 'outline' : 'default'}
+              disabled={isRetrying}
+              variant={variant === 'remote-incompatible' ? 'outline' : 'default'}
               className="w-full"
             >
               <Icon name="refresh" className={cn('h-4 w-4', isRetrying && 'animate-spin')} />
@@ -170,7 +128,7 @@ export function DesktopConnectionRecovery({
               <Button
                 variant="outline"
                 onClick={onUseLocal}
-                disabled={isRetrying || updatingServer}
+                disabled={isRetrying}
                 className="flex-1"
               >
                 <Icon name="macbook" className="h-4 w-4" />
@@ -182,7 +140,7 @@ export function DesktopConnectionRecovery({
               <Button
                 variant="outline"
                 onClick={onUseRemote}
-                disabled={isRetrying || updatingServer}
+                disabled={isRetrying}
                 className="flex-1"
               >
                 <Icon name="server" className="h-4 w-4" />

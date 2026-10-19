@@ -131,12 +131,12 @@ The webview build emits each worker as one self-contained file. VS Code webviews
 
 - OpenCode compatibility recovery
   - `api:opencode/compatibility` is available even when managed startup rejects v1 or a 2.x older than the supported minimum. The UI checks it before configuration and session bootstrap.
-  - `api:opencode/install-v2` accepts the same managed CLI versions for which compatibility offers installation. It runs the shared `v2-install.js` installer on macOS, Linux and Windows through the manager queue. Concurrent webviews share the operation. The extension selects the verified binary in the effective VS Code configuration scope, restarts, and requires a connected, supported v2 status before reporting success. Stop invalidates pending restart work.
-  - The webview bridge waits without its default 30-second timeout. External URLs use manual installation. Filesystem rollback, standard installation location and cross-process locking follow the web runtime's CLI migration contract.
+  - `api:opencode/install-v2` refuses before calling the manager. Compatibility never advertises automatic installation. The manager refuses independently and never changes VS Code configuration or restarts for an install request.
+   - Recovery uses manual fork release links. Neither the bridge nor manager starts an installer or changes the selected binary.
 
 - `opencode-upgrade-runtime.ts`
   - Owns managed-versus-external capability decisions and latest-version checks.
-  - Managed runtimes run the resolved CLI with `upgrade` through the manager's operation queue and the shared `packages/web/server/lib/opencode/cli-upgrade.js` executor. The queued action resolves the CLI with the same fallback as capability reporting; it does not require a live server process just to update the binary. OpenCode chooses its installer. Concurrent webviews share one installation; failures allow another attempt. The existing Reload action restarts the server afterwards. The bridge waits for command completion without its default 30-second timeout. External connections and missing CLIs reject upgrades before spawning. Version checks remain available for external connections.
+  - All upgrade requests refuse before network or CLI operations. Read-only status uses only `internetisalie/opencode` release metadata, with numeric fork revision ordering. Managed launches force `OPENCODE_DISABLE_AUTOUPDATE=1`. OpenChamber checks share the fixed fork repository policy and transmit no usage or install ID. See `packages/web/server/lib/DOCUMENTATION.md` for the contract and standalone CLI limits.
 
 - Plugin metadata and OpenCode version checks use `packages/web/server/lib/opencode/npm-registry-config.js`, the same resolver as the web server. It reads inherited registry settings and the user's `.npmrc`, supports scoped registries, and sends credentials only in HTTP headers.
 

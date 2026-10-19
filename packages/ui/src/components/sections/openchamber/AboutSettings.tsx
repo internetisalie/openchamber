@@ -12,7 +12,6 @@ import { Spinner } from '@/components/ui/spinner';
 import { OpenChamberLogo } from '@/components/ui/OpenChamberLogo';
 import { useI18n } from '@/lib/i18n';
 import { runtimeFetch } from '@/lib/runtime-fetch';
-import { copyTextToClipboard } from '@/lib/clipboard';
 import { reloadOpenCodeConfiguration } from '@/stores/useAgentsStore';
 import { fetchOpenCodeUpgradeStatus, runOpenCodeUpgrade, type OpenCodeUpgradeStatus } from '@/components/update/openCodeUpgrade';
 import { useDesktopRemoteHostActive } from '@/hooks/useDesktopRemoteHostActive';
@@ -164,14 +163,8 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
     checking: s.checking,
     available: s.available,
     error: s.error,
-    downloading: s.downloading,
-    downloaded: s.downloaded,
-    installing: s.installing,
-    progress: s.progress,
     runtimeType: s.runtimeType,
     checkForUpdates: s.checkForUpdates,
-    downloadUpdate: s.downloadUpdate,
-    restartToUpdate: s.restartToUpdate,
   })));
   const { isMobile } = useDeviceInfo();
   // Native app: updates target the connected server; the app itself updates
@@ -222,7 +215,6 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
   const openCode = useOpenCodeUpgrade(t('opencodeUpdate.toast.failed.description'));
   const openCodeVersion = openCode.status?.currentVersion ?? null;
   const openCodeUpdateVersion = openCode.phase.kind === 'installed' ? null : openCode.status?.availableVersion ?? null;
-  const [commandCopied, setCommandCopied] = React.useState(false);
 
   // The OpenChamber button names what it replaces. In the native app that is
   // the server the phone is connected to (or the desktop app serving it),
@@ -250,13 +242,6 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
     void openCode.refresh();
   };
 
-  const copyManualCommand = async (command: string) => {
-    const result = await copyTextToClipboard(command);
-    if (!result.ok) return;
-    setCommandCopied(true);
-    setTimeout(() => setCommandCopied(false), 2000);
-  };
-
   const reloadOpenCode = () => {
     void openCode.reloadAfterUpgrade(async () => {
       await reloadOpenCodeConfiguration({
@@ -268,39 +253,14 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
   };
 
   const renderManualUpdateNotice = (info: UpdateInfo | null) => {
-    if (info?.installBlocked === 'desktop-host') {
-      return (
-        <p className="typography-meta text-muted-foreground">
-          {t('updateDialog.desktopHostInstall', { version: info.version || '' })}
-        </p>
-      );
-    }
-    // No command updates a copy that no package manager installed.
-    if (info?.installBlocked === 'manual-install') {
-      return (
-        <p className="typography-meta text-muted-foreground">
-          {t('settings.openchamber.about.manualInstallUpdate', { version: info.version || '' })}
-        </p>
-      );
-    }
-    const command = info?.updateCommand || 'openchamber update';
     return (
       <div className="space-y-2">
         <p className="typography-meta text-muted-foreground">
-          {t('settings.openchamber.about.serviceManagerUpdate', { version: info?.version || '' })}
+          {info?.version} · {t('updateDialog.manualInstall.description')}
         </p>
-        <div className="flex items-center gap-2 oc-tile-inset rounded-md p-1 ps-3">
-          <code className="flex-1 overflow-x-auto whitespace-nowrap font-mono text-sm text-foreground">{command}</code>
-          <Button
-            type="button"
-            variant="ghost"
-            size="icon"
-            onClick={() => void copyManualCommand(command)}
-            aria-label={commandCopied ? t('updateDialog.actions.copied') : t('updateDialog.actions.copyCommand')}
-          >
-            <Icon name={commandCopied ? 'check' : 'clipboard'} className="size-4" />
-          </Button>
-        </div>
+        <a href={info?.releaseUrl || 'https://github.com/internetisalie/openchamber/releases'} target="_blank" rel="noopener noreferrer" className="typography-meta text-primary underline">
+          {t('updateDialog.manualInstall.openReleases')} · internetisalie/openchamber
+        </a>
       </div>
     );
   };
@@ -321,13 +281,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
       open={serverUpdateDialogOpen}
       onOpenChange={setServerUpdateDialogOpen}
       info={remoteHostUpdate.info}
-      downloading={false}
-      downloaded={false}
-      progress={null}
       error={remoteHostUpdate.error}
-      onDownload={() => {}}
-      onRestart={() => {}}
-      runtimeType="web"
     />
   ) : null;
 
@@ -548,14 +502,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
           open={updateDialogOpen}
           onOpenChange={setUpdateDialogOpen}
           info={update.info}
-          downloading={updateStore.downloading}
-          downloaded={updateStore.downloaded}
-          installing={updateStore.installing}
-          progress={updateStore.progress}
           error={update.error}
-          onDownload={updateStore.downloadUpdate}
-          onRestart={updateStore.restartToUpdate}
-          runtimeType={update.runtimeType}
         />
         {remoteHostUpdateDialog}
       </div>
@@ -671,14 +618,7 @@ export const AboutSettings: React.FC<AboutSettingsProps> = ({ initialUpdateDialo
         open={updateDialogOpen}
         onOpenChange={setUpdateDialogOpen}
         info={update.info}
-        downloading={updateStore.downloading}
-        downloaded={updateStore.downloaded}
-        installing={updateStore.installing}
-        progress={updateStore.progress}
         error={update.error}
-        onDownload={updateStore.downloadUpdate}
-        onRestart={updateStore.restartToUpdate}
-        runtimeType={update.runtimeType}
       />
       {remoteHostUpdateDialog}
     </SettingsSection>

@@ -56,16 +56,16 @@ describe('OpenCode upgrade capability', () => {
     });
   });
 
-  it('offers CLI upgrades for a managed non-bundled binary', () => {
+  it('requires manual replacement of a managed non-bundled fork binary', () => {
     expect(resolveOpenCodeUpgradeCapability({
       isExternal: false,
       hasManagedProcess: true,
       activeBinary: '/Users/alice/.opencode/bin/opencode',
       isBundledBinary: () => false,
     })).toEqual({
-      supported: true,
-      manager: 'opencode',
-      reason: null,
+      supported: false,
+      manager: 'administrator',
+      reason: 'manual-install',
     });
   });
 });

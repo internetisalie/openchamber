@@ -24,6 +24,8 @@ import { integrationsCatalogI18n } from './integrations-catalog.i18n';
 import { diffFindI18n } from './diff-find.i18n';
 
 export const dict = {
+  'updateDialog.manualInstall.description': 'التحديثات المباشرة معطلة لهذا الإصدار المتفرع. ثبّت إصدار internetisalie تم التحقق منه يدويًا.',
+  'updateDialog.manualInstall.openReleases': 'فتح إصدارات النسخة المتفرعة',
   'chat.workStatus.pty.showExited': 'إظهار المنتهية',
   'chat.workStatus.pty.hideExited': 'إخفاء المنتهية',
   'chat.workStatus.pty.noneActive': 'لا توجد طرفيات PTY نشطة لهذه الجلسة',

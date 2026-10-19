@@ -67,7 +67,7 @@ describe('ElectronSshManager', () => {
     expect(snapshots.entries.at(-1)).not.toHaveProperty('detail');
   });
   for (const scenario of ['explicit XDG with spaces', 'unset XDG', 'missing XDG with home fallback']) {
-    test.skipIf(process.platform === 'win32')(`executes remote discovery, install and launch with ${scenario}`, async () => {
+    test.skipIf(process.platform === 'win32')(`executes remote discovery and launch while refusing installation with ${scenario}`, async () => {
       const home = fs.mkdtempSync(path.join(os.tmpdir(), 'openchamber ssh paths-'));
       tempDirs.push(home);
       const xdg = path.join(home, 'cache directory');
@@ -83,9 +83,10 @@ describe('ElectronSshManager', () => {
       executable(path.join(bin, 'bun'), 'printf "%s\\n" "$@" > "$HOME/install-args"');
       executable(path.join(bin, 'opencode'), 'printf "1.2.3\\n"');
       executable(path.join(bin, 'openchamber'), `
-if [ "$1" = "--version" ]; then printf '1.2.3\\n'; exit 0; fi
+if [ "$1" = "--version" ]; then printf '2.4.0-internetisalie.3\\n'; exit 0; fi
 printf '%s' "$PATH" > "$HOME/launch-path"
 printf '%s' "$OPENCODE_BINARY" > "$HOME/launch-opencode"
+printf '%s' "$OPENCODE_DISABLE_AUTOUPDATE" > "$HOME/disable-autoupdate"
 printf '4321\\n'`);
       // An earlier candidate with a different version must not win discovery.
       executable(path.join(home, '.openchamber', 'npm-global', 'bin', 'openchamber'), 'printf "0.9.0\\n"');
@@ -95,7 +96,7 @@ printf '4321\\n'`);
       if (scenario !== 'unset XDG') env.XDG_CACHE_HOME = xdg;
       const manager = new ElectronSshManager({
         settingsFilePath: path.join(home, 'settings.json'),
-        appVersion: '1.2.3',
+        appVersion: '2.4.0-internetisalie.3',
         emit: () => undefined,
       });
       manager.runRemoteCommand = async (_parsed, _controlPath, script) =>
@@ -103,13 +104,14 @@ printf '4321\\n'`);
       manager.remoteServerRunning = async () => true;
       const parsed = { destination: 'user@example.test', args: [] };
 
-      await manager.installOpenChamberManaged(parsed, '/unused.sock', '1.2.3', 'auto');
-      expect(fs.readFileSync(path.join(home, 'install-args'), 'utf8')).toBe('add\n-g\n@openchamber/web@1.2.3\n');
+      await expect(manager.installOpenChamberManaged(parsed, '/unused.sock', '1.2.3', 'auto')).rejects.toThrow('SSH installation and updates are disabled');
+      expect(fs.existsSync(path.join(home, 'install-args'))).toBe(false);
       const result = await manager.ensureRemoteServer({
         id: 'ssh-paths', auth: {}, remoteOpenchamber: { mode: 'managed', installMethod: 'auto' },
       }, parsed, '/unused.sock');
       expect(result.remoteBinPath).toBe(path.join(bin, 'openchamber'));
       expect(result.remotePort).toBe(4321);
+      expect(fs.readFileSync(path.join(home, 'disable-autoupdate'), 'utf8')).toBe('1');
       expect(fs.readFileSync(path.join(home, 'launch-opencode'), 'utf8')).toBe(path.join(bin, 'opencode'));
       const launchPath = fs.readFileSync(path.join(home, 'launch-path'), 'utf8').split(':');
       expect(launchPath).toContain(path.join(cache, '.bun', 'bin'));
@@ -439,7 +441,7 @@ printf '4321\\n'`);
     });
     expect(settings.desktopHosts).toEqual([{ id: 'ssh-1', label: 'SSH Host', url: localUrl, apiUrl: localUrl, clientToken: 'ssh-client-token' }]);
   });
-  test.skipIf(process.platform === 'win32')('finds the newest nvm npm that the SSH login shell does not have on PATH', async () => {
+  test.skipIf(process.platform === 'win32')('refuses remote installation even with nvm package managers present', async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), 'openchamber-ssh-nvm-'));
     const executable = (file, script) => {
       fs.mkdirSync(path.dirname(file), { recursive: true });
@@ -461,10 +463,9 @@ printf '4321\\n'`);
       execFileSync('/bin/sh', ['-c', script], { env, encoding: 'utf8', timeout: 5000 });
 
     try {
-      await manager.installOpenChamberManaged({ destination: 'user@example.test', args: [] }, '/unused.sock', '1.2.3', 'auto');
-      expect(fs.readFileSync(path.join(home, 'npm-version'), 'utf8')).toBe('v24.18.0');
-      expect(fs.readFileSync(path.join(home, 'npm-path'), 'utf8').split(':')[0])
-        .toBe(path.join(home, '.nvm', 'versions', 'node', 'v24.18.0', 'bin'));
+      await expect(manager.installOpenChamberManaged({ destination: 'user@example.test', args: [] }, '/unused.sock', '1.2.3', 'auto')).rejects.toThrow('SSH installation and updates are disabled');
+      expect(fs.existsSync(path.join(home, 'npm-version'))).toBe(false);
+      expect(fs.existsSync(path.join(home, 'npm-path'))).toBe(false);
     } finally {
       fs.rmSync(home, { recursive: true, force: true });
     }
@@ -482,13 +483,13 @@ printf '4321\\n'`);
     const nvmBin = path.join(home, '.nvm', 'versions', 'node', 'v24.18.0', 'bin');
     executable(path.join(nvmBin, 'opencode'), 'exit 0');
     executable(path.join(home, '.openchamber', 'npm-global', 'bin', 'openchamber'), `
-if [ "$1" = "--version" ]; then printf '1.2.3\\n'; exit 0; fi
+if [ "$1" = "--version" ]; then printf '2.4.0-internetisalie.3\\n'; exit 0; fi
 printf '%s' "$OPENCODE_BINARY" > "$HOME/launch-opencode"
 printf '4321\\n'`);
     const env = { HOME: home, PATH: '/usr/bin:/bin' };
     const manager = new ElectronSshManager({
       settingsFilePath: path.join(home, 'settings.json'),
-      appVersion: '1.2.3',
+      appVersion: '2.4.0-internetisalie.3',
       emit: () => undefined,
     });
     manager.runRemoteCommand = async (_parsed, _controlPath, script) =>
@@ -505,7 +506,7 @@ printf '4321\\n'`);
     expect(fs.readFileSync(path.join(home, 'launch-opencode'), 'utf8')).toBe(path.join(nvmBin, 'opencode'));
   });
 
-  test('installs OpenChamber into a home-owned npm prefix instead of the root-owned global one', async () => {
+  test('refuses remote npm installation before running any command', async () => {
     const commands = [];
     const manager = new ElectronSshManager({
       settingsFilePath: path.join(os.tmpdir(), 'unused-settings.json'),
@@ -518,11 +519,8 @@ printf '4321\\n'`);
       return '';
     };
 
-    await manager.installOpenChamberManaged({ destination: 'user@example.test', args: [] }, '/tmp/control.sock', '1.2.3', 'auto');
-
-    expect(commands).toHaveLength(1);
-    expect(commands[0]).toContain('--prefix "$HOME/.openchamber/npm-global"');
-    expect(commands[0]).not.toMatch(/npm install -g @openchamber/);
+    await expect(manager.installOpenChamberManaged({ destination: 'user@example.test', args: [] }, '/tmp/control.sock', '1.2.3', 'auto')).rejects.toThrow('SSH installation and updates are disabled');
+    expect(commands).toHaveLength(0);
   });
 
   test('lists every remote OpenChamber binary with its reported version', async () => {
@@ -532,7 +530,7 @@ printf '4321\\n'`);
       emit: () => undefined,
     });
     manager.runRemoteCommand = async () => [
-      '/home/pi/.openchamber/npm-global/bin/openchamber\t1.2.3',
+      '/home/pi/.openchamber/npm-global/bin/openchamber\t2.4.0-internetisalie.3',
       '/usr/bin/openchamber\t0.9.0',
       '',
     ].join('\n');
@@ -540,7 +538,7 @@ printf '4321\\n'`);
     const candidates = await manager.remoteOpenChamberCandidates({ destination: 'user@example.test', args: [] }, '/tmp/control.sock');
 
     expect(candidates).toEqual([
-      { binPath: '/home/pi/.openchamber/npm-global/bin/openchamber', version: '1.2.3' },
+      { binPath: '/home/pi/.openchamber/npm-global/bin/openchamber', version: '2.4.0-internetisalie.3' },
       { binPath: '/usr/bin/openchamber', version: '0.9.0' },
     ]);
   });
@@ -592,7 +590,7 @@ printf '4321\\n'`);
       '/home/pi/.bun/bin/openchamber',
     )).rejects.toThrow(/opencode CLI is not installed/);
   });
-  test('prefers a bun that only exists in the home directory over npm', async () => {
+  test('refuses remote Bun installation before running any command', async () => {
     const commands = [];
     const manager = new ElectronSshManager({
       settingsFilePath: path.join(os.tmpdir(), 'unused-settings.json'),
@@ -607,9 +605,16 @@ printf '4321\\n'`);
       return '';
     };
 
-    await manager.installOpenChamberManaged({ destination: 'user@example.test', args: [] }, '/tmp/control.sock', '1.2.3', 'auto');
-
-    expect(commands).toEqual(["'/home/pi/.bun/bin/bun' add -g @openchamber/web@1.2.3"]);
+    await expect(manager.installOpenChamberManaged({ destination: 'user@example.test', args: [] }, '/tmp/control.sock', '1.2.3', 'auto')).rejects.toThrow('SSH installation and updates are disabled');
+    expect(commands).toEqual([]);
+  });
+  for (const version of ['2.3.0', '2.4.0', '2.4.0-internetisalie.2']) test(`leaves the remote server alone with mismatched binary ${version}`, async () => {
+    const manager = new ElectronSshManager({ settingsFilePath: path.join(os.tmpdir(), 'unused-settings.json'), appVersion: '2.4.0-internetisalie.3', emit: () => undefined });
+    manager.remoteOpenChamberCandidates = async () => [{ binPath: '/remote/openchamber', version }];
+    let touched = false;
+    manager.adoptRunningRemoteServer = async () => { touched = true; throw new Error('Adoption attempted'); };
+    await expect(manager.ensureRemoteServer({ id: 'ssh-refusal', remoteOpenchamber: { mode: 'managed' } }, {}, '/unused.sock')).rejects.toThrow('SSH installation and updates are disabled');
+    expect(touched).toBe(false);
   });
   test('stops a remote server it started through the CLI, not the authenticated HTTP route', async () => {
     const scripts = [];
@@ -671,15 +676,15 @@ printf '4321\\n'`);
 
     // A remote host reduced to what the manager asks of it: the CLI registry,
     // the servers answering on their ports, and the serve/stop commands.
-    const createRemoteHost = (servers = []) => {
+    const createRemoteHost = (servers = [], appVersion = '1.2.3') => {
       const host = { servers: [...servers], started: [], stopped: [], statusFails: false, stopFails: false, statusNoise: '' };
       const manager = new ElectronSshManager({
         settingsFilePath: path.join(os.tmpdir(), 'unused-settings.json'),
-        appVersion: '1.2.3',
+        appVersion,
         emit: () => undefined,
       });
       manager.resolveRemoteTool = async () => '/home/pi/.opencode/bin/opencode';
-      manager.remoteOpenChamberCandidates = async () => [{ binPath: '/home/pi/.bun/bin/openchamber', version: '1.2.3' }];
+      manager.remoteOpenChamberCandidates = async () => [{ binPath: '/home/pi/.bun/bin/openchamber', version: appVersion }];
       manager.runRemoteCommand = async (_parsed, _controlPath, script) => {
         const probedPort = script.match(/127\.0\.0\.1:(\d+)\/api\/system\/info/);
         if (probedPort) {
@@ -720,6 +725,15 @@ printf '4321\\n'`);
       return { host, manager };
     };
 
+    test('reuses the matching numbered fork server without shutdown or launch', async () => {
+      const version = '2.4.0-internetisalie.3';
+      const { host, manager } = createRemoteHost([{ port: 30001, version }], version);
+      const result = await manager.ensureRemoteServer(managed(), parsed, '/unused.sock');
+      expect(result).toMatchObject({ remotePort: 30001, startedByUs: false });
+      expect(host.started).toEqual([]);
+      expect(host.stopped).toEqual([]);
+    });
+
     test('reconnecting reuses the server the previous connect left running', async () => {
       const { host, manager } = createRemoteHost();
 
@@ -732,24 +746,21 @@ printf '4321\\n'`);
       expect(host.servers).toHaveLength(1);
     });
 
-    test('replaces a daemon left by another app version instead of starting next to it', async () => {
+    test('refuses a daemon left by another version without stopping it', async () => {
       const { host, manager } = createRemoteHost([{ port: 30001, version: '1.1.0' }]);
 
-      const result = await manager.ensureRemoteServer(managed(), parsed, '/unused.sock');
-
-      expect(host.stopped).toEqual([30001]);
-      expect(result.startedByUs).toBe(true);
-      expect(host.servers.map((entry) => entry.version)).toEqual(['1.2.3']);
+      await expect(manager.ensureRemoteServer(managed(), parsed, '/unused.sock')).rejects.toThrow('SSH installation and updates are disabled');
+      expect(host.stopped).toEqual([]);
+      expect(host.started).toEqual([]);
+      expect(host.servers.map((entry) => entry.version)).toEqual(['1.1.0']);
     });
 
     test('leaves a foreground server of another version to its process manager', async () => {
       const { host, manager } = createRemoteHost([{ port: 30001, version: '1.1.0', launchMode: 'foreground' }]);
 
-      const result = await manager.ensureRemoteServer(managed(), parsed, '/unused.sock');
-
+      await expect(manager.ensureRemoteServer(managed(), parsed, '/unused.sock')).rejects.toThrow('SSH installation and updates are disabled');
       expect(host.stopped).toEqual([]);
-      expect(result.startedByUs).toBe(true);
-      expect(result.remotePort).not.toBe(30001);
+      expect(host.started).toEqual([]);
     });
 
     test('does not hand a loopback-only server to an instance published to the network', async () => {
@@ -855,21 +866,19 @@ printf '4321\\n'`);
       expect(host.stopped).toEqual([30001]);
     });
 
-    test('falls back to the stale server on a pinned port when it cannot be stopped', async () => {
+    test('refuses a stale pinned server before attempting shutdown', async () => {
       const { host, manager } = createRemoteHost([{ port: 30777, version: '1.1.0' }]);
       host.stopFails = true;
 
-      const result = await manager.ensureRemoteServer(managed({ preferredPort: 30777 }), parsed, '/unused.sock');
-
-      expect(host.stopped).toEqual([30777]);
-      expect(result).toMatchObject({ remotePort: 30777, startedByUs: false });
+      await expect(manager.ensureRemoteServer(managed({ preferredPort: 30777 }), parsed, '/unused.sock')).rejects.toThrow('SSH installation and updates are disabled');
+      expect(host.stopped).toEqual([]);
       expect(host.started).toEqual([]);
     });
 
     test('keeps reusing a pinned port the registry does not know about', async () => {
       const { host, manager } = createRemoteHost([
         { port: 30001, version: '1.2.3' },
-        { port: 30777, version: '1.1.0', registered: false },
+        { port: 30777, version: '1.2.3', registered: false },
       ]);
 
       const result = await manager.ensureRemoteServer(managed({ preferredPort: 30777 }), parsed, '/unused.sock');

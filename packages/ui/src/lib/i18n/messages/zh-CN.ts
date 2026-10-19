@@ -25,6 +25,8 @@ import { integrationsCatalogI18n } from './integrations-catalog.i18n';
 import { diffFindI18n } from './diff-find.i18n';
 
 export const dict: Record<I18nKey, string> = {
+  'updateDialog.manualInstall.description': '此分支已禁用原地更新。请手动安装经过验证的 internetisalie 发行版。',
+  'updateDialog.manualInstall.openReleases': '打开发行分支版本',
   "chat.workStatus.pty.showExited": "显示已退出",
   "chat.workStatus.pty.hideExited": "隐藏已退出",
   "chat.workStatus.pty.noneActive": "此会话没有活动的 PTY",

@@ -25,6 +25,8 @@ import { integrationsCatalogI18n } from './integrations-catalog.i18n';
 import { diffFindI18n } from './diff-find.i18n';
 
 export const dict: Record<I18nKey, string> = {
+  'updateDialog.manualInstall.description': 'Aktualizacje w miejscu są wyłączone w tym forku. Zainstaluj ręcznie zweryfikowane wydanie internetisalie.',
+  'updateDialog.manualInstall.openReleases': 'Otwórz wydania forka',
   "chat.workStatus.pty.showExited": "Pokaż zakończone",
   "chat.workStatus.pty.hideExited": "Ukryj zakończone",
   "chat.workStatus.pty.noneActive": "Brak aktywnych PTY w tej sesji",

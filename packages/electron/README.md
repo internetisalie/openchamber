@@ -2,7 +2,7 @@
 
 Electron desktop runtime for OpenChamber on macOS, Windows, and Linux.
 
-This package owns the native shell: windows, menus, deep links, native notifications, auto-updates, host switching, SSH connections, tunnel helpers, and packaged desktop builds. The web UI and OpenChamber server logic still live in `packages/web` and shared React UI lives in `packages/ui`.
+This package owns the native shell: windows, menus, deep links, native notifications, read-only release checks, host switching, SSH connections, tunnel helpers, and packaged desktop builds. The web UI and OpenChamber server logic still live in `packages/web` and shared React UI lives in `packages/ui`.
 
 ## How It Runs
 
@@ -97,7 +97,7 @@ resolve, then navigate, with the splash reporting the connection attempt.
 `bun run profile:startup` measures a packaged build's launch in an isolated
 profile; see `scripts/perf/DOCUMENTATION.md`.
 
-Quit, relaunch, and update installation await the in-process server's `stop()`
+Quit and relaunch await the in-process server's `stop()`
 before exiting Electron. This lets the backend release its terminals, managed
 OpenCode process, and guest services. `server-shutdown.mjs` bounds the server
 wait to 35 seconds, allowing the terminal runtime's 20-second grace plus the
@@ -105,9 +105,7 @@ remaining backend cleanup. It uses the detached OpenCode killer only if normal
 shutdown fails or times out. An external OpenCode server remains externally
 owned. Closing to the tray does not stop the backend.
 
-Update installation bounds the full background-service shutdown, including SSH,
-to 40 seconds. This outer deadline leaves the backend's 35-second wait intact;
-its timer is cleared when shutdown finishes.
+Update refusal starts no background-service shutdown.
 
 See [process ownership and the #3589 investigation](./process-lifecycle.md)
 for the launch paths, controlled reproductions, and Windows validation limits.
@@ -199,14 +197,12 @@ to update OpenChamber on the server. A server before 2.0 runs OpenCode 1.x with
 the same API version and capabilities, so its own version is the only thing that
 tells it apart. A version that does not parse does not block.
 
-The Incompatible recovery screen can ask the host to update itself
-(`desktop_host_update_server`, local pages only, `remote-host-update.mjs`). The
-command takes only a saved host id and reads the address, client token, and
-request headers from the hosts file, so a page cannot aim the token at another
-address. It posts to the host's `/api/openchamber/update-install`, the route
-every server since 1.9 serves to its own web UI, and reports `started`, `auth`,
-or `failed` with the host's reason. The renderer then probes the host until it
-answers compatible and restarts the app to boot against it again.
+The `desktop_host_update_server` recovery command fails locally with the fork's
+manual-replacement explanation. It sends no install POST, including to an older
+remote server whose updater may resolve upstream. The saved host remains usable
+after its operator replaces it manually. SSH managed connections also require an
+already-installed matching numbered fork identity and refuse installation before daemon
+adoption or shutdown.
 
 Every exit aborts the attempt's requests and cancels unused response bodies before
 clearing the deadline timer. This includes early HTTP classifications and a
@@ -302,7 +298,7 @@ After packaging, run `bun run --cwd packages/electron verify:linux-appimage`. Th
 `verify:linux-directory` checks the unpacked executable, bundled tools and native
 modules. Its directory format omits AppImage launcher metadata and theme icons.
 
-Running a packaged Linux AppImage requires FUSE (`libfuse.so.2`, typically `libfuse2` / `libfuse2t64` on Debian/Ubuntu). Without FUSE, start with `APPIMAGE_EXTRACT_AND_RUN=1`. Keep the AppImage on a writable path so in-app updates can replace it.
+Running a packaged Linux AppImage requires FUSE (`libfuse.so.2`, typically `libfuse2` / `libfuse2t64` on Debian/Ubuntu). Without FUSE, start with `APPIMAGE_EXTRACT_AND_RUN=1`. This fork requires manual replacement on that format too.
 
 Desktop clears AppImage `ARGV0` from `process.env` before probing the login shell and starting the in-process server. Leaving it set makes zsh rewrite argv[0] for integrated-terminal and managed-OpenCode child commands to the AppImage path.
 
@@ -310,15 +306,30 @@ The variables Desktop sets for the in-process server (`OPENCHAMBER_RUNTIME`, `OP
 
 The AppImage launcher also prepends its own directories to `PATH`, `LD_LIBRARY_PATH`, `GSETTINGS_SCHEMA_DIR` and `XDG_DATA_DIRS`, leaving a trailing `:` when a variable was unset. Desktop keeps them in its own process and removes them only from the integrated terminal, the managed OpenCode server, and the git environment the server builds (`stripAppImageLauncherEnv` in `packages/web/server/lib/inherited-env.js`), so user tools, agent commands and git hooks started from those paths see the user's values (#4177). `XDG_DATA_DIRS` keeps the standard system directories the launcher adds around the user's value.
 
-Linux updates are supported when the packaged app runs from a writable AppImage or from an installed `.deb` or `.rpm`. electron-updater picks its installer from `resources/package-type`, which electron-builder writes into the packages: the AppImage is replaced in place by electron-updater. A package is downloaded by electron-updater but installed by `linux-package-install.mjs`: one `pkexec` call running `apt install` for a `.deb`, or the first of `zypper`/`dnf`/`yum`/`rpm` for an `.rpm`, so the system asks for the administrator password once. It runs asynchronously because electron-updater's installers use `spawnSync`, which freezes every window through the prompt and the install, and because its dpkg path retries a cancelled `dpkg -i` with `apt-get install -f`, a second prompt. Package installs relaunch through `linux-relaunch.mjs` instead of `app.relaunch()`: Chromium starts the relaunched process with `no_new_privs`, which every later `pkexec` refuses ("must be setuid root"), so the next update would fail without a prompt. A failed install after the backend stopped, a cancelled prompt included, relaunches the current version on every platform. Update checks, downloads, and installation report an actionable error when neither an AppImage nor a package type is found, or the AppImage is invalid or read-only; a missing release feed (`latest-linux.yml` 404 before the first Linux publish) is treated as “no update available”. Authenticated Web clients connected to the embedded Desktop Host use this same `electron-updater` check, download, and restart flow rather than a package-manager command, except on a `.deb` or `.rpm` host: its password prompt would appear only on the host's screen while its server is down, so the check reports `installBlocked: 'desktop-host'` and the install route refuses with 409, and clients tell the user to update on that computer. Release builds keep `latest-linux.yml` (x64) and `latest-linux-arm64.yml` separate; each lists that architecture's AppImage, `.deb` and `.rpm`, each updater takes the file of its own format, and `verify-update-manifest.mjs` checks every listed file against its bytes before upload. Linux updates download full files (no `.blockmap` differential channel yet).
+This fork requires manual replacement on every desktop package format.
+`desktop_check_for_updates` uses only numbered regular releases from
+`internetisalie/openchamber`. Failed metadata reads remain errors.
+`desktop_download_and_install_update` refuses before download, filesystem access,
+or backend shutdown. The main process does not initialize electron-updater and
+cannot apply a previously cached payload. Connected web/mobile clients receive
+the same HTTP 409 refusal from the embedded server. See
+`packages/web/server/lib/DOCUMENTATION.md` for the cross-runtime fork policy.
 
-`desktop_restart` does not answer the renderer before the install is decided. On the apply-update path it calls `quitAndInstall()` and keeps the IPC call open until the app quits or `autoUpdater` emits `error`, which the platform installers do asynchronously (a rejected code signature, or a Squirrel session disabled by an earlier failure). A failed install rejects the IPC call and rolls back the quit/install flags. A failure before backend shutdown leaves the app running; one after it relaunches the current version, because the in-process server does not restart in place. A Linux package install runs its own async install in place of `quitAndInstall()` and detaches the `error` listener first, so an unrelated update-check error during the password prompt cannot relaunch the app under a running install. A still-running app after the grace period resolves the call. The installer grace period starts after backend cleanup, so a slow terminal shutdown cannot remove the error listener before installation begins.
+`desktop_restart` performs a plain restart of the current installation. It has
+no installer handoff. Refused update commands leave the backend, windows and
+installed files unchanged.
 
 ### Updater End-to-End Fixture
 
-A loopback-only updater fixture is available for contributor QA of N-to-N+1 AppImage replacement and restart behavior. It is test infrastructure, not a user-configurable update source. See [`scripts/updater-e2e-fixture.md`](./scripts/updater-e2e-fixture.md) for the controlled test procedure. Unit tests cover feed selection, check failures, no-update results, and fixture generation; actual AppImage replacement and restart remains a manual native N-to-N+1 release boundary because it requires executing two packaged versions on each supported architecture.
+The inherited loopback feed fixture remains available for upstream packaging
+work, but this fork does not consume it, including in E2E-marked builds. Fork
+runtime acceptance checks refusal and continued app/backend availability.
+Successful N-to-N+1 replacement is unsupported and must not be reported as tested.
 
-The package supports macOS, Windows, and Linux desktop features. Linux builds include in-app window controls, auto-update, system tray (right-click Show / Hide / Close), and launch-at-login (XDG autostart). Opening files in installed apps, installed-app discovery, and FreeDesktop icon lookup (including the default file manager) work on macOS, Windows, and Linux.
+The fork release target is Linux x64. Linux builds include in-app window
+controls, system tray and launch-at-login. Upstream macOS and Windows code remains
+in the tree, with in-place updates refused there too. Those platforms are outside
+the fork's release acceptance.
 
 On Windows and Linux, the General setting persisted as `desktopMinimizeToTrayEnabled` keeps the app running in the tray when the main window is **closed**. Minimize — the in-app control, the native title-bar button, and the taskbar — always performs a normal window minimize, so the taskbar entry stays available.
 
@@ -427,10 +438,10 @@ The server (`packages/web/server/lib/fs/ripgrep.js`) looks for ripgrep in this o
 - SSH host import, connections, logs, and port forwarding.
 - SSH uses OpenSSH ControlMaster on macOS/Linux. Windows uses independent hidden OpenSSH processes for setup commands and each long-lived forward because Win32 OpenSSH does not support ControlMaster reliably.
 - With ControlMaster, every forward, the main one included, is added with `ssh -O forward`: the master holds the listener, and that command's exit status is the answer. A `-N -L` client through the master would open a remote login shell and exit with that shell's status, which says nothing about the forward. The connection monitor then watches the local port and the master.
-- A managed SSH instance runs one server per remote host. The server outlives the SSH session by default (`keepRunning`), so every connect first asks the remote CLI (`openchamber status --json`) what is already running and reuses a server that fits the instance's password. `/api/system/info` is public, so an answer proves nothing about the password: the server has to accept it on `/auth/session`, or have none when the instance has none. Among the servers that fit, a CLI-started daemon of another app version, or one whose bind address no longer matches the instance's network setting, is stopped and replaced. A registered server that is passed over gets a line in the connect log saying why. Foreground servers and servers with another password are neither reused nor stopped. With `keepRunning` off, disconnecting stops an adopted daemon the same way it stops one this session started. The server is shared by every client that fits it, so that stop also ends it for any other client still connected. Starting a server without this lookup leaks one server plus its opencode per reconnect.
+- A managed SSH instance reuses a server with the matching numbered fork identity and instance password. `/api/system/info` is public, so the password must also succeed on `/auth/session`. A different or unknown release fails before daemon adoption or shutdown. A matching CLI-started daemon may restart when its bind address changes. Foreground servers and servers with another password remain untouched. With `keepRunning` off, disconnecting stops an adopted daemon, including its other connected clients. Discovery prevents a new server and OpenCode process on every reconnect.
 - Tunnel lifecycle integration through the web server runtime.
 - Remote dev-server previews use a direct WebSocket tunnel when the instance has an HTTP address. Relay-only instances keep the encrypted relay transport in the renderer and bridge its raw bytes to the browser panel through a local Electron listener.
-- Auto-update checks, downloads, and restart/apply flow.
+- Fork release checks, update refusal, and continued app/backend availability.
 - The browser panel's own session (`persist:openchamber-browser`): its storage is
   cleared only through the scoped clear-data command, and camera, microphone,
   location, and device-picker requests from pages shown there are denied. A focused

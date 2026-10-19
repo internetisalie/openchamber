@@ -21,7 +21,7 @@ export const OpenCodeCompatibilityGate: React.FC<React.PropsWithChildren<{ enabl
   const { t } = useI18n();
   const [compatibility, setCompatibility] = React.useState<OpenCodeCompatibility | null>(null);
   const titleId = React.useId();
-  const [operation, setOperation] = React.useState<'install-v2' | 'reconnect' | null>(null);
+  const [operation, setOperation] = React.useState<'reconnect' | null>(null);
   const [failed, setFailed] = React.useState(false);
   const generation = React.useRef(0);
 
@@ -57,13 +57,13 @@ export const OpenCodeCompatibilityGate: React.FC<React.PropsWithChildren<{ enabl
     }
   }, [compatibility]);
 
-  const recover = async (action: 'install-v2' | 'reconnect') => {
+  const recover = async () => {
     if (operation) return;
     const revision = ++generation.current;
-    setOperation(action);
+    setOperation('reconnect');
     setFailed(false);
     try {
-      const result = await recoverOpenCode(action);
+      const result = await recoverOpenCode();
       if (revision !== generation.current) return;
       if (result.state === 'incompatible') setCompatibility(result.compatibility);
       else window.location.reload();
@@ -92,7 +92,7 @@ export const OpenCodeCompatibilityGate: React.FC<React.PropsWithChildren<{ enabl
         <h1 id={titleId} className="mt-6 text-xl font-semibold tracking-tight">{t(outdated ? 'opencodeCompatibility.outdatedTitle' : 'opencodeCompatibility.title')}</h1>
         <p className="mt-2 text-sm leading-relaxed text-muted-foreground text-balance">
           {t(descriptionKey, { version: compatibility.version ?? '', minimum: minimum ?? '' })}
-          {compatibility.canInstall && <> {t('opencodeCompatibility.installDescription')}</>}
+          {' '}{t('updateDialog.manualInstall.description')}
         </p>
         {compatibility.version && (
           <div className="mt-5 inline-flex items-center gap-2 rounded-md border border-border px-2.5 py-1 font-mono text-xs" aria-hidden>
@@ -107,20 +107,14 @@ export const OpenCodeCompatibilityGate: React.FC<React.PropsWithChildren<{ enabl
         )}
         {failed && <p role="alert" className="mt-5 rounded-md border border-[var(--status-error)]/30 bg-[var(--status-error-background)] px-3 py-2 text-sm text-[var(--status-error-text)]">{t('opencodeCompatibility.failed')}</p>}
         <div className="app-region-no-drag mt-7 flex flex-wrap items-center justify-center gap-2">
-          {compatibility.canInstall && (
-            <Button disabled={operation !== null} onClick={() => void recover('install-v2')}>
-              {operation === 'install-v2' ? <Spinner className="size-4" /> : <Icon name="download" className="size-4" />}
-              <span role={operation === 'install-v2' ? 'status' : undefined}>{t(operation === 'install-v2' ? 'opencodeCompatibility.installing' : outdated ? 'opencodeCompatibility.update' : 'opencodeCompatibility.install')}</span>
-            </Button>
-          )}
-          <Button variant={compatibility.canInstall ? 'ghost' : 'default'} disabled={operation !== null} onClick={() => void recover('reconnect')}>
+          <Button disabled={operation !== null} onClick={() => void recover()}>
             {operation === 'reconnect' ? <Spinner className="size-4" /> : <Icon name="refresh" className="size-4" />}
             <span role={operation === 'reconnect' ? 'status' : undefined}>{t(operation === 'reconnect' ? 'opencodeCompatibility.reconnecting' : 'opencodeCompatibility.reconnect')}</span>
           </Button>
         </div>
         <a
           className="app-region-no-drag mt-6 inline-flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
-          href={bundled ? 'https://github.com/openchamber/openchamber/releases/latest' : 'https://opencode.ai/download'}
+          href={bundled ? 'https://github.com/internetisalie/openchamber/releases/latest' : 'https://github.com/internetisalie/opencode/releases/latest'}
           target="_blank"
           rel="noopener noreferrer"
         >

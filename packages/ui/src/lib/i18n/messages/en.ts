@@ -24,6 +24,8 @@ import { integrationsCatalogI18n } from './integrations-catalog.i18n';
 import { diffFindI18n } from './diff-find.i18n';
 
 export const dict = {
+  'updateDialog.manualInstall.description': 'In-place updates are disabled for this fork. Install a verified internetisalie release manually.',
+  'updateDialog.manualInstall.openReleases': 'Open fork releases',
   "chat.workStatus.pty.showExited": "Show exited",
   "chat.workStatus.pty.hideExited": "Hide exited",
   "chat.workStatus.pty.noneActive": "No active PTYs for this session",

@@ -235,11 +235,7 @@ commands['connect-url'] = createConnectUrlCommand({
   serveCommand: commands.serve.bind(commands),
 });
 
-commands.update = createUpdateCommand({
-  importFromFilePath,
-  packageManagerPath: path.join(__dirname, '..', 'server', 'lib', 'package-manager.js'),
-  serveCommand: commands.serve.bind(commands),
-});
+commands.update = createUpdateCommand();
 
 async function main() {
   const parsed = parseArgs();
@@ -248,9 +244,9 @@ async function main() {
 
   if (versionRequested) {
     if (isJsonMode(options)) {
-      printJson({ version: PACKAGE_JSON.version });
+      printJson({ version: PACKAGE_JSON.forkRelease || PACKAGE_JSON.version });
     } else {
-      console.log(PACKAGE_JSON.version);
+      console.log(PACKAGE_JSON.forkRelease || PACKAGE_JSON.version);
     }
     return;
   }
