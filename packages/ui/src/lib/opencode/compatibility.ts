@@ -16,14 +16,12 @@ export type OpenCodeCompatibility = z.infer<typeof openCodeCompatibilitySchema>;
 export const fetchOpenCodeCompatibility = async (): Promise<OpenCodeCompatibility> => {
   const response = await runtimeFetch('/api/opencode/compatibility', { signal: AbortSignal.timeout(20_000) });
   if (!response.ok) throw new Error('Could not check OpenCode compatibility');
-  return openCodeCompatibilitySchema.parse(await response.json());
+  return { ...openCodeCompatibilitySchema.parse(await response.json()), canInstall: false };
 };
 
 export const recoverOpenCode = async (action: 'install-v2' | 'reconnect' = 'reconnect'): Promise<{ state: 'recovered' } | { state: 'incompatible'; compatibility: OpenCodeCompatibility }> => {
   if (action === 'install-v2') {
-    const response = await runtimeFetch('/api/opencode/install-v2', { method: 'POST' });
-    if (!response.ok) throw new Error('OpenCode v2 installation failed');
-    return { state: 'recovered' };
+    throw new Error('Automatic installation is disabled for this fork. Install a verified internetisalie release manually.');
   }
   const compatibility = await fetchOpenCodeCompatibility();
   if (compatibility.state === 'incompatible') return { state: 'incompatible', compatibility };

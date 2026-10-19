@@ -46,12 +46,16 @@ jobs:
           APP_VERSION=$(node -p "require('./packages/electron/package.json').version")
           SDK_VERSION=$(node -p "require('./packages/sdk/package.json').version")
           WEB_VERSION=$(node -p "require('./packages/web/package.json').version")
+          FORK_RELEASE=$(node -p "require('./packages/web/package.json').forkRelease")
           test "$SDK_VERSION" = "$APP_VERSION"
           test "$WEB_VERSION" = "$APP_VERSION"
           if [ "$GITHUB_REF_TYPE" = tag ]; then
-            [[ "$GITHUB_REF_NAME" == "v${APP_VERSION}-internetisalie."* ]]
+            [[ "$FORK_RELEASE" =~ ^[0-9]+\.[0-9]+\.[0-9]+-internetisalie\.[1-9][0-9]*$ ]]
+            test "${FORK_RELEASE%-internetisalie.*}" = "$APP_VERSION"
+            test "$GITHUB_REF_NAME" = "v$FORK_RELEASE"
           fi
           echo "app=$APP_VERSION" >> "$GITHUB_OUTPUT"
+          echo "fork=$FORK_RELEASE" >> "$GITHUB_OUTPUT"
 
       - name: Run focused Electron release tests
         working-directory: packages/electron
@@ -75,6 +79,7 @@ jobs:
       - name: Verify packed SDK and web installation
         env:
           PACKAGE_VERSION: ${{ steps.version.outputs.app }}
+          FORK_RELEASE: ${{ steps.version.outputs.fork }}
         run: |
           set -euo pipefail
           CONSUMER=$(mktemp -d "$RUNNER_TEMP/openchamber-web-consumer.XXXXXX")
@@ -92,9 +97,10 @@ jobs:
           const web = JSON.parse(readFileSync('node_modules/@openchamber/web/package.json', 'utf8'));
           assert.equal(sdk.version, process.env.PACKAGE_VERSION);
           assert.equal(web.version, process.env.PACKAGE_VERSION);
+          assert.equal(web.forkRelease, process.env.FORK_RELEASE);
           assert.equal(web.dependencies['@openchamber/sdk'], process.env.PACKAGE_VERSION);
           NODE
-          test "$(./node_modules/.bin/openchamber --version)" = "$PACKAGE_VERSION"
+          test "$(./node_modules/.bin/openchamber --version)" = "$FORK_RELEASE"
           cd "$GITHUB_WORKSPACE/artifacts/npm"
           sha256sum -- ./*.tgz > "openchamber-npm-packages-$PACKAGE_VERSION.sha256"
           sha256sum --check "openchamber-npm-packages-$PACKAGE_VERSION.sha256"

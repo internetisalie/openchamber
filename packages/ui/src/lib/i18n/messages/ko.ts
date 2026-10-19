@@ -25,6 +25,8 @@ import { integrationsCatalogI18n } from './integrations-catalog.i18n';
 import { diffFindI18n } from './diff-find.i18n';
 
 export const dict: Record<I18nKey, string> = {
+  'updateDialog.manualInstall.description': '이 포크에서는 기존 설치를 직접 업데이트할 수 없습니다. 검증된 internetisalie 릴리스를 수동으로 설치하세요.',
+  'updateDialog.manualInstall.openReleases': '포크 릴리스 열기',
   "chat.workStatus.pty.showExited": "종료된 항목 표시",
   "chat.workStatus.pty.hideExited": "종료된 항목 숨기기",
   "chat.workStatus.pty.noneActive": "이 세션에 활성 PTY가 없습니다",

@@ -15,9 +15,7 @@ import { useI18n } from '@/lib/i18n';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import { useEnterprisePolicyStore } from '@/stores/useEnterprisePolicyStore';
 
-const INSTALL_COMMAND = 'curl -fsSL https://opencode.ai/v2/install | bash';
-const WINDOWS_INSTALL_COMMAND = 'npm install -g @opencode/cli';
-const DOCS_URL = 'https://opencode.ai/download';
+const DOCS_URL = 'https://github.com/internetisalie/opencode/releases';
 const POLL_INTERVAL_MS = 2500;
 
 type OnboardingPlatform = 'macos' | 'linux' | 'windows' | 'unknown';
@@ -28,21 +26,11 @@ type ChooserScreenProps = {
   localAvailable?: boolean;
 };
 
-function InstallCommand({ windows, onCopy, copyTitle }: { windows: boolean; onCopy: () => void; copyTitle: string }) {
+function ReleaseLink({ onCopy, copyTitle }: { onCopy: () => void; copyTitle: string }) {
   return (
     <div className="flex items-center justify-between gap-3 w-full">
       <code className="flex-1 min-w-0 text-start overflow-x-auto whitespace-nowrap">
-        {windows ? (
-          <span style={{ color: 'var(--syntax-keyword)' }}>{WINDOWS_INSTALL_COMMAND}</span>
-        ) : (
-          <>
-            <span style={{ color: 'var(--syntax-keyword)' }}>curl</span>
-            <span className="text-muted-foreground"> -fsSL </span>
-            <span style={{ color: 'var(--syntax-string)' }}>https://opencode.ai/v2/install</span>
-            <span className="text-muted-foreground"> | </span>
-            <span style={{ color: 'var(--syntax-keyword)' }}>bash</span>
-          </>
-        )}
+        <a href={DOCS_URL} target="_blank" rel="noopener noreferrer" className="text-primary underline">{DOCS_URL}</a>
       </code>
       <button
         onClick={onCopy}
@@ -223,14 +211,14 @@ export function ChooserScreen({ onCliAvailable, localAvailable = true }: Chooser
   }, [isDesktopApp, opencodeBinary, persistFirstChoice]);
 
   const handleCopy = React.useCallback(async () => {
-    const result = await copyTextToClipboard(platform === 'windows' ? WINDOWS_INSTALL_COMMAND : INSTALL_COMMAND);
+    const result = await copyTextToClipboard(DOCS_URL);
     if (result.ok) {
       setCopied(true);
       setTimeout(() => setCopied(false), 2000);
     } else {
       console.error('Failed to copy:', result.error);
     }
-  }, [platform]);
+  }, []);
 
   const docsUrl = DOCS_URL;
   const binaryPlaceholder =
@@ -308,7 +296,7 @@ export function ChooserScreen({ onCliAvailable, localAvailable = true }: Chooser
               <div className="mb-4 rounded-lg border border-border p-4">
                 <div className="text-sm text-foreground">{t('onboarding.localSetup.windows.title')}</div>
                 <ol className="mt-2 list-decimal space-y-1 ps-5 text-sm text-muted-foreground">
-                  <li>{t('onboarding.localSetup.windows.stepRunInstallInWsl')}</li>
+                  <li>{t('updateDialog.manualInstall.description')}</li>
                   <li>{t('onboarding.localSetup.windows.stepSetBinaryPath')}</li>
                 </ol>
               </div>
@@ -325,7 +313,7 @@ export function ChooserScreen({ onCliAvailable, localAvailable = true }: Chooser
                   {t('onboarding.common.status.copiedToClipboard')}
                 </div>
               ) : (
-                <InstallCommand windows={platform === 'windows'} onCopy={handleCopy} copyTitle={t('onboarding.common.copyToClipboard')} />
+                <ReleaseLink onCopy={handleCopy} copyTitle={t('onboarding.common.copyToClipboard')} />
               )}
             </div>
 

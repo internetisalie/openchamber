@@ -24,6 +24,8 @@ import { integrationsCatalogI18n } from './integrations-catalog.i18n';
 import { diffFindI18n } from './diff-find.i18n';
 
 export const dict = {
+  'updateDialog.manualInstall.description': 'עדכונים במקום מושבתים בגרסה המפוצלת הזו. יש להתקין ידנית מהדורה מאומתת של internetisalie.',
+  'updateDialog.manualInstall.openReleases': 'פתיחת מהדורות הגרסה המפוצלת',
   'chat.workStatus.pty.showExited': 'הצג תהליכים שהסתיימו',
   'chat.workStatus.pty.hideExited': 'הסתר תהליכים שהסתיימו',
   'chat.workStatus.pty.noneActive': 'אין מסופי PTY פעילים להפעלה זו',

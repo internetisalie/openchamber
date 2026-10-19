@@ -39,8 +39,8 @@ export const resolveOpenCodeUpgradeCapability = ({
   }
 
   return {
-    supported: true,
-    manager: 'opencode',
-    reason: null,
+    supported: false,
+    manager: 'administrator',
+    reason: 'manual-install',
   };
 };

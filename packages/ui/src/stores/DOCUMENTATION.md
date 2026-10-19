@@ -17,6 +17,20 @@ Do not put high-frequency local component state here just because it is convenie
 
 ## Architecture
 
+### Fork release checks
+
+`useUpdateStore` owns read-only OpenChamber release state. Desktop checks through
+the native command; web and connected-server checks use the server route.
+Native-mobile checks the connected server, and VS Code routes the check through
+the extension-host bridge. Neither offers application replacement. Checks send
+no usage payload or install ID.
+
+Only numbered internetisalie metadata is accepted from a remote server.
+Release links are constructed locally and `installBlocked` is always manual.
+A failed check preserves the previous release and records an error, so About
+cannot display a successful up-to-date toast. Legacy download and apply actions
+refuse even when the store contains cached downloaded state.
+
 There are multiple store categories in this directory.
 
 ### Catalog refresh

@@ -1,7 +1,7 @@
 import { readOpenCodeInfo, isSupportedOpenCodeVersion } from './compatibility.js';
 import { createSharedHealthProbe, parseHealthWaitMs, waitForOpenCodeHealth } from './health-wait.js';
 import express from 'express';
-import { resolveNpmRegistryRequest } from './npm-registry-config.js';
+import { fetchForkRelease, FORK_UPDATE_CODE, FORK_UPDATE_ERROR, forkReleasesUrl, isNewerForkVersion } from '../fork-updates.js';
 import fs from 'fs';
 import path from 'path';
 import {
@@ -28,9 +28,7 @@ export const registerOpenCodeRoutes = (app, dependencies) => {
     crypto,
     getOpenCodeResolutionSnapshot,
     getOpenCodeUpgradeCapability,
-    upgradeOpenCodeCli,
     getOpenCodeCompatibility,
-    installOpenCodeV2,
     formatSettingsResponse,
     readSettingsFromDiskMigrated,
     persistSettings,
@@ -49,46 +47,6 @@ export const registerOpenCodeRoutes = (app, dependencies) => {
       authLibrary = await import('./auth.js');
     }
     return authLibrary;
-  };
-
-  const parseVersionForComparison = (value) => {
-    const normalized = String(value || '').replace(/^v/, '').split('+')[0];
-    const prereleaseIndex = normalized.indexOf('-');
-    const core = prereleaseIndex >= 0 ? normalized.slice(0, prereleaseIndex) : normalized;
-    const parts = core.split('.').map((part) => {
-      const parsed = Number.parseInt(part || '0', 10);
-      return Number.isFinite(parsed) ? parsed : 0;
-    });
-    return { parts, prerelease: prereleaseIndex >= 0 };
-  };
-
-  const compareVersions = (left, right) => {
-    const a = parseVersionForComparison(left);
-    const b = parseVersionForComparison(right);
-    const length = Math.max(a.parts.length, b.parts.length);
-    for (let index = 0; index < length; index += 1) {
-      const diff = (a.parts[index] || 0) - (b.parts[index] || 0);
-      if (diff !== 0) return diff;
-    }
-    if (a.prerelease !== b.prerelease) return a.prerelease ? -1 : 1;
-    return 0;
-  };
-
-  // OpenCode 2.x publishes as `@opencode/cli` on npm and has no GitHub
-  // release assets, so the registry is the one source of "latest".
-  const fetchLatestOpenCodeVersion = async () => {
-    const request = resolveNpmRegistryRequest('@opencode/cli', 'latest');
-    const response = await fetch(request.url, {
-      headers: { Accept: 'application/json', ...request.headers },
-      signal: AbortSignal.timeout(10_000),
-    });
-    if (!response.ok) {
-      throw new Error(`OpenCode npm registry responded with ${response.status}`);
-    }
-    const payload = await response.json();
-    const version = typeof payload?.version === 'string' ? payload.version.trim().replace(/^v/, '') : '';
-    if (!version) throw new Error('Failed to resolve latest OpenCode version');
-    return version;
   };
 
   app.get('/api/config/settings', async (req, res) => {
@@ -118,57 +76,11 @@ export const registerOpenCodeRoutes = (app, dependencies) => {
     catch { res.status(503).json({ error: 'Could not check OpenCode compatibility.' }); }
   });
 
-  let installInFlight = null;
-  app.post('/api/opencode/install-v2', async (_req, res) => {
-    try {
-      if (!installInFlight) {
-        installInFlight = (async () => {
-          const compatibility = await getOpenCodeCompatibility();
-          if (!compatibility.canInstall) return false;
-          await installOpenCodeV2();
-          return true;
-        })().finally(() => { installInFlight = null; });
-      }
-      const installed = await installInFlight;
-      if (!installed) return res.status(409).json({ success: false, error: 'Automatic OpenCode v2 installation is unavailable for this runtime.' });
-      return res.json({ success: true });
-    } catch {
-      return res.status(500).json({ success: false, error: 'OpenCode v2 installation or restart failed. Retry or use the installation guide.' });
-    }
-  });
-
-  let upgradeInFlight = null;
-  app.post('/api/opencode/upgrade', async (_req, res) => {
-    if (['1', 'true'].includes(process.env.OPENCHAMBER_DISABLE_UPDATES?.toLowerCase()) ||
-        ['1', 'true'].includes(process.env.OPENCODE_DISABLE_AUTOUPDATE?.toLowerCase())) {
-      return res.status(409).json({ success: false, code: 'UPDATES_DISABLED', error: 'OpenCode updates are disabled for this instance.' });
-    }
-    const capability = getOpenCodeUpgradeCapability();
-    if (!capability.supported) {
-      const bundled = capability.reason === 'bundled';
-      const pinned = capability.reason === 'policy';
-      return res.status(409).json({
-        success: false,
-        code: bundled ? 'OPENCODE_UPGRADE_MANAGED_BY_OPENCHAMBER' : 'OPENCODE_UPGRADE_UNSUPPORTED',
-        error: bundled
-          ? 'OpenCode is bundled with OpenChamber Desktop and updates with the app.'
-          : pinned
-            ? 'Your administrator manages this OpenCode installation.'
-            : 'This OpenCode runtime cannot be upgraded by OpenChamber.',
-      });
-    }
-    try {
-      // Multiple tabs share one installation. Clear both success and failure so
-      // a later explicit attempt can run again.
-      if (!upgradeInFlight) {
-        upgradeInFlight = upgradeOpenCodeCli().finally(() => { upgradeInFlight = null; });
-      }
-      await upgradeInFlight;
-      return res.json({ success: true });
-    } catch (error) {
-      return res.status(500).json({ success: false, error: error.message });
-    }
-  });
+  for (const route of ['/api/opencode/install-v2', '/api/opencode/upgrade']) {
+    app.post(route, (_req, res) => res.status(409).json({
+      success: false, code: FORK_UPDATE_CODE, error: FORK_UPDATE_ERROR, releaseUrl: forkReleasesUrl('opencode'),
+    }));
+  }
 
   app.get('/api/opencode/upgrade-status', async (_req, res) => {
     try {
@@ -178,12 +90,12 @@ export const registerOpenCodeRoutes = (app, dependencies) => {
       const capability = getOpenCodeUpgradeCapability();
       const updatesDisabled = ['1', 'true'].includes(process.env.OPENCHAMBER_DISABLE_UPDATES?.toLowerCase()) ||
         ['1', 'true'].includes(process.env.OPENCODE_DISABLE_AUTOUPDATE?.toLowerCase());
-      const [healthResponse, latestVersion] = await Promise.all([
+      const [healthResponse, release] = await Promise.all([
         fetch(buildOpenCodeUrl('/api/info', ''), {
           method: 'GET',
           headers: { Accept: 'application/json', ...getOpenCodeAuthHeaders() },
         }),
-        updatesDisabled ? Promise.resolve(null) : fetchLatestOpenCodeVersion(),
+        updatesDisabled ? Promise.resolve(null) : fetchForkRelease('opencode'),
       ]);
       const info = await healthResponse.json().catch(() => null);
       if (!healthResponse.ok) {
@@ -193,6 +105,7 @@ export const registerOpenCodeRoutes = (app, dependencies) => {
         });
       }
       const currentVersion = typeof info?.version === 'string' ? info.version.replace(/^v/, '') : null;
+      const latestVersion = release?.version;
       if (!currentVersion || !latestVersion) {
         return res.json({ available: updatesDisabled ? false : null, currentVersion, latestVersion: latestVersion || null, upgrade: capability });
       }
@@ -201,12 +114,13 @@ export const registerOpenCodeRoutes = (app, dependencies) => {
       // something the user can act on: never announce it.
       const available = capability.reason === 'bundled' || capability.reason === 'policy'
         ? false
-        : compareVersions(latestVersion, currentVersion) > 0;
+        : isNewerForkVersion(latestVersion, currentVersion);
       return res.json({
         available,
         currentVersion,
         latestVersion,
         upgrade: capability,
+        releaseUrl: release?.releaseUrl,
       });
     } catch (error) {
       return res.status(500).json({

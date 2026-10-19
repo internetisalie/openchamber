@@ -24,6 +24,8 @@ import { integrationsCatalogI18n } from './integrations-catalog.i18n';
 import { diffFindI18n } from './diff-find.i18n';
 
 export const dict = {
+  'updateDialog.manualInstall.description': 'Direct bijwerken is uitgeschakeld voor deze fork. Installeer handmatig een geverifieerde internetisalie-release.',
+  'updateDialog.manualInstall.openReleases': 'Fork-releases openen',
   "chat.workStatus.pty.showExited": "Afgesloten tonen",
   "chat.workStatus.pty.hideExited": "Afgesloten verbergen",
   "chat.workStatus.pty.noneActive": "Geen actieve PTY’s voor deze sessie",

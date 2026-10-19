@@ -14,9 +14,8 @@ type UpdateOffer =
 
 /**
  * The connected server runs an OpenChamber this app cannot use. Offers the
- * server's own update through its update route, over the transport the app
- * already uses for it, so a relay or tunnel host can be updated from here too.
- * A server that cannot update itself gets the command to run on it.
+ * fork's release notes and manual replacement link. Older remote servers
+ * never receive an installation request.
  */
 export function OutdatedServerNotice({ version }: { version: string }) {
   const { t } = useI18n();
@@ -26,7 +25,7 @@ export function OutdatedServerNotice({ version }: { version: string }) {
     setOffer({ kind: 'checking' });
     try {
       const info = await checkConnectedServerForUpdates();
-      setOffer(info.available && !info.installBlocked
+      setOffer(info.available
         ? { kind: 'available', info }
         : { kind: 'manual', info, error: null });
     } catch (error) {
@@ -35,7 +34,6 @@ export function OutdatedServerNotice({ version }: { version: string }) {
   };
 
   const manual = offer.kind === 'manual' ? offer : null;
-  const manualCommand = manual?.info?.updateCommand || 'openchamber update';
 
   return (
     <div className="flex w-full flex-col items-center gap-3">
@@ -49,20 +47,12 @@ export function OutdatedServerNotice({ version }: { version: string }) {
       </Button>
       {manual && (
         <div className="w-full space-y-2 text-start">
-          {!manual.info?.available && (
+          {manual.info && !manual.info.available && (
             <p className="typography-meta text-[var(--status-error)]">{t('startup.serverOutdated.noUpdate')}</p>
           )}
           {manual.error && <p className="typography-meta text-muted-foreground">{manual.error}</p>}
-          {manual.info?.installBlocked === 'desktop-host' ? (
-            <p className="typography-meta text-muted-foreground">
-              {t('updateDialog.desktopHostInstall', { version: manual.info.version || '' })}
-            </p>
-          ) : (
-            <>
-              <p className="typography-meta text-muted-foreground">{t('onboarding.desktopRecovery.remoteIncompatible.manualUpdate')}</p>
-              <code className="block select-text rounded-md bg-[var(--surface-muted)] px-3 py-2 font-mono text-sm text-foreground">{manualCommand}</code>
-            </>
-          )}
+          <p className="typography-meta text-muted-foreground">{t('updateDialog.manualInstall.description')}</p>
+          <a href="https://github.com/internetisalie/openchamber/releases" target="_blank" rel="noopener noreferrer" className="typography-meta text-primary underline">{t('updateDialog.manualInstall.openReleases')}</a>
         </div>
       )}
       <UpdateDialog
@@ -71,13 +61,7 @@ export function OutdatedServerNotice({ version }: { version: string }) {
           if (!open) setOffer({ kind: 'idle' });
         }}
         info={offer.kind === 'available' ? offer.info : null}
-        downloading={false}
-        downloaded={false}
-        progress={null}
         error={null}
-        onDownload={() => {}}
-        onRestart={() => {}}
-        runtimeType="web"
       />
     </div>
   );

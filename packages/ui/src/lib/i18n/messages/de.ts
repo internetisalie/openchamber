@@ -24,6 +24,8 @@ import { integrationsCatalogI18n } from './integrations-catalog.i18n';
 import { diffFindI18n } from './diff-find.i18n';
 
 export const dict = {
+  'updateDialog.manualInstall.description': 'Direkte Updates sind für diesen Fork deaktiviert. Installiere eine verifizierte internetisalie-Version manuell.',
+  'updateDialog.manualInstall.openReleases': 'Fork-Versionen öffnen',
   "chat.workStatus.pty.showExited": "Beendete anzeigen",
   "chat.workStatus.pty.hideExited": "Beendete ausblenden",
   "chat.workStatus.pty.noneActive": "Keine aktiven PTYs für diese Sitzung",

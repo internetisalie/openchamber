@@ -198,13 +198,7 @@ const SessionSidebarComponent: React.FC<SessionSidebarProps> = ({
     available: s.available,
     runtimeType: s.runtimeType,
     info: s.info,
-    downloading: s.downloading,
-    downloaded: s.downloaded,
-    installing: s.installing,
-    progress: s.progress,
     error: s.error,
-    downloadUpdate: s.downloadUpdate,
-    restartToUpdate: s.restartToUpdate,
   })));
 
   const runtimeKey = getRuntimeKey();
@@ -740,14 +734,7 @@ const SessionSidebarComponent: React.FC<SessionSidebarProps> = ({
         open={updateDialogOpen}
         onOpenChange={setUpdateDialogOpen}
         info={updateStore.info}
-        downloading={updateStore.downloading}
-        downloaded={updateStore.downloaded}
-        installing={updateStore.installing}
-        progress={updateStore.progress}
         error={updateStore.error}
-        onDownload={updateStore.downloadUpdate}
-        onRestart={updateStore.restartToUpdate}
-        runtimeType={updateStore.runtimeType}
       />
 
       <ProjectEditDialog

@@ -1,4 +1,5 @@
-import { installOpenCodeV2, supportsOpenCodeV2Install } from '../../web/server/lib/opencode/v2-install.js';
+import { supportsOpenCodeV2Install } from '../../web/server/lib/opencode/v2-install.js';
+import { FORK_UPDATE_ERROR } from '../../web/server/lib/fork-updates.js';
 import { describeOpenCodeCompatibility, readOpenCodeCliVersion, readExternalOpenCodeVersion, readOpenCodeInfo, isSupportedOpenCodeVersion, type OpenCodeCompatibility } from '../../web/server/lib/opencode/compatibility.js';
 import * as vscode from 'vscode';
 import * as os from 'os';
@@ -14,7 +15,6 @@ import { applyProviderEnvAliases } from './provider-env-aliases';
 import { assignInjectedEnv } from './injected-env';
 import { checkOpenCodeVersionOutput } from './opencodeVersion';
 import { isSameOpenCodeServer } from './opencodeServiceUrl';
-import { runOpenCodeCliUpgrade } from '../../web/server/lib/opencode/cli-upgrade.js';
 import { spawnManagedOpenCodeProcess } from './managed-opencode-process';
 import { readEnterprisePolicy } from '../../web/server/lib/enterprise-mode.js';
 import { isExecutable, isKnownOpenCodeDesktopAppPath, isMacOpenCodeAppBundlePath, resolveDetectedOpencodeCliPath } from './opencodeCliDiscovery';
@@ -672,7 +672,6 @@ export function createOpenCodeManager(context: vscode.ExtensionContext): OpenCod
   let workingDirectory: string = workspaceDirectory();
   let startCount = 0;
   let restartCount = 0;
-  let installInFlight: Promise<void> | null = null;
   let lastStartAt: number | null = null;
   let lastConnectedAt: number | null = null;
   let lastExitCode: number | null = null;
@@ -858,7 +857,7 @@ export function createOpenCodeManager(context: vscode.ExtensionContext): OpenCod
       fs.mkdirSync(serverCwd, { recursive: true });
       const port = await allocateManagedOpenCodePort();
       startup.signal.throwIfAborted();
-      serverEnv = applyProviderEnvAliases({ ...process.env });
+      serverEnv = applyProviderEnvAliases({ ...process.env, OPENCODE_DISABLE_AUTOUPDATE: '1' });
       server = spawnManagedOpenCodeServer(serverCwd, port, READY_CHECK_TIMEOUT_MS, startup.signal, serverEnv);
       await server.ready;
 
@@ -1006,48 +1005,8 @@ export function createOpenCodeManager(context: vscode.ExtensionContext): OpenCod
       // A CLI pinned by the administrator is theirs to replace, never ours.
       return describeOpenCodeCompatibility(detected, 'managed', supportsOpenCodeV2Install() && !readPinnedOpencodeBinary(), binary || null);
     },
-    installV2: () => {
-      if (installInFlight) return installInFlight;
-      const revision = lifecycleRevision;
-      installInFlight = enqueueOperation(async () => {
-        if (revision !== lifecycleRevision) throw new Error('OpenCode installation was cancelled.');
-        if (useConfiguredUrl || !supportsOpenCodeV2Install() || readPinnedOpencodeBinary()) throw new Error('Automatic OpenCode v2 installation is unavailable for this runtime.');
-        const previousBinary = cliPath || resolveOpencodeCliPath();
-        const previousVersion = previousBinary
-          ? await readOpenCodeCliVersion(resolveWindowsLaunchSpec(previousBinary, []), { env: process.env })
-          : null;
-        if (!describeOpenCodeCompatibility(previousVersion, 'managed', true).canInstall) {
-          throw new Error('Automatic OpenCode v2 installation is unavailable for this runtime.');
-        }
-        const binary = await installOpenCodeV2();
-        if (revision !== lifecycleRevision) throw new Error('OpenCode installation was cancelled.');
-        const config = vscode.workspace.getConfiguration('openchamber');
-        const setting = config.inspect<string>('opencodeBinary');
-        const target = setting?.workspaceFolderValue !== undefined
-          ? vscode.ConfigurationTarget.WorkspaceFolder
-          : setting?.workspaceValue !== undefined
-            ? vscode.ConfigurationTarget.Workspace
-            : vscode.ConfigurationTarget.Global;
-        await config.update('opencodeBinary', binary, target);
-        await restartInternal(revision);
-        if (status !== 'connected' || !version || !isSupportedOpenCodeVersion(version)) {
-          throw new Error('OpenCode v2 was installed, but the server did not become ready. Try reconnecting.');
-        }
-      }).finally(() => { installInFlight = null; });
-      return installInFlight;
-    },
-    upgradeCli: () => enqueueOperation(async () => {
-      if (useConfiguredUrl) {
-        throw new Error('This OpenCode runtime cannot be upgraded by OpenChamber.');
-      }
-      // Match capability reporting: the resolver may find the CLI after startup.
-      // Upgrading the binary does not require a live managed server process.
-      const binary = cliPath || resolveOpencodeCliPath();
-      if (!binary) throw new Error('OpenCode CLI could not be found.');
-      await runOpenCodeCliUpgrade(resolveWindowsLaunchSpec(binary, []), {
-        cwd: serverWorkingDirectory(), env: process.env,
-      });
-    }),
+    installV2: async () => { throw new Error(FORK_UPDATE_ERROR); },
+    upgradeCli: async () => { throw new Error(FORK_UPDATE_ERROR); },
     setWorkingDirectory,
     getStatus: () => status,
     getApiUrl,

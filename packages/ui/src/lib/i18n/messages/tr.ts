@@ -24,6 +24,8 @@ import { integrationsCatalogI18n } from './integrations-catalog.i18n';
 import { diffFindI18n } from './diff-find.i18n';
 
 export const dict = {
+  'updateDialog.manualInstall.description': 'Bu çatallama için yerinde güncellemeler devre dışıdır. Doğrulanmış bir internetisalie sürümünü elle yükleyin.',
+  'updateDialog.manualInstall.openReleases': 'Çatallama sürümlerini aç',
   "chat.workStatus.pty.showExited": "Sonlananları göster",
   "chat.workStatus.pty.hideExited": "Sonlananları gizle",
   "chat.workStatus.pty.noneActive": "Bu oturumda etkin PTY yok",

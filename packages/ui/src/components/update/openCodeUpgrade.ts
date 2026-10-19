@@ -1,28 +1,21 @@
 import { z } from 'zod';
 import { runtimeFetch } from '@/lib/runtime-fetch';
-import {
-  isOpenCodeUpgradeSupported,
-  resolveOpenCodeUpgradeStatusVersion,
-} from './openCodeUpdateDedup';
+import { resolveOpenCodeUpgradeStatusVersion } from './openCodeUpdateDedup';
 
 /**
  * Transport for the OpenCode upgrade the update toast and About share. The
- * server owns the decision (`/api/opencode/upgrade-status`) and the install
- * (`/api/opencode/upgrade`); this module only parses their answers.
+ * server supplies status. Older remote servers may still offer an unsafe
+ * installer, so this client never forwards upgrade requests.
  */
 
 const upgradeStatusResponse = z.object({
-  available: z.boolean().nullable().optional(),
+  available: z.boolean(),
   currentVersion: z.string().nullable().optional(),
   latestVersion: z.string().nullable().optional(),
   upgrade: z.object({ supported: z.boolean().nullable().optional() }).nullable().optional(),
 });
 
-const upgradeResponse = z.object({
-  success: z.boolean().optional(),
-  version: z.string().optional(),
-  error: z.string().optional(),
-});
+const forkVersion = z.string().regex(/^\d+\.\d+\.\d+-internetisalie\.[1-9]\d*$/);
 
 export type OpenCodeUpgradeStatus = {
   /** Installed OpenCode version, or null when the server could not read it. */
@@ -41,25 +34,14 @@ export async function fetchOpenCodeUpgradeStatus(): Promise<OpenCodeUpgradeStatu
   if (!parsed.success) throw new Error('OpenCode upgrade status check failed');
   const status = parsed.data;
   const currentVersion = status.currentVersion?.trim() || null;
-  const availableVersion = resolveOpenCodeUpgradeStatusVersion(status) || null;
-  return { currentVersion, availableVersion, supported: isOpenCodeUpgradeSupported(status) };
+  const candidate = resolveOpenCodeUpgradeStatusVersion(status);
+  const availableVersion = forkVersion.safeParse(candidate).success ? candidate : null;
+  return { currentVersion, availableVersion, supported: false };
 }
 
 /**
- * Installs the latest OpenCode on the server. Resolves with the installed
- * version when the server reports one; throws with the server's reason, or
- * with `fallbackError` when it gives none.
+ * Refuses locally, including when connected to an older remote server.
  */
 export async function runOpenCodeUpgrade(fallbackError: string): Promise<string | null> {
-  const response = await runtimeFetch('/api/opencode/upgrade', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({}),
-  });
-  const parsed = upgradeResponse.safeParse(await response.json().catch(() => null));
-  const payload = parsed.success ? parsed.data : null;
-  if (!response.ok || payload?.success === false) {
-    throw new Error(payload?.error || response.statusText || fallbackError);
-  }
-  return payload?.version ?? null;
+  throw new Error(fallbackError);
 }

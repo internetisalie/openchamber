@@ -10,11 +10,7 @@ import { replaceFileWithRetry } from './windows-file-replace.mjs';
 const LOCAL_HOST_ID = 'local';
 const DEFAULT_CONNECTION_TIMEOUT_SEC = 60;
 const DEFAULT_LOCAL_BIND_HOST = '127.0.0.1';
-// Global npm prefixes are root-owned on most distributions, so `npm install -g`
-// fails with EACCES for a normal SSH user. Everything we install goes to a
-// prefix inside the user's home instead.
-const REMOTE_USER_PREFIX = '$HOME/.openchamber/npm-global';
-const REMOTE_BUN_CANDIDATE = '"${BUN_INSTALL:-$HOME/.bun}/bin/bun"';
+// Discover existing user-prefix installations without running an installer.
 // nvm puts node on PATH only from an interactive ~/.bashrc, which the SSH
 // login shell never runs. Use its newest installed node; with no nvm the path
 // does not exist and every probe skips it.
@@ -395,6 +391,7 @@ const parseVersionToken = (raw) => {
   for (const token of String(raw).split(/\s+/)) {
     let candidate = token.trim().replace(/^v/, '');
     candidate = candidate.replace(/[,)]+$/g, '');
+    if (/^\d+\.\d+\.\d+-internetisalie\.[1-9]\d*$/.test(candidate)) return candidate;
     const parts = candidate.split('.');
     if (parts.length >= 2 && parts.every((part) => /^\d+$/.test(part))) {
       return candidate;
@@ -1102,44 +1099,8 @@ export class ElectronSshManager {
     return candidates;
   }
 
-  async installOpenChamberManaged(parsed, controlPath, version, preferred) {
-    const bunPath = await this.resolveRemoteTool(parsed, controlPath, 'bun', [
-      REMOTE_BUN_CANDIDATE,
-      '"${XDG_CACHE_HOME:-$HOME/.cache}/.bun/bin/bun"',
-    ]);
-    const npmPath = await this.resolveRemoteTool(parsed, controlPath, 'npm', [`"${REMOTE_NVM_BIN}/npm"`]);
-
-    // bun's global install targets `~/.bun` or `${XDG_CACHE_HOME:-~/.cache}/.bun` (bun 1.3.x XDG-aware);
-    // npm is pinned to a prefix in the user's home so it never touches the root-owned global directory.
-    const bunCommand = bunPath ? `${shellQuote(bunPath)} add -g @openchamber/web@${version}` : null;
-    const npmCommand = npmPath
-      // npm is a node script: an nvm npm finds its node only next to itself.
-      ? `mkdir -p "${REMOTE_USER_PREFIX}" && PATH="$(dirname ${shellQuote(npmPath)}):$PATH" ${shellQuote(npmPath)} install -g --prefix "${REMOTE_USER_PREFIX}" @openchamber/web@${version}`
-      : null;
-
-    const commands = [];
-    if (preferred === 'npm') {
-      if (npmCommand) commands.push(npmCommand);
-      if (bunCommand) commands.push(bunCommand);
-    } else {
-      if (bunCommand) commands.push(bunCommand);
-      if (npmCommand) commands.push(npmCommand);
-    }
-
-    if (commands.length === 0) {
-      throw new Error('Remote host has neither bun nor npm available');
-    }
-
-    let lastError = null;
-    for (const command of commands) {
-      try {
-        await this.runRemoteCommand(parsed, controlPath, command);
-        return;
-      } catch (error) {
-        lastError = error;
-      }
-    }
-    throw lastError || new Error('Failed to install OpenChamber on remote host');
+  async installOpenChamberManaged() {
+    throw new Error('SSH installation and updates are disabled. Install a verified internetisalie/OpenChamber release on the remote host.');
   }
 
   async probeRemoteSystemInfo(parsed, controlPath, port, openchamberPassword) {
@@ -1204,7 +1165,7 @@ export class ElectronSshManager {
       throw new Error('Exposing the remote server to its network requires a UI password');
     }
 
-    let envPrefix = `PATH="${REMOTE_PATH_PREFIX}:$PATH" OPENCODE_BINARY=${shellQuote(opencodePath)} OPENCHAMBER_RUNTIME=ssh-remote`;
+    let envPrefix = `PATH="${REMOTE_PATH_PREFIX}:$PATH" OPENCODE_BINARY=${shellQuote(opencodePath)} OPENCHAMBER_RUNTIME=ssh-remote OPENCODE_DISABLE_AUTOUPDATE=1 OPENCHAMBER_DISABLE_UPDATES=1`;
     if (secret) {
       envPrefix += ` OPENCHAMBER_UI_PASSWORD=${shellQuote(secret)}`;
     }
@@ -1331,11 +1292,14 @@ export class ElectronSshManager {
       const { info } = probe;
       const adopted = { port: server.port, daemon: server.launchMode === 'daemon' };
       const runningVersion = parseVersionToken(info.openchamberVersion || '');
-      const otherVersion = Boolean(runningVersion) && runningVersion !== this.appVersion;
+      const otherVersion = runningVersion !== this.appVersion;
+      if (otherVersion) {
+        throw new Error('Install the matching internetisalie/OpenChamber fork release on the remote host before connecting. SSH installation and updates are disabled.');
+      }
       // Both directions count: a server left on 0.0.0.0 would keep an instance
       // published after the user turned that off.
       const bindFits = !server.bindHost || (wantsNetwork ? server.bindHost === '0.0.0.0' : ['127.0.0.1', '::1', 'localhost'].includes(server.bindHost));
-      if (!otherVersion && bindFits) {
+      if (bindFits) {
         return adopted;
       }
       // Only a daemon the CLI started is ours to replace; a foreground server
@@ -1345,7 +1309,7 @@ export class ElectronSshManager {
         this.appendLogWithLevel(instance.id, 'INFO', `Not reusing the server on remote port ${server.port}: it runs in the foreground with another version or bind address and is left to its process manager`);
         continue;
       }
-      this.appendLogWithLevel(instance.id, 'INFO', `Replacing the managed server on remote port ${server.port}: ${otherVersion ? `it runs OpenChamber ${runningVersion}` : `it is bound to ${server.bindHost}`}`);
+      this.appendLogWithLevel(instance.id, 'INFO', `Replacing the managed server on remote port ${server.port}: it is bound to ${server.bindHost}`);
       await this.stopRemoteServerBestEffort(parsed, controlPath, server.port, binPath);
       if (await this.remoteServerRunning(parsed, controlPath, server.port, password)) {
         this.appendLogWithLevel(instance.id, 'WARN', `The managed server on remote port ${server.port} did not stop and keeps running`);
@@ -1369,22 +1333,10 @@ export class ElectronSshManager {
 
     this.setStatus(instance.id, 'remote_probe', 'Checking remote OpenChamber installation');
     const installed = await this.remoteOpenChamberCandidates(parsed, controlPath);
-    let binary = installed.find((candidate) => candidate.version === this.appVersion) || null;
+    const binary = installed.find((candidate) => candidate.version === this.appVersion) || null;
 
     if (!binary) {
-      const existing = installed[0] || null;
-      if (existing) {
-        this.setStatus(instance.id, 'updating', `Updating remote OpenChamber from ${existing.version || 'unknown'} to ${this.appVersion}`);
-      } else {
-        this.setStatus(instance.id, 'installing', 'Installing OpenChamber on remote host');
-      }
-      await this.installOpenChamberManaged(parsed, controlPath, this.appVersion, instance.remoteOpenchamber.installMethod);
-
-      const afterInstall = await this.remoteOpenChamberCandidates(parsed, controlPath);
-      binary = afterInstall.find((candidate) => candidate.version === this.appVersion) || afterInstall[0] || existing;
-      if (!binary) {
-        throw new Error('OpenChamber was installed on the remote host but no openchamber binary could be found');
-      }
+      throw new Error('Install the matching internetisalie/OpenChamber fork release on the remote host before connecting. SSH installation and updates are disabled.');
     }
 
     this.setStatus(instance.id, 'server_detecting', 'Detecting managed OpenChamber server');

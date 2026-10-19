@@ -25,6 +25,8 @@ import { integrationsCatalogI18n } from './integrations-catalog.i18n';
 import { diffFindI18n } from './diff-find.i18n';
 
 export const dict: Record<I18nKey, string> = {
+  'updateDialog.manualInstall.description': 'Las actualizaciones directas están desactivadas para esta bifurcación. Instala manualmente una versión verificada de internetisalie.',
+  'updateDialog.manualInstall.openReleases': 'Abrir versiones de la bifurcación',
   "chat.workStatus.pty.showExited": "Mostrar finalizados",
   "chat.workStatus.pty.hideExited": "Ocultar finalizados",
   "chat.workStatus.pty.noneActive": "No hay PTY activos para esta sesión",

@@ -1,47 +1,27 @@
 import assert from 'node:assert/strict';
-import test from 'node:test';
-
+import { afterEach, test } from 'node:test';
 import { checkForDesktopUpdate } from './updater-check.mjs';
 
-const compareVersions = (left, right) => left.localeCompare(right, undefined, { numeric: true });
+const originalFetch = globalThis.fetch;
+const disabled = process.env.OPENCHAMBER_DISABLE_UPDATES;
+afterEach(() => { globalThis.fetch = originalFetch; if (disabled === undefined) delete process.env.OPENCHAMBER_DISABLE_UPDATES; else process.env.OPENCHAMBER_DISABLE_UPDATES = disabled; });
 
-test('signals failed checks without replacing an existing pending update', async () => {
-  const pendingUpdate = { version: '2.0.0', electronUpdate: { id: 'existing' } };
-  await assert.rejects(
-    checkForDesktopUpdate({
-      autoUpdater: { checkForUpdates: async () => { throw new Error('feed unavailable'); } },
-      currentVersion: '1.0.0',
-      pendingUpdate,
-      compareVersions,
-    }),
-    /Unable to check for updates: feed unavailable.*network connection/,
-  );
-  assert.deepEqual(pendingUpdate, { version: '2.0.0', electronUpdate: { id: 'existing' } });
+test('checks only the fork without arming electron-updater or a cached payload', async () => {
+  delete process.env.OPENCHAMBER_DISABLE_UPDATES;
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push([url, options]);
+    return Response.json({ tag_name: 'v2.4.0-internetisalie.10', draft: false, prerelease: false });
+  };
+  const result = await checkForDesktopUpdate({ autoUpdater: { checkForUpdates: () => assert.fail('Electron updater called') }, pendingUpdate: { downloaded: true } });
+  assert.equal(result.available, true);
+  assert.equal(result.installBlocked, 'manual-install');
+  assert.equal(calls[0][0], 'https://api.github.com/repos/internetisalie/openchamber/releases/latest');
+  assert.equal(calls.length, 1);
 });
 
-test('treats missing update feed (404) as no update available', async () => {
-  const result = await checkForDesktopUpdate({
-    autoUpdater: {
-      checkForUpdates: async () => {
-        throw new Error('HttpError: 404 Not Found "https://github.com/.../latest-linux.yml"');
-      },
-    },
-    currentVersion: '1.15.0',
-    pendingUpdate: { version: '1.16.0' },
-    compareVersions,
-  });
-  assert.equal(result.available, false);
-  assert.equal(result.pendingUpdate, null);
-  assert.equal(result.nextVersion, '1.15.0');
-});
-
-test('authoritative no-update result clears pending update', async () => {
-  const result = await checkForDesktopUpdate({
-    autoUpdater: { checkForUpdates: async () => ({ updateInfo: { version: '1.0.0' } }) },
-    currentVersion: '1.0.0',
-    pendingUpdate: { version: '2.0.0' },
-    compareVersions,
-  });
-  assert.equal(result.available, false);
-  assert.equal(result.pendingUpdate, null);
+test('missing or failed metadata remains a failed check', async () => {
+  delete process.env.OPENCHAMBER_DISABLE_UPDATES;
+  globalThis.fetch = async () => new Response('', { status: 404 });
+  await assert.rejects(checkForDesktopUpdate(), /HTTP 404/);
 });

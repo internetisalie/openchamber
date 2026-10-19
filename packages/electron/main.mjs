@@ -11,7 +11,6 @@ import path from 'node:path';
 import { execFile, spawn, spawnSync } from 'node:child_process';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
-import updaterPkg from 'electron-updater';
 import { ElectronSshManager } from './ssh-manager.mjs';
 import { collectLocalFileDiagnostics, collectSshBufferDiagnostics } from '@openchamber/web/server/lib/diagnostics/local-files.js';
 import { replaceFileWithRetry } from './windows-file-replace.mjs';
@@ -70,9 +69,8 @@ import { probeElectronHostWithDeadline } from './electron-host-probe.mjs';
 import { requestRemoteHostUpdate } from './remote-host-update.mjs';
 import { assertUpdaterCapability, readLinuxPackageType } from './updater-capability.mjs';
 import { relaunchAfterExit } from './linux-relaunch.mjs';
-import { installLinuxPackage } from './linux-package-install.mjs';
 import { checkForDesktopUpdate } from './updater-check.mjs';
-import { resolveUpdaterChannel } from './updater-channel.mjs';
+import { getCurrentVersion } from '@openchamber/web/server/lib/package-manager.js';
 import { convertShortcutComboToAccelerator, MINI_CHAT_GLOBAL_SHORTCUT_SETTING_KEY, normalizeStoredShortcutCombo, selectMiniChatGlobalShortcutAction } from './mini-chat-global-shortcut.mjs';
 import {
   computeQuakeBounds,
@@ -85,7 +83,6 @@ import {
   selectQuakeToggleAction,
 } from './quake-mode.mjs';
 import { createContextMenuLabels, menuLabel, normalizeMenuLocale, roleMenuItem } from './menu-locales.mjs';
-import { resolveUpdaterFeed } from './updater-feed.mjs';
 import {
   buildLinuxInstalledApps,
   buildLinuxOpenSpecs,
@@ -112,7 +109,6 @@ import { parsePairingDeepLink } from './pairing-deep-link.mjs';
 import { attachRendererRecovery } from './renderer-recovery.mjs';
 import { createLoadFailureWarningFilter } from './load-failure-warnings.mjs';
 import { mintOutsideFileGrant } from '@openchamber/web/server/lib/fs/routes.js';
-import { fetchUpdateNotes } from '@openchamber/web/server/lib/changelog/update-notes.js';
 import { applyConnectAttemptTimeout } from '@openchamber/web/server/lib/network-defaults.js';
 import { isNetworkAccessBlocked } from '@openchamber/web/server/lib/enterprise-mode.js';
 import { assignInjectedEnv } from '@openchamber/web/server/lib/injected-env.js';
@@ -271,7 +267,6 @@ const INSTALLED_APPS_CACHE_FILE = 'discovered-apps.json';
 const INSTALLED_APPS_CACHE_VERSION = 2;
 const LINUX_DESKTOP_ENTRIES_CACHE_TTL_MS = 30_000;
 const OPENCODE_SHUTDOWN_GRACE_MS = 100;
-const { autoUpdater } = updaterPkg;
 
 const state = {
   serverHandle: null,
@@ -295,12 +290,6 @@ const state = {
   backgroundShutdownComplete: false,
   backgroundShutdownPromise: null,
   sshShutdownPromise: null,
-  installingUpdate: false,
-  // Latched from the moment an update install starts until the installer has
-  // been handed control or the install has failed. While it is set, no other
-  // path may end the process: the update sequence owns the exit.
-  updateInstallPending: false,
-  pendingUpdate: null,
   unreachableHosts: new Set(),
   windowCounter: 1,
   // Quake Mode: the main window's normal geometry while it is showing the
@@ -454,7 +443,6 @@ const flushRendererStorage = async () => {
 const prepareForQuit = () => {
   state.quitRequested = true;
   state.quitConfirmed = true;
-  state.installingUpdate = false;
   state.quitConfirmationPending = false;
 
   if (state.trayController) {
@@ -501,10 +489,6 @@ const relaunchApp = () => {
 };
 
 const performConfirmedQuit = async ({ relaunch = false } = {}) => {
-  if (state.updateInstallPending) {
-    log.info('[electron] quit suppressed: update install owns the exit');
-    return;
-  }
   if (state.quitInProgress) return;
   state.quitInProgress = true;
 
@@ -625,7 +609,7 @@ const refreshQuitRiskFlags = async () => {
 
 const sshManager = new ElectronSshManager({
   settingsFilePath: settingsFilePath(),
-  appVersion: APP_VERSION,
+  appVersion: getCurrentVersion(),
   emit: (event, detail) => emitToAllWindows(event, detail),
 });
 
@@ -1490,11 +1474,6 @@ const maybeShowNativeNotification = (rawInput) => {
   notification.show();
 };
 
-const mapUpdaterProgressEvent = (payload) => ({
-  event: payload.event,
-  data: payload.data,
-});
-
 import { pathLooksUserConfigured, mergePathValues } from '@openchamber/web/server/lib/opencode/path-utils.js';
 import { provideLoginShellEnvSnapshot } from '@openchamber/web/server/lib/opencode/login-shell-env.js';
 
@@ -1625,23 +1604,6 @@ const spawnLocalServer = async () => {
       apiBaseUrl: state.apiBaseUrl || '',
       requestHeaders: sanitizeRuntimeRequestHeaders(state.requestHeaders || {}),
     }),
-    // Remote clients only. A package install asks for the administrator
-    // password on this machine's screen, so nobody at a phone could answer it
-    // and the server would stay down until someone at the desk did.
-    desktopUpdater: {
-      check: async () => {
-        const updateInfo = await handleInvoke(null, 'desktop_check_for_updates');
-        return isLinuxPackageInstall() ? { ...updateInfo, installBlocked: 'desktop-host' } : updateInfo;
-      },
-      install: async () => {
-        const updateInfo = await handleInvoke(null, 'desktop_check_for_updates');
-        if (!updateInfo.available) return updateInfo;
-        if (isLinuxPackageInstall()) return { ...updateInfo, installBlocked: 'desktop-host' };
-        await handleInvoke(null, 'desktop_download_and_install_update');
-        return updateInfo;
-      },
-      restart: () => handleInvoke(null, 'desktop_restart'),
-    },
   });
 
   const port = handle.getPort();
@@ -1968,15 +1930,6 @@ const emitToPrimaryWindow = (event, detail) => {
     ? state.mainWindow
     : windows.find((window) => window.isFocused()) || windows.find((window) => window.isVisible()) || windows[0];
   emitToWindow(target, event, detail);
-};
-
-const setTaskbarProgress = (value) => {
-  if (process.platform !== 'win32') return;
-  for (const browserWindow of BrowserWindow.getAllWindows()) {
-    if (!browserWindow.isDestroyed()) {
-      browserWindow.setProgressBar(value);
-    }
-  }
 };
 
 const pendingDeepLinks = [];
@@ -2684,14 +2637,7 @@ const createBrowserWindow = ({ label, restoreGeometry, url, runtimeConfig = {}, 
     }
     if (BrowserWindow.getAllWindows().length === 0) {
       if (process.platform !== 'darwin') {
-        if (state.updateInstallPending) {
-          log.info('[electron] last window closed while an update install is pending; leaving the exit to the installer');
-        } else if (state.installingUpdate) {
-          log.info('[electron] last window closed after the installer took over; quitting');
-          app.quit();
-        } else {
-          performConfirmedQuit();
-        }
+        performConfirmedQuit();
       }
     }
   });
@@ -3509,190 +3455,6 @@ const resolveInitialUrl = async ({ onPlainLocalBoot = null } = {}) => {
   return { initialUrl, localOrigin, localUiUrl, bootOutcome, apiBaseUrl, clientToken, requestHeaders };
 };
 
-const compareSemver = (left, right) => {
-  const a = String(left || '').replace(/^v/, '').split('.').map((value) => Number.parseInt(value || '0', 10));
-  const b = String(right || '').replace(/^v/, '').split('.').map((value) => Number.parseInt(value || '0', 10));
-  const length = Math.max(a.length, b.length);
-  for (let index = 0; index < length; index += 1) {
-    const diff = (a[index] || 0) - (b[index] || 0);
-    if (diff !== 0) return diff;
-  }
-  return 0;
-};
-
-const setupAutoUpdater = () => {
-  if (!app.isPackaged) {
-    return;
-  }
-  autoUpdater.autoDownload = false;
-  autoUpdater.autoInstallOnAppQuit = false;
-  autoUpdater.allowPrerelease = false;
-  autoUpdater.fullChangelog = true;
-  autoUpdater.disableWebInstaller = false;
-  autoUpdater.logger = log;
-
-  const testBuild = typeof __OPENCHAMBER_UPDATER_E2E_BUILD__ !== 'undefined'
-    && __OPENCHAMBER_UPDATER_E2E_BUILD__ === true;
-  const feed = resolveUpdaterFeed({ testBuild });
-  const updaterChannel = feed.provider === 'github'
-    ? resolveUpdaterChannel({ platform: process.platform, architecture: process.arch })
-    : null;
-  if (updaterChannel) {
-    autoUpdater.channel = updaterChannel;
-  }
-  autoUpdater.setFeedURL(feed);
-  log.info('[electron] updater feed configured', {
-    provider: feed.provider,
-    target: feed.provider === 'github' ? `${feed.owner}/${feed.repo}` : feed.url,
-    channel: updaterChannel || 'latest',
-  });
-
-  autoUpdater.on('download-progress', (progress) => {
-    const total = Number(progress.total || 0);
-    const transferred = Number(progress.transferred || 0);
-    setTaskbarProgress(total > 0 ? Math.max(0, Math.min(1, transferred / total)) : 0.01);
-    emitToAllWindows('openchamber:update-progress', mapUpdaterProgressEvent({
-      event: 'Progress',
-      data: {
-        chunkLength: Math.max(0, Math.round(progress.bytesPerSecond || 0)),
-        downloaded: Math.round(progress.transferred || 0),
-        total: Math.round(progress.total || 0),
-      },
-    }));
-  });
-
-  autoUpdater.on('update-downloaded', (info) => {
-    log.info(`[electron] update-downloaded version=${info?.version || 'unknown'}`);
-    setTaskbarProgress(-1);
-    if (state.pendingUpdate) {
-      state.pendingUpdate.downloaded = true;
-      if (info?.downloadedFile) state.pendingUpdate.downloadedFile = info.downloadedFile;
-    }
-  });
-
-  autoUpdater.on('error', (err) => {
-    setTaskbarProgress(-1);
-    log.error('[electron] autoUpdater error', err);
-  });
-};
-
-// quitAndInstall() reports failures (rejected code signature, a Squirrel
-// session already disabled by an earlier failure) asynchronously on the
-// 'error' event, long after the call returns. Give the install that long to
-// either take the app down or report why it did not.
-const UPDATE_INSTALL_GRACE_MS = 15_000;
-
-// Releasing terminals, the managed OpenCode child, and SSH sessions must not
-// hold the installer hostage: a stuck session would otherwise keep the app on
-// the old version forever. The backend's own stop() is already bounded; this
-// bounds everything the install path waits on, beyond the backend's 35s limit.
-const UPDATE_SHUTDOWN_TIMEOUT_MS = 40_000;
-
-/**
- * Hand the downloaded update to the platform installer and keep the IPC call
- * open until the app quits or the updater reports a failure, so a rejected
- * install reaches the renderer instead of dying in the log. Restores the
- * quit/install flags when the install never happens.
- */
-const installDownloadedUpdate = () => new Promise((resolve, reject) => {
-  let settled = false;
-  let graceTimer;
-  let backendStopped = false;
-
-  // Hold the process from here until the installer has control. Every quit
-  // path checks this, so closing the last window during shutdown can no longer
-  // end the app with the install still pending.
-  state.updateInstallPending = true;
-
-  const rollbackQuitState = () => {
-    state.updateInstallPending = false;
-    state.quitRequested = false;
-    state.installingUpdate = false;
-  };
-
-  const fail = (error) => {
-    if (settled) return;
-    settled = true;
-    clearTimeout(graceTimer);
-    autoUpdater.off('error', fail);
-    rollbackQuitState();
-    log.error('[electron] update install failed', error);
-    reject(error instanceof Error ? error : new Error(String(error)));
-    // The backend is gone and does not restart in place, so a failure from
-    // here on (a cancelled Linux password prompt is the common one) would
-    // leave a window that reaches no server. Come back on the current version.
-    if (backendStopped) {
-      log.info('[electron] relaunching on the current version after the failed install');
-      void performConfirmedQuit({ relaunch: true });
-    }
-  };
-
-  autoUpdater.on('error', fail);
-
-  // Defer so the renderer's invoke channel is idle before the app starts
-  // shutting down.
-  setImmediate(async () => {
-    let shutdownTimer;
-    try {
-      // Stop the backend first, then declare the quit intent, then hand over.
-      // The flags exist only to let the installer's own quit through the
-      // hide-on-close and confirmation guards, so nothing sets them while the
-      // app is still doing work that can fail.
-      backendStopped = true;
-      await Promise.race([
-        shutdownBackgroundServices(),
-        new Promise((resolveTimeout) => {
-          shutdownTimer = setTimeout(() => {
-            log.warn('[electron] background shutdown timed out before update install; continuing');
-            resolveTimeout(null);
-          }, UPDATE_SHUTDOWN_TIMEOUT_MS);
-        }),
-      ]);
-      if (settled) return;
-      if (isLinuxPackageInstall()) {
-        // Our own async install: the window keeps drawing through the
-        // password prompt, and a rejection lands in fail() like any other.
-        log.info('[electron] installing the downloaded package');
-        // The prompt can stay open for minutes, and a background update check
-        // failing meanwhile must not relaunch the app under a running install.
-        // This install reports its own failure through the await.
-        autoUpdater.off('error', fail);
-        await installLinuxPackage({
-          packageType: readLinuxPackageType(),
-          file: state.pendingUpdate?.downloadedFile,
-        });
-        settled = true;
-        autoUpdater.off('error', fail);
-        resolve(null);
-        log.info('[electron] package installed; restarting into the new version');
-        state.updateInstallPending = false;
-        void performConfirmedQuit({ relaunch: true });
-        return;
-      }
-      // Start the installer error window after terminal cleanup, which can
-      // legitimately take longer than UPDATE_INSTALL_GRACE_MS.
-      graceTimer = setTimeout(() => {
-        if (settled) return;
-        settled = true;
-        autoUpdater.off('error', fail);
-        resolve(null);
-      }, UPDATE_INSTALL_GRACE_MS);
-      state.quitRequested = true;
-      state.installingUpdate = true;
-      state.quitConfirmationPending = false;
-      log.info('[electron] handing control to the platform installer');
-      autoUpdater.quitAndInstall();
-      // The installer owns the exit from here; other quit paths may run again.
-      state.updateInstallPending = false;
-    } catch (error) {
-      fail(error);
-    } finally {
-      clearTimeout(shutdownTimer);
-    }
-  });
-});
-
-const parseRelevantChangelogNotes = (fromVersion, toVersion) => fetchUpdateNotes(fromVersion, toVersion, compareSemver);
 
 const buildInstalledAppsCachePath = () => path.join(path.dirname(settingsFilePath()), INSTALLED_APPS_CACHE_FILE);
 
@@ -5221,129 +4983,14 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
     }
 
     case 'desktop_check_for_updates': {
-      assertUpdaterCapability({ packaged: app.isPackaged });
-      const currentVersion = APP_VERSION;
-      const { available, updateInfo, updateResult, nextVersion, pendingUpdate } = await checkForDesktopUpdate({
-        autoUpdater,
-        currentVersion,
-        pendingUpdate: state.pendingUpdate,
-        compareVersions: compareSemver,
-      });
-      const body =
-        (typeof updateInfo?.releaseNotes === 'string' && updateInfo.releaseNotes.trim() ? updateInfo.releaseNotes : null) ||
-        await parseRelevantChangelogNotes(currentVersion, nextVersion);
-      state.pendingUpdate = pendingUpdate;
-      return {
-        available,
-        currentVersion,
-        version: available ? nextVersion : null,
-        body: body || null,
-        date:
-          (typeof updateInfo?.releaseDate === 'string' && updateInfo.releaseDate) ||
-          null,
-      };
+      return await checkForDesktopUpdate();
     }
 
     case 'desktop_download_and_install_update':
-      assertUpdaterCapability({ packaged: app.isPackaged });
-      if (!state.pendingUpdate) {
-        throw new Error('No pending update');
-      }
-      setTaskbarProgress(0.01);
-      emitToAllWindows('openchamber:update-progress', mapUpdaterProgressEvent({
-        event: 'Started',
-        data: {
-          contentLength: null,
-        },
-      }));
-      try {
-        if (!state.pendingUpdate.electronUpdate) {
-          throw new Error('Electron updater metadata is not available for this build');
-        }
-        if (!state.pendingUpdate.downloaded) {
-          await new Promise((resolve, reject) => {
-            let settled = false;
-            const cleanup = () => {
-              autoUpdater.off('update-downloaded', onDownloaded);
-              autoUpdater.off('error', onError);
-            };
-            const finish = (callback, value) => {
-              if (settled) return;
-              settled = true;
-              cleanup();
-              callback(value);
-            };
-            const onDownloaded = () => finish(resolve, null);
-            const onError = (error) => finish(reject, error);
-            autoUpdater.on('update-downloaded', onDownloaded);
-            autoUpdater.on('error', onError);
-            // downloadUpdate() resolves once the payload is on disk. It stays
-            // the authoritative signal: when the file was already cached the
-            // updater emits no 'update-downloaded', and waiting only for the
-            // event left this promise pending and its listeners attached on
-            // every retry.
-            Promise.resolve(autoUpdater.downloadUpdate())
-              .then((files) => {
-                // The installer comes first; Linux packages install from it.
-                if (state.pendingUpdate && files?.[0]) state.pendingUpdate.downloadedFile = files[0];
-                finish(resolve, null);
-              })
-              .catch((error) => finish(reject, error));
-          });
-        }
-        // The 'update-downloaded' event does not fire for an already cached
-        // payload, so record the payload as ready here too; otherwise restart
-        // would relaunch without installing anything.
-        state.pendingUpdate.downloaded = true;
-        emitToAllWindows('openchamber:update-progress', mapUpdaterProgressEvent({
-          event: 'Finished',
-          data: {},
-        }));
-        return null;
-      } finally {
-        setTaskbarProgress(-1);
-      }
+      assertUpdaterCapability();
+      return null;
 
     case 'desktop_restart': {
-      const applyUpdate = Boolean(state.pendingUpdate?.downloaded && app.isPackaged);
-      if (applyUpdate) assertUpdaterCapability({ packaged: app.isPackaged });
-      log.info(`[electron] desktop_restart applyUpdate=${applyUpdate} packaged=${app.isPackaged}`);
-      if (applyUpdate && process.platform === 'darwin' && typeof app.isInApplicationsFolder === 'function') {
-        try {
-          if (!app.isInApplicationsFolder()) {
-            throw new Error('Desktop update requires OpenChamber.app to be installed in /Applications');
-          }
-        } catch (error) {
-          log.warn('[electron] desktop_restart blocked', error);
-          throw error;
-        }
-      }
-      if (applyUpdate) {
-        // A previous restart click may still be installing: Squirrel accepts
-        // one quitAndInstall() per app session, so a second call throws
-        // SQRLUpdaterErrorInvalidState, and installDownloadedUpdate()'s
-        // fail() path would roll the quit state back while the first install
-        // is still in flight (#3670). updateInstallPending latches
-        // synchronously when the install starts and covers the backend-shutdown
-        // window; installingUpdate covers the tail after the installer has
-        // taken over the exit. A duplicate click joins the same restart
-        // instead of starting a second install.
-        if (state.updateInstallPending || state.installingUpdate) {
-          log.info('[electron] desktop_restart ignored, update install already in flight');
-          return null;
-        }
-        // The quit/install flags belong to installDownloadedUpdate(), which
-        // sets them once the backend is down and the installer is about to take
-        // over. Setting them here left a window in which closing the last
-        // window quit the app with the install still pending (#3027).
-        if (state.mainWindow && !state.mainWindow.isDestroyed()) {
-          try {
-            debounceWindowStatePersist(state.mainWindow, true);
-          } catch {
-          }
-        }
-        return await installDownloadedUpdate();
-      }
       // Defer so the IPC reply flushes before the app starts shutting down.
       // Without this, relaunch can race with the renderer's pending invoke and
       // the restart appears to do nothing from the UI side.
@@ -6201,16 +5848,7 @@ app.on('window-all-closed', () => {
   }
 
   if (process.platform !== 'darwin') {
-    if (state.updateInstallPending) {
-      log.info('[electron] window-all-closed while an update install is pending; leaving the exit to the installer');
-      return;
-    }
-    if (state.installingUpdate) {
-      log.info('[electron] window-all-closed after the installer took over; quitting');
-      app.quit();
-    } else {
-      performConfirmedQuit();
-    }
+    performConfirmedQuit();
   }
 });
 
@@ -6218,10 +5856,6 @@ app.on('before-quit', (event) => {
   state.quitRequested = true;
   // Loopback listeners would otherwise outlive the window that needed them.
   closeAllDevTunnels();
-
-  if (state.installingUpdate) {
-    return;
-  }
 
   if (process.platform === 'darwin' && !state.quitConfirmed) {
     event.preventDefault();
@@ -6324,7 +5958,6 @@ app.whenReady().then(async () => {
   nativeTheme.themeSource = readThemeSource();
   registerPackagedUiProtocol();
   hardenBrowserPanelSession();
-  setupAutoUpdater();
 
   if (process.platform === 'darwin') {
     Menu.setApplicationMenu(buildMacMenu());
