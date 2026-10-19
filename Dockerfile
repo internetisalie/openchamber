@@ -26,6 +26,10 @@ RUN bun run build:web
 FROM oven/bun:1.4.3 AS runtime
 WORKDIR /home/openchamber
 
+# The released fork binary is the same glibc artifact bundled by Linux Electron.
+ADD --checksum=sha256:23db6901a0d9426e830253ba0a31d05f320b43720a2d1b3504c1d489d8ede11a --chmod=755 https://github.com/internetisalie/opencode/releases/download/v2.0.32-internetisalie.b505ae437739/opencode-linux-x64-baseline /usr/local/bin/opencode
+RUN opencode --version
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
   bash \
   bzip2 \
@@ -52,8 +56,7 @@ ENV NPM_CONFIG_PREFIX=/home/openchamber/.npm-global
 ENV PATH=${NPM_CONFIG_PREFIX}/bin:${PATH}
 
 RUN npm config set prefix /home/openchamber/.npm-global && mkdir -p /home/openchamber/.npm-global && \
-  mkdir -p /home/openchamber/.local /home/openchamber/.config /home/openchamber/.ssh && \
-  npm install -g @opencode/cli@2.0.32
+  mkdir -p /home/openchamber/.local /home/openchamber/.config /home/openchamber/.ssh
 
 # cloudflared 2026.3.0 - update digest explicitly when upgrading
 COPY --from=cloudflare/cloudflared@sha256:6d91c121b803126f7a5344005d17a9324788fc09d305b6e2560ec6040a7ae283 /usr/local/bin/cloudflared /usr/local/bin/cloudflared
