@@ -8,12 +8,10 @@ import {
 
 const baseOptions = {
   railOrder: [],
-  planModeEnabled: true,
   isVSCode: false,
   screenWidth: 1200,
   tabs: [],
-  linearConnected: true,
-  githubConnected: true,
+  sourceControlConnected: true,
 } as const;
 
 describe('getVisibleContextRailSurfaces', () => {
@@ -26,17 +24,6 @@ describe('getVisibleContextRailSurfaces', () => {
     expect(ids.slice(0, 3)).toEqual(['agent-pty', 'context', 'terminal']);
     expect(getVisibleContextRailSurfaces({ ...baseOptions, isVSCode: true }).some((surface) => surface.id === 'agent-pty')).toBe(false);
     expect(getVisibleContextRailSurfaces({ ...baseOptions, hiddenSurfaces: ['agent-pty'] }).some((surface) => surface.id === 'agent-pty')).toBe(false);
-  });
-
-  test('hides the plan surface while plan mode is disabled', () => {
-    const surfaces = getVisibleContextRailSurfaces({ ...baseOptions, planModeEnabled: false });
-    expect(surfaces.some((surface) => surface.id === 'plan')).toBe(false);
-    expect(surfaces.some((surface) => surface.id === 'context')).toBe(true);
-  });
-
-  test('shows the plan surface while plan mode is enabled', () => {
-    const surfaces = getVisibleContextRailSurfaces({ ...baseOptions, planModeEnabled: true });
-    expect(surfaces.some((surface) => surface.id === 'plan')).toBe(true);
   });
 
   test('hides the walkthrough on VS Code and below the min width', () => {
@@ -77,21 +64,11 @@ describe('getVisibleContextRailSurfaces', () => {
     expect(surfaces.slice(0, 2).map((surface) => surface.id)).toEqual(['git', 'context']);
   });
 
-  test('places Linear right after the walkthrough in the default order', () => {
-    const ids = getVisibleContextRailSurfaces(baseOptions).map((surface) => surface.id);
-    const walkthrough = ids.indexOf('walkthrough');
-    expect(walkthrough).toBeGreaterThanOrEqual(0);
-    expect(ids.indexOf('linear')).toBe(walkthrough + 1);
-  });
-
-  test('hides the pull request surface until GitHub is connected', () => {
-    expect(getVisibleContextRailSurfaces({ ...baseOptions, githubConnected: false }).some((s) => s.id === 'pr')).toBe(false);
-    expect(getVisibleContextRailSurfaces({ ...baseOptions, githubConnected: true }).some((s) => s.id === 'pr')).toBe(true);
-  });
-
-  test('hides Linear until a workspace is connected', () => {
-    expect(getVisibleContextRailSurfaces({ ...baseOptions, linearConnected: false }).some((s) => s.id === 'linear')).toBe(false);
-    expect(getVisibleContextRailSurfaces({ ...baseOptions, linearConnected: true }).some((s) => s.id === 'linear')).toBe(true);
+  test('hides the Tracker until a repository host is connected or an item is open in it', () => {
+    expect(getVisibleContextRailSurfaces({ ...baseOptions, sourceControlConnected: false }).some((s) => s.id === 'pr')).toBe(false);
+    expect(getVisibleContextRailSurfaces({ ...baseOptions, sourceControlConnected: true }).some((s) => s.id === 'pr')).toBe(true);
+    const tabs: { mode: 'pr'; targetPath: string }[] = [{ mode: 'pr', targetPath: 'https://linear.app/acme/issue/ENG-7' }];
+    expect(getVisibleContextRailSurfaces({ ...baseOptions, sourceControlConnected: false, tabs }).some((s) => s.id === 'pr')).toBe(true);
   });
 
   test('appends installed guest panels except on VS Code', () => {
@@ -103,7 +80,7 @@ describe('getVisibleContextRailSurfaces', () => {
       labelKey: 'contextRail.surface.plugin' as const,
       descriptionKey: 'contextRail.surface.plugin.description' as const,
       availability: 'always' as const,
-      defaultWidthFraction: 0.45,
+      width: 'regular' as const,
     };
     expect(getVisibleContextRailSurfaces({ ...baseOptions, extras: [hello] }).some((s) => s.id === 'plugin:hello')).toBe(true);
     expect(getVisibleContextRailSurfaces({ ...baseOptions, extras: [hello], isVSCode: true }).some((s) => s.id === 'plugin:hello')).toBe(false);

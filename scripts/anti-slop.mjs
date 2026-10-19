@@ -107,7 +107,7 @@ function runOxlint() {
   let commandError;
   try {
     try {
-      execFileSync("bunx", ["--bun", "oxlint", "--format", "json"], {
+      execFileSync("bunx", ["--bun", "oxlint", "-c", join(import.meta.dirname, "..", "oxlint.anti-slop.config.ts"), "--format", "json"], {
         cwd: process.cwd(),
         stdio: ["ignore", reportFd, "pipe"],
       });

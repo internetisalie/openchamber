@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from 'bun:test';
-import { buildLocalDesktopHost, getLocalDesktopOrigin, resolveCurrentDesktopHost } from './desktopCurrentHost';
+import type { DesktopHost } from './desktopHosts';
+import { getLocalDesktopOrigin, resolveCurrentDesktopHost, withLocalDesktopHost } from './desktopCurrentHost';
 
 const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
 
@@ -57,23 +58,52 @@ describe('desktop local backend discovery', () => {
   test('bundled UI without a local server does not become a backend', () => {
     setWindow('openchamber-ui://app/index.html', '', 'http://localhost:3037');
     expect(getLocalDesktopOrigin()).toBe('');
-    expect(buildLocalDesktopHost().url).toBe('');
+    expect(withLocalDesktopHost([], getLocalDesktopOrigin())).toEqual([]);
     expect(resolveCurrentDesktopHost([])).toMatchObject({ id: 'custom', url: 'http://localhost:3037' });
   });
 
   test('an enabled local backend remains discoverable before a connection succeeds', () => {
     setWindow('openchamber-ui://app/index.html', 'http://127.0.0.1:57123', 'http://127.0.0.1:57123');
-    expect(buildLocalDesktopHost().url).toBe('http://127.0.0.1:57123');
-    expect(resolveCurrentDesktopHost([buildLocalDesktopHost()]).id).toBe('local');
+    const hosts = withLocalDesktopHost([], getLocalDesktopOrigin());
+    expect(hosts[0].url).toBe('http://127.0.0.1:57123');
+    expect(resolveCurrentDesktopHost(hosts).id).toBe('local');
   });
 
-  test('legacy loopback UI still discovers its HTTP backend', () => {
+  test('a loopback page alone does not declare a local server', () => {
     setWindow('http://127.0.0.1:57123/');
-    expect(getLocalDesktopOrigin()).toBe('http://127.0.0.1:57123');
+    expect(getLocalDesktopOrigin()).toBe('');
   });
 
   test('an explicit absent backend overrides an HTTP document origin', () => {
     setWindow('https://remote.example/', '', 'https://remote.example');
     expect(getLocalDesktopOrigin()).toBe('');
+  });
+});
+
+const remote: DesktopHost = { id: 'remote', label: 'Remote', url: 'http://192.168.1.20:3000' };
+
+describe('Local in the desktop instance list', () => {
+  // #4410 and #4632: Local used to take the page's own origin, which named the
+  // packaged UI scheme, or the instance whose page the window was showing.
+  test('is left out when the shell reported no local origin', () => {
+    for (const page of [
+      // OPENCHAMBER_SKIP_LOCAL_SERVER=1: the shell injects an empty origin.
+      { origin: 'openchamber-ui://app', injectedLocalOrigin: '' },
+      // A page another instance served, before the shell's init script ran.
+      { origin: 'http://192.168.1.20:3000' },
+    ]) {
+      setWindow(`${page.origin}/`, page.injectedLocalOrigin);
+      expect(withLocalDesktopHost([remote], getLocalDesktopOrigin())).toEqual([remote]);
+    }
+    // The hosts config answers null for a shell without a local server.
+    expect(withLocalDesktopHost([remote], null)).toEqual([remote]);
+  });
+
+  test('comes first with the origin the shell reported', () => {
+    setWindow('http://192.168.1.20:3000/', 'http://127.0.0.1:57123');
+    expect(withLocalDesktopHost([remote], getLocalDesktopOrigin())).toEqual([
+      { id: 'local', label: 'Local', url: 'http://127.0.0.1:57123' },
+      remote,
+    ]);
   });
 });

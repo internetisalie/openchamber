@@ -6,18 +6,13 @@ import {
   SettingsSection,
   SettingsFieldRow,
   SettingsCheckboxRow,
-  SettingsInset,
-  SettingsGroupTitle,
   SETTINGS_CUSTOM_TRIGGER_CLASS,
   SETTINGS_SELECT_ROW_TRIGGER_CLASS,
-  SETTINGS_SELECT_SIZE,
   SETTINGS_OPTION_STACK_CLASS,
-  SETTINGS_FIELDS_STACK_CLASS,
 } from '@/components/sections/shared/SettingsSection';
 import { SessionWarmingCheckbox } from './SessionWarmingCheckbox';
 import { PermissionDefaultModeField } from './PermissionDefaultModeField';
 import { isVSCodeRuntime } from '@/lib/desktop';
-import { SettingsInfoHint } from '@/components/sections/shared/SettingsInfoHint';
 import { loadDesktopSettings, updateDesktopSettings } from '@/lib/persistence';
 import { useConfigStore } from '@/stores/useConfigStore';
 import { useUIStore } from '@/stores/useUIStore';
@@ -26,7 +21,7 @@ import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useI18n } from '@/lib/i18n';
 import { parseModelIdentifier } from '@/lib/modelIdentifier';
 import { isAutoModel } from '@/lib/routing/autoModel';
-import { runtimeFetch } from '@/lib/runtime-fetch';
+import { useCallableModelProviders } from '@/hooks/useCallableModelProviders';
 import { isPrimaryMode } from '@/components/chat/mobileControlsUtils';
 import { listModelVariantIds, type ModelVariantSource } from '@/lib/modelVariants';
 
@@ -85,7 +80,8 @@ export const DefaultsSettings: React.FC = () => {
   const [defaultAgent, setDefaultAgent] = React.useState<string | undefined>();
   const [smallModelUseDefault, setSmallModelUseDefault] = React.useState(true);
   const [smallModelOverride, setSmallModelOverride] = React.useState<string | undefined>();
-  const [smallModelProviders, setSmallModelProviders] = React.useState<string[]>([]);
+  // Fail closed: never offer providers whose credentials were not verified.
+  const smallModelProviders = useCallableModelProviders() ?? [];
   const [walkthroughModelOverride, setWalkthroughModelOverride] = React.useState<string | undefined>();
   const [isLoading, setIsLoading] = React.useState(true);
 
@@ -253,30 +249,6 @@ export const DefaultsSettings: React.FC = () => {
     () => getDisplayModel(walkthroughModelOverride),
     [walkthroughModelOverride]
   );
-  React.useEffect(() => {
-    // Both pickers offer the same providers — the walkthrough runs through the
-    // small model — and the walkthrough picker is always visible, so this is
-    // always worth fetching. The server answers with the providers it has a
-    // credential and an endpoint for, including plugin-registered ones that
-    // exist only inside the running OpenCode.
-    let cancelled = false;
-    (async () => {
-      try {
-        const response = await runtimeFetch('/api/small-model', { method: 'GET', headers: { Accept: 'application/json' } });
-        if (!response.ok) return;
-        const payload = await response.json().catch(() => null) as { authenticatedProviders?: unknown } | null;
-        if (!cancelled && Array.isArray(payload?.authenticatedProviders)) {
-          setSmallModelProviders(payload.authenticatedProviders.filter((id): id is string => typeof id === 'string'));
-        }
-      } catch {
-        // Fail closed: never offer providers whose credentials were not verified.
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   const availableVariants = React.useMemo(() => {
     if (!parsedModel.providerId || !parsedModel.modelId) return [];
     const provider = providers.find((p) => p.id === parsedModel.providerId);
@@ -294,146 +266,128 @@ export const DefaultsSettings: React.FC = () => {
 
   return (
     <>
-      <SettingsSection title={t('settings.openchamber.defaults.title')} divider={false}>
-        <div className="space-y-0">
-          <div className="mt-0 mb-4 typography-meta text-muted-foreground">
+      <SettingsSection
+        title={t('settings.openchamber.defaults.title')}
+        description={(
+          <>
             {t('settings.openchamber.defaults.summaryPrefix')}
             {' '}
-            {parsedModel.providerId ? (
-              <span className="text-foreground">
-                {parsedModel.providerId}/{parsedModel.modelId}
-                {supportsVariants ? ` (${defaultVariant ?? t('settings.openchamber.defaults.option.defaultLowercase')})` : ''}
-              </span>
-            ) : (
-              <span className="text-foreground">{t('settings.openchamber.defaults.summaryOpenCodeDefault')}</span>
-            )}
-            {defaultAgent && (
+            <span className="text-foreground">
+              {parsedModel.providerId
+                ? `${parsedModel.providerId}/${parsedModel.modelId}${supportsVariants ? ` (${defaultVariant ?? t('settings.openchamber.defaults.option.defaultLowercase')})` : ''}`
+                : t('settings.openchamber.defaults.summaryOpenCodeDefault')}
+            </span>
+            {defaultAgent ? (
               <>
                 {' / '}
                 <span className="text-foreground">{defaultAgent}</span>
               </>
-            )}
-          </div>
-
-          <div className={SETTINGS_FIELDS_STACK_CLASS}>
-            <SettingsFieldRow
-              settingsItem="sessions.default-model"
-              label={t('settings.openchamber.defaults.field.defaultModel')}
-            >
-              <ModelSelector
-                providerId={parsedModel.providerId}
-                modelId={parsedModel.modelId}
-                onChange={handleModelChange}
-                className={SETTINGS_CUSTOM_TRIGGER_CLASS}
-                offerAuto
-              />
-            </SettingsFieldRow>
-
-            <SettingsFieldRow
-              settingsItem="sessions.default-thinking"
-              label={t('settings.openchamber.defaults.field.defaultThinking')}
-            >
-              <Select value={defaultVariant ?? DEFAULT_VARIANT_VALUE} onValueChange={handleVariantChange} disabled={!supportsVariants}>
-                <SelectTrigger size={SETTINGS_SELECT_SIZE} className={SETTINGS_SELECT_ROW_TRIGGER_CLASS}>
-                  <SelectValue placeholder={t('settings.openchamber.defaults.field.thinkingPlaceholder')}>
-                    {formatVariantLabel(defaultVariant ?? DEFAULT_VARIANT_VALUE)}
-                  </SelectValue>
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value={DEFAULT_VARIANT_VALUE}>{t('settings.openchamber.defaults.option.default')}</SelectItem>
-                  {availableVariants.map((variant) => (
-                    <SelectItem key={variant} value={variant}>
-                      {formatVariantLabel(variant)}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </SettingsFieldRow>
-
-            <SettingsFieldRow
-              settingsItem="sessions.default-agent"
-              label={t('settings.openchamber.defaults.field.defaultAgent')}
-            >
-              <AgentSelector
-                agentName={defaultAgent || ''}
-                onChange={handleAgentChange}
-                filter={(agent) => isPrimaryMode(agent.mode)}
-                className={SETTINGS_CUSTOM_TRIGGER_CLASS}
-              />
-            </SettingsFieldRow>
-
-            {isVSCode ? null : <PermissionDefaultModeField agentName={defaultAgent} />}
-          </div>
-
-          <SettingsInset className={SETTINGS_OPTION_STACK_CLASS}>
-            <SettingsCheckboxRow
-              settingsItem="sessions.deletion-dialog"
-              checked={showDeletionDialog}
-              onChange={setShowDeletionDialog}
-              label={t('settings.openchamber.defaults.field.showDeletionDialog')}
-              ariaLabel={t('settings.openchamber.defaults.field.showDeletionDialogAria')}
-            />
-            <SessionWarmingCheckbox />
-          </SettingsInset>
-
-          <div className="space-y-3 pt-6">
-            <div className="flex items-center gap-1.5">
-              <SettingsGroupTitle>
-                {t('settings.openchamber.defaults.smallModel.title')}
-              </SettingsGroupTitle>
-              <SettingsInfoHint>
-                {t('settings.openchamber.defaults.smallModel.description')}
-              </SettingsInfoHint>
-            </div>
-
-            <SettingsCheckboxRow
-              settingsItem="sessions.small-model"
-              checked={smallModelUseDefault}
-              onChange={(checked) => {
-                void handleSmallModelUseDefaultChange(checked);
-              }}
-              label={t('settings.openchamber.defaults.smallModel.useDefault')}
-              ariaLabel={t('settings.openchamber.defaults.smallModel.useDefaultAria')}
-            />
-
-            {!smallModelUseDefault ? (
-              <SettingsFieldRow label={t('settings.openchamber.defaults.smallModel.overrideModel')}>
-                <ModelSelector
-                  providerId={parsedSmallModel.providerId}
-                  modelId={parsedSmallModel.modelId}
-                  onChange={handleSmallModelOverrideChange}
-                  allowedProviderIds={smallModelProviders}
-                  className={SETTINGS_CUSTOM_TRIGGER_CLASS}
-                />
-              </SettingsFieldRow>
             ) : null}
+          </>
+        )}
+        divider={false}
+        contentClassName="space-y-4"
+      >
+        <div>
+          <SettingsFieldRow
+            settingsItem="sessions.default-model"
+            label={t('settings.openchamber.defaults.field.defaultModel')}
+          >
+            <ModelSelector
+              providerId={parsedModel.providerId}
+              modelId={parsedModel.modelId}
+              onChange={handleModelChange}
+              className={SETTINGS_CUSTOM_TRIGGER_CLASS}
+              offerAuto
+            />
+          </SettingsFieldRow>
 
-            <SettingsInset className={SETTINGS_OPTION_STACK_CLASS}>
-              <div className="flex items-center gap-1.5">
-                <SettingsGroupTitle>
-                  {t('settings.openchamber.defaults.walkthroughModel.title')}
-                </SettingsGroupTitle>
-                <SettingsInfoHint>
-                  {t('settings.openchamber.defaults.walkthroughModel.description')}
-                </SettingsInfoHint>
-              </div>
+          <SettingsFieldRow
+            settingsItem="sessions.default-thinking"
+            label={t('settings.openchamber.defaults.field.defaultThinking')}
+          >
+            <Select value={defaultVariant ?? DEFAULT_VARIANT_VALUE} onValueChange={handleVariantChange} disabled={!supportsVariants}>
+              <SelectTrigger className={SETTINGS_SELECT_ROW_TRIGGER_CLASS}>
+                <SelectValue placeholder={t('settings.openchamber.defaults.field.thinkingPlaceholder')}>
+                  {formatVariantLabel(defaultVariant ?? DEFAULT_VARIANT_VALUE)}
+                </SelectValue>
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={DEFAULT_VARIANT_VALUE}>{t('settings.openchamber.defaults.option.default')}</SelectItem>
+                {availableVariants.map((variant) => (
+                  <SelectItem key={variant} value={variant}>
+                    {formatVariantLabel(variant)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </SettingsFieldRow>
 
-              <SettingsFieldRow
-                settingsItem="sessions.walkthrough-model"
-                label={t('settings.openchamber.defaults.walkthroughModel.overrideModel')}
-              >
-                <ModelSelector
-                  providerId={parsedWalkthroughModel.providerId}
-                  modelId={parsedWalkthroughModel.modelId}
-                  onChange={handleWalkthroughModelOverrideChange}
-                  allowedProviderIds={smallModelProviders}
-                  isModelAllowed={isStructuredOutputCapable}
-                  placeholder={t('settings.openchamber.defaults.walkthroughModel.usesSmallModel')}
-                  className={SETTINGS_CUSTOM_TRIGGER_CLASS}
-                />
-              </SettingsFieldRow>
-            </SettingsInset>
-          </div>
+          <SettingsFieldRow
+            settingsItem="sessions.default-agent"
+            label={t('settings.openchamber.defaults.field.defaultAgent')}
+          >
+            <AgentSelector
+              agentName={defaultAgent || ''}
+              onChange={handleAgentChange}
+              filter={(agent) => isPrimaryMode(agent.mode)}
+              className={SETTINGS_CUSTOM_TRIGGER_CLASS}
+            />
+          </SettingsFieldRow>
+
+          {isVSCode ? null : <PermissionDefaultModeField agentName={defaultAgent} />}
+        </div>
+
+        <div className={SETTINGS_OPTION_STACK_CLASS}>
+          <SettingsCheckboxRow
+            settingsItem="sessions.deletion-dialog"
+            checked={showDeletionDialog}
+            onChange={setShowDeletionDialog}
+            label={t('settings.openchamber.defaults.field.showDeletionDialog')}
+            ariaLabel={t('settings.openchamber.defaults.field.showDeletionDialogAria')}
+          />
+          <SessionWarmingCheckbox />
+        </div>
+      </SettingsSection>
+
+      <SettingsSection title={t('settings.layout.sessions.helperModels.title')} contentClassName="space-y-2">
+        <SettingsCheckboxRow
+          settingsItem="sessions.small-model"
+          checked={smallModelUseDefault}
+          onChange={(checked) => {
+            void handleSmallModelUseDefaultChange(checked);
+          }}
+          label={t('settings.openchamber.defaults.smallModel.useDefault')}
+          ariaLabel={t('settings.openchamber.defaults.smallModel.useDefaultAria')}
+          info={t('settings.openchamber.defaults.smallModel.description')}
+        />
+        <div>
+          {!smallModelUseDefault ? (
+            <SettingsFieldRow label={t('settings.openchamber.defaults.smallModel.title')}>
+              <ModelSelector
+                providerId={parsedSmallModel.providerId}
+                modelId={parsedSmallModel.modelId}
+                onChange={handleSmallModelOverrideChange}
+                allowedProviderIds={smallModelProviders}
+                className={SETTINGS_CUSTOM_TRIGGER_CLASS}
+              />
+            </SettingsFieldRow>
+          ) : null}
+          <SettingsFieldRow
+            settingsItem="sessions.walkthrough-model"
+            label={t('settings.openchamber.defaults.walkthroughModel.title')}
+            info={t('settings.openchamber.defaults.walkthroughModel.description')}
+          >
+            <ModelSelector
+              providerId={parsedWalkthroughModel.providerId}
+              modelId={parsedWalkthroughModel.modelId}
+              onChange={handleWalkthroughModelOverrideChange}
+              allowedProviderIds={smallModelProviders}
+              isModelAllowed={isStructuredOutputCapable}
+              placeholder={t('settings.openchamber.defaults.walkthroughModel.usesSmallModel')}
+              className={SETTINGS_CUSTOM_TRIGGER_CLASS}
+            />
+          </SettingsFieldRow>
         </div>
       </SettingsSection>
     </>

@@ -1,7 +1,6 @@
 import { expect, test } from 'bun:test';
 import type { Session } from '@/lib/opencode/model';
 
-import { deriveRecentSessions } from '@/components/session/sidebar/recent/activitySections';
 import { ensureChatsRootDirectory } from '@/lib/chatDirectories';
 import { opencodeClient } from '@/lib/opencode/client';
 
@@ -42,7 +41,7 @@ const withMobileRuntime = (runtime: 'hosted' | 'capacitor', run: () => void): vo
   }
 };
 
-test('hosted mobile gives Global sessions a dedicated partition without project or Recent duplication', () => {
+test('hosted mobile gives Global sessions a dedicated partition without project duplication', () => {
   const managedChat = session(
     'session-managed',
     '/home/.config/openchamber/chats/2026-09-14/session-managed',
@@ -60,11 +59,6 @@ test('hosted mobile gives Global sessions a dedicated partition without project 
       'session-global-unowned',
     ]);
     expect(projection.projectSessions.map((entry) => entry.id)).toEqual(['session-project']);
-    expect(deriveRecentSessions(
-      projection.projectSessions,
-      new Set(['session-global-matching', 'session-global-unowned']),
-      200_000_000,
-    )).toEqual([]);
 
     const visibleIds = [
       ...projection.chatSessions,

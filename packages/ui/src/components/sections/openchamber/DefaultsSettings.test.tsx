@@ -69,10 +69,18 @@ mock.module('@/sync/selection-store', () => ({
 mock.module('@/sync/session-ui-store', () => ({
   useSessionUIStore: <T,>(selector: (state: typeof sessionState) => T): T => selector(sessionState),
 }));
+mock.module('@/stores/useDirectoryStore', () => ({
+  useDirectoryStore: <T,>(selector: (state: { currentDirectory: string }) => T): T =>
+    selector({ currentDirectory: '/test/project' }),
+}));
+const runtimeFetchCalls: string[] = [];
 mock.module('@/lib/runtime-fetch', () => ({
-  runtimeFetch: async () => new Response(JSON.stringify({ authenticatedProviders: [] }), {
-    headers: { 'Content-Type': 'application/json' },
-  }),
+  runtimeFetch: async (url: string) => {
+    runtimeFetchCalls.push(url);
+    return new Response(JSON.stringify({ authenticatedProviders: [] }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  },
 }));
 const persistenceModule = await import('@/lib/persistence');
 mock.module('@/lib/persistence', () => ({
@@ -109,18 +117,16 @@ mock.module('@/components/sections/openchamber/PermissionDefaultModeField', () =
   PermissionDefaultModeField: () => null,
 }));
 mock.module('@/components/sections/shared/SettingsSection', () => ({
-  SettingsSection: ({ children }: { children: React.ReactNode }) => <section>{children}</section>,
+  SettingsSection: ({ description, children }: { description?: React.ReactNode; children: React.ReactNode }) => (
+    <section>{description}{children}</section>
+  ),
   SettingsFieldRow: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
   SettingsCheckboxRow: ({ children, label }: { children?: React.ReactNode; label?: React.ReactNode }) => (
     <div>{label}{children}</div>
   ),
-  SettingsInset: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
-  SettingsGroupTitle: ({ children }: { children: React.ReactNode }) => <h2>{children}</h2>,
   SETTINGS_CUSTOM_TRIGGER_CLASS: '',
   SETTINGS_SELECT_ROW_TRIGGER_CLASS: '',
-  SETTINGS_SELECT_SIZE: 'sm',
   SETTINGS_OPTION_STACK_CLASS: '',
-  SETTINGS_FIELDS_STACK_CLASS: '',
 }));
 mock.module('@/components/ui/select', () => ({
   Select: ({ children }: { children: React.ReactNode }) => <div>{children}</div>,
@@ -169,6 +175,19 @@ describe('DefaultsSettings', () => {
   afterEach(async () => {
     await act(async () => root.unmount());
     windowInstance.close();
+  });
+
+  test('asks the small-model route for providers in the current directory', async () => {
+    runtimeFetchCalls.length = 0;
+
+    await act(async () => {
+      root.render(<DefaultsSettings />);
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+
+    expect(runtimeFetchCalls.some((url) =>
+      url.startsWith('/api/small-model') && url.includes(`directory=${encodeURIComponent('/test/project')}`))).toBe(true);
   });
 
   test('retains a saved model variant while the model disappears and returns', async () => {

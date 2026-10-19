@@ -22,6 +22,7 @@ import { useSessionDisplayStore } from '@/stores/useSessionDisplayStore';
 import { getVSCodeBootstrapConfig, getVSCodeBootstrapWorkspaceFolder } from '@/lib/vscodeBootstrap';
 import { cn } from '@/lib/utils';
 import { isSessionArchived } from '@/lib/sessionArchive';
+import { normalizePath } from '@/lib/pathNormalization';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -33,7 +34,7 @@ import {
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
 import { useTerminalSessionKeepalive } from '@/hooks/useTerminalSessionKeepalive';
 import { useUpdatePolling } from '@/hooks/useUpdatePolling';
-import { useI18n } from '@/lib/i18n';
+import { isRightToLeft, useI18n } from '@/lib/i18n';
 import { toast } from '@/components/ui';
 import { ProviderLogo } from '@/components/ui/ProviderLogo';
 import { UsageProgressBar } from '@/components/sections/usage/UsageProgressBar';
@@ -70,15 +71,6 @@ const SESSIONS_SIDEBAR_WIDTH = 280;
 const EXPANDED_LAYOUT_THRESHOLD = SESSIONS_SIDEBAR_WIDTH + 520;
 const SESSIONS_SIDEBAR_MIN_WIDTH = Math.round(SESSIONS_SIDEBAR_WIDTH * 0.7);
 const SESSIONS_SIDEBAR_MAX_WIDTH = 520;
-
-const normalizePath = (value?: string | null): string | null => {
-  if (typeof value !== 'string') return null;
-  const trimmed = value.trim();
-  if (!trimmed) return null;
-  const replaced = trimmed.replace(/\\/g, '/');
-  if (replaced === '/') return '/';
-  return replaced.length > 1 ? replaced.replace(/\/+$/, '') : replaced;
-};
 
 type VSCodeView = 'sessions' | 'chat' | 'settings';
 
@@ -434,10 +426,12 @@ export const VSCodeLayout: React.FC = () => {
 
         // Keep trying to fetch core datasets on cold starts.
         if (configStore.isConnected) {
-          if (configStore.providers.length === 0) {
+          // Loaded flags, not list lengths: a catalog shown from the
+          // persisted cache is not a live load.
+          if (!configStore.providersLoaded) {
             await configStore.loadProviders({ source: 'vscodeLayout:bootstrap' });
           }
-          if (configStore.agents.length === 0) {
+          if (!useConfigStore.getState().agentsLoaded) {
             await configStore.loadAgents({ source: 'vscodeLayout:bootstrap' });
           }
         }
@@ -445,7 +439,7 @@ export const VSCodeLayout: React.FC = () => {
         const configState = useConfigStore.getState();
         // If OpenCode is still warming up, the initial provider/agent loads can fail and be swallowed by retries.
         // Only mark bootstrap complete when core datasets are present so we keep retrying on cold starts.
-        if (!configState.isInitialized || !configState.isConnected || configState.providers.length === 0 || configState.agents.length === 0) {
+        if (!configState.isInitialized || !configState.isConnected || !configState.providersLoaded || !configState.agentsLoaded) {
           return;
         }
         if (debugEnabled) console.log('[OpenChamber][VSCode][bootstrap] post-load', {
@@ -539,7 +533,9 @@ export const VSCodeLayout: React.FC = () => {
     if (expandedSidebarResizePointerIdRef.current !== event.pointerId) {
       return;
     }
-    const delta = event.clientX - expandedSidebarResizeStartXRef.current;
+    // The handle is on the sidebar's end edge: in RTL dragging left widens it.
+    const sign = isRightToLeft(event.currentTarget) ? -1 : 1;
+    const delta = (event.clientX - expandedSidebarResizeStartXRef.current) * sign;
     const nextWidth = clampExpandedSidebarWidth(expandedSidebarResizeStartWidthRef.current + delta);
     setExpandedSidebarWidth((current) => (current === nextWidth ? current : nextWidth));
   }, [clampExpandedSidebarWidth]);
@@ -602,7 +598,7 @@ export const VSCodeLayout: React.FC = () => {
         <div className="flex h-full">
           {/* Sessions sidebar */}
           <div
-            className={cn('relative h-full border-r border-border overflow-hidden flex-shrink-0', isResizingExpandedSidebar && 'select-none')}
+            className={cn('relative h-full border-e border-border overflow-hidden flex-shrink-0', isResizingExpandedSidebar && 'select-none')}
             style={{ width: expandedSidebarWidth, minWidth: expandedSidebarWidth, maxWidth: expandedSidebarWidth }}
           >
             <SessionSidebar
@@ -612,7 +608,7 @@ export const VSCodeLayout: React.FC = () => {
             />
             <div
               className={cn(
-                'absolute right-0 top-0 z-20 h-full w-[3px] cursor-col-resize transition-colors hover:bg-[var(--interactive-border)]/80',
+                'absolute inset-e-0 top-0 z-20 h-full w-[3px] cursor-col-resize transition-colors hover:bg-[var(--interactive-border)]/80',
                 isResizingExpandedSidebar && 'bg-[var(--interactive-border)]'
               )}
               onPointerDown={handleExpandedSidebarResizeStart}
@@ -788,7 +784,7 @@ const VSCodeHeader: React.FC<VSCodeHeaderProps> = ({ title, showBack, onBack, on
   }, [setQuotaDisplayMode]);
 
   return (
-    <div className="flex items-center gap-1.5 pl-3 pr-2 py-1 border-b border-border bg-background shrink-0">
+    <div className="flex items-center gap-1.5 ps-3 pe-2 py-1 border-b border-border bg-background shrink-0">
       {showBack && onBack && (
         <button
           onClick={onBack}
@@ -803,9 +799,9 @@ const VSCodeHeader: React.FC<VSCodeHeaderProps> = ({ title, showBack, onBack, on
           <button
             type="button"
             aria-label={t('sessions.switcher.openAria')}
-            className="inline-flex min-w-0 max-w-full items-center rounded-md px-1 py-0.5 -my-0.5 text-left transition-colors hover:bg-interactive-hover/60 focus-visible:outline-none focus-visible:bg-interactive-hover/60"
+            className="inline-flex min-w-0 max-w-full items-center rounded-md px-1 py-0.5 -my-0.5 text-start transition-colors hover:bg-interactive-hover/60 focus-visible:outline-none focus-visible:bg-interactive-hover/60"
           >
-            <span className="text-sm font-medium truncate" title={title}>{title}</span>
+            <span dir="auto" className="oc-ui-start-align text-sm font-medium truncate" title={title}>{title}</span>
           </button>
         </SessionSwitcherDropdown>
       ) : (
@@ -987,7 +983,7 @@ const VSCodeHeader: React.FC<VSCodeHeaderProps> = ({ title, showBack, onBack, on
           contextLimit={stableContextUsage.contextLimit}
           outputLimit={stableContextUsage.outputLimit ?? 0}
           cost={(sessionTotalCost ?? 0) > 0 ? sessionTotalCost : null}
-          className="h-9 shrink-0 pl-1 pr-1 typography-ui-label"
+          className="h-9 shrink-0 ps-1 pe-1 typography-ui-label"
           valueClassName="font-semibold leading-none"
           hideIcon
           showPercentIcon

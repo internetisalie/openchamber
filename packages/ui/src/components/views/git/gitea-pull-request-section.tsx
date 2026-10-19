@@ -38,7 +38,7 @@ export function GiteaPullRequestSection({
   const { t } = useI18n();
   const { gitea } = useRuntimeAPIs();
   const openContextSurface = useUIStore((state) => state.openContextSurface);
-  const requestWalkthroughSource = useWalkthroughStore((state) => state.requestSource);
+  const requestWalkthroughTarget = useWalkthroughStore((state) => state.requestTarget);
   const { isMobile, screenWidth } = useDeviceInfo();
   const showWalkthroughAction = !isMobile && screenWidth >= 768 && !isVSCodeRuntime();
   const [repositories, setRepositories] = React.useState<GiteaRepository[]>([repository]);
@@ -269,9 +269,9 @@ export function GiteaPullRequestSection({
           </Button>
           {item && showWalkthroughAction ? <Button variant="outline" size="sm" className="h-7 gap-1.5"
             onClick={() => {
-              requestWalkthroughSource(directory, { kind: 'pr', number: item.number,
+              requestWalkthroughTarget(directory, { source: { kind: 'pr', number: item.number,
                 gitea: { instanceUrl: target.instanceUrl, owner: target.owner, repo: target.name,
-                  remote: target.remote } });
+                  remote: target.remote } } });
               openContextSurface(directory, 'walkthrough');
             }} aria-label={t('walkthrough.action.open')}>
             <Icon name="route" className="size-4" />{t('walkthrough.action.open')}
@@ -281,7 +281,7 @@ export function GiteaPullRequestSection({
       <div className="flex flex-col gap-3 py-3">
         {repositories.length > 1 ? (
           <Select value={selectedRemote} onValueChange={setSelectedRemote}>
-            <SelectTrigger size="lg"><SelectValue /></SelectTrigger>
+            <SelectTrigger><SelectValue /></SelectTrigger>
             <SelectContent>{repositories.map((candidate) => (
               <SelectItem key={candidate.remote} value={candidate.remote}>{candidate.remote}</SelectItem>
             ))}</SelectContent>
@@ -324,7 +324,7 @@ export function GiteaPullRequestSection({
                   const method = currentCapabilities.mergeMethods.find((candidate) => candidate === value);
                   if (method) { setMergeMethod(method); setConfirmMerge(false); }
                 }}>
-                  <SelectTrigger size="lg" aria-label={t('gitView.gitea.mergeMethod')}><SelectValue /></SelectTrigger>
+                  <SelectTrigger aria-label={t('gitView.gitea.mergeMethod')}><SelectValue /></SelectTrigger>
                   <SelectContent>{currentCapabilities.mergeMethods.map((method) => <SelectItem key={method} value={method}>
                     {method}</SelectItem>)}</SelectContent>
                 </Select>

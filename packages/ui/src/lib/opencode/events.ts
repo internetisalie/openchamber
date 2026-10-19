@@ -28,10 +28,12 @@ import {
   type PermissionRuleset,
   type Session,
   type SessionStatus,
+  type SessionOutcome,
   type StructuredError,
   type TokenUsageInfo,
 } from "./model"
-import { projectUserParts, structuredErrorText, toolAttachments, toolOutputText } from "./projection"
+import { projectInboxMessage, structuredErrorText, toolAttachments, toolOutputText } from "./projection"
+import { runningShellFromWire, type RunningShell, type ShellEnd } from "./background-shell"
 
 // ---------------------------------------------------------------------------
 // Event vocabulary
@@ -119,7 +121,11 @@ export type SyncEvent =
    */
   | { type: "session.revert.committed"; properties: { sessionID: string; to: string } }
   | { type: "session.status"; properties: { sessionID: string; status: SessionStatus } }
-  | { type: "session.idle"; properties: { sessionID: string } }
+  /**
+   * `outcome` is set when the event ends a turn (`session.execution.*`) and
+   * absent for a bare status change. Only `interrupted` is an explicit stop.
+   */
+  | { type: "session.idle"; properties: { sessionID: string; outcome?: SessionOutcome } }
   | { type: "session.error"; properties: { sessionID: string; error: StructuredError } }
   | { type: "message.updated"; properties: { info: Message } }
   | { type: "message.patched"; properties: { sessionID: string; messageID: string; patch: MessagePatch } }
@@ -134,6 +140,10 @@ export type SyncEvent =
   | { type: "permission.replied"; properties: { sessionID: string; requestID: string } }
   | { type: "form.created"; properties: { form: FormRequest } }
   | { type: "form.settled"; properties: { sessionID: string; formID: string } }
+  /** A session's shell command started; commands that belong to no session are not reported. */
+  | { type: "shell.started"; properties: { shell: RunningShell } }
+  /** A shell command exited or was removed. */
+  | { type: "shell.ended"; properties: { shellID: string; end: ShellEnd; endedAt: number } }
   | { type: "vcs.branch.updated"; properties: { branch?: string } }
   | { type: "mcp.status.changed"; properties: { server: string } }
   | { type: "catalog.updated"; properties: { kind: CatalogKind } }
@@ -145,7 +155,14 @@ export type SyncEvent =
   // OpenChamber's own server frames that ride the same stream.
   | { type: "openchamber.notification"; properties: OpenchamberNotification }
   // `modes` is the policy; `sessions` is its on/off view for clients from before the modes.
-  | { type: "openchamber.permission-auto-accept"; properties: { sessions: Record<string, boolean>; modes?: Record<string, "ask" | "safety" | "auto">; revision?: number } }
+  // `spaceId` marks the policy of that isolated space, forwarded by the host.
+  | { type: "openchamber.permission-auto-accept"; properties: { sessions: Record<string, boolean>; modes?: Record<string, "ask" | "safety" | "auto">; revision?: number; spaceId?: string } }
+  /** The server did not answer this request on the user's behalf: it waits for the user. */
+  | { type: "openchamber.permission-left-for-user"; properties: { permissionId: string; sessionId: string; directory: string | null; spaceId?: string } }
+  /** A page an agent showed waits for the user's answer (render.page with awaitAnswer). */
+  | { type: "openchamber.page-waiting"; properties: { sessionID: string; directory: string | null; page: { id: string; title: string } } }
+  /** That page stopped waiting: answered, answered in the chat, or its turn ended. */
+  | { type: "openchamber.page-settled"; properties: { sessionID: string; pageID: string } }
 
 /** Agent-completion / restart notices the OpenChamber server publishes for non-web runtimes. */
 export type OpenchamberNotification = {
@@ -156,11 +173,10 @@ export type OpenchamberNotification = {
   body?: string
   tag?: string
   requireHidden?: boolean
+  showWhenFocused?: boolean
   desktopNotificationDelivered?: boolean
   desktopStdoutActive?: boolean
 }
-
-export type SyncEventType = SyncEvent["type"]
 
 /** A translated event together with the directory it belongs to. */
 export type RoutedSyncEvent = {
@@ -271,9 +287,11 @@ export function translateWireEvent(event: OpenCodeEvent): SyncEvent[] {
           },
         },
       ]
+    // OpenCode stamps the session's update time with the switch, so a session
+    // read that left the server before it cannot roll the record back.
     case "session.agent.selected":
       return [
-        sessionEvent(event.data.sessionID, { agent: event.data.agent }),
+        sessionEvent(event.data.sessionID, { agent: event.data.agent, time: { updated: event.created } }),
         {
           type: "message.updated",
           properties: {
@@ -290,7 +308,7 @@ export function translateWireEvent(event: OpenCodeEvent): SyncEvent[] {
       ]
     case "session.model.selected":
       return [
-        sessionEvent(event.data.sessionID, { model: event.data.model }),
+        sessionEvent(event.data.sessionID, { model: event.data.model, time: { updated: event.created } }),
         {
           type: "message.updated",
           properties: {
@@ -334,7 +352,7 @@ export function translateWireEvent(event: OpenCodeEvent): SyncEvent[] {
     case "session.execution.succeeded":
       return [
         sessionEvent(event.data.sessionID, { outcome: "succeeded", time: { idle: event.created, updated: event.created } }),
-        { type: "session.idle", properties: { sessionID: event.data.sessionID } },
+        { type: "session.idle", properties: { sessionID: event.data.sessionID, outcome: "succeeded" } },
       ]
     case "session.execution.interrupted":
       // `shutdown` is OpenCode itself going away mid-turn. It keeps the
@@ -346,7 +364,7 @@ export function translateWireEvent(event: OpenCodeEvent): SyncEvent[] {
       if (event.data.reason === "shutdown") return []
       return [
         sessionEvent(event.data.sessionID, { outcome: "interrupted", time: { idle: event.created, updated: event.created } }),
-        { type: "session.idle", properties: { sessionID: event.data.sessionID } },
+        { type: "session.idle", properties: { sessionID: event.data.sessionID, outcome: "interrupted" } },
       ]
     case "session.execution.failed":
       return [
@@ -357,51 +375,21 @@ export function translateWireEvent(event: OpenCodeEvent): SyncEvent[] {
     // --- user input ---------------------------------------------------------
 
     case "session.inbox.enqueued": {
-      const item = event.data.item
-      const messageID = event.data.inboxID
-      if (item.type === "user") {
-        return [
-          {
-            type: "message.updated",
-            properties: {
-              info: compact({
-                id: messageID,
-                sessionID: event.data.sessionID,
-                role: "user",
-                time: { created: event.created },
-                metadata: item.payload.metadata,
-              }),
-            },
-          },
-          {
-            type: "message.parts.replaced",
-            properties: {
-              sessionID: event.data.sessionID,
-              messageID,
-              parts: projectUserParts(item.payload, { sessionID: event.data.sessionID, messageID, created: event.created }),
-            },
-          },
-        ]
-      }
-      if (item.type === "synthetic") {
-        return [
-          {
-            type: "message.updated",
-            properties: {
-              info: compact({
-                id: messageID,
-                sessionID: event.data.sessionID,
-                role: "synthetic",
-                time: { created: event.created },
-                text: item.payload.text,
-                description: item.payload.description,
-                metadata: item.payload.metadata,
-              }),
-            },
-          },
-        ]
-      }
-      return []
+      const projected = projectInboxMessage(event.data.item, {
+        sessionID: event.data.sessionID,
+        messageID: event.data.inboxID,
+        created: event.created,
+      })
+      if (!projected) return []
+      const updated: SyncEvent = { type: "message.updated", properties: { info: projected.info } }
+      if (!projected.parts) return [updated]
+      return [
+        updated,
+        {
+          type: "message.parts.replaced",
+          properties: { sessionID: event.data.sessionID, messageID: event.data.inboxID, parts: projected.parts },
+        },
+      ]
     }
     case "session.inbox.delivered":
       return [messagePatch(event.data.sessionID, event.data.inboxID, { time: { created: event.created } })]
@@ -419,6 +407,7 @@ export function translateWireEvent(event: OpenCodeEvent): SyncEvent[] {
               time: { created: event.created },
               text: event.data.text,
               description: event.data.description,
+              metadata: event.data.metadata,
             }),
           },
         },
@@ -837,18 +826,35 @@ export function translateWireEvent(event: OpenCodeEvent): SyncEvent[] {
     // (`mcp.status.changed`).
     case "mcp.resources.changed":
       return []
-    // OpenChamber watches the filesystem through its own server routes.
+    // 2.x watches only the repository HEAD here, not the project's files. File
+    // browsers refresh from tool and step results instead (`lib/fileTreeChanges`).
     case "filesystem.changed":
       return []
     // Worktrees go through OpenChamber's own git API, not OpenCode's.
     case "worktree.updated":
     case "worktree.resolved":
       return []
-    // Free-standing shells and PTYs are the TUI's and the terminal panel's
-    // own transports; neither reads them from this stream.
-    case "shell.created":
+    // --- shell commands -------------------------------------------------------
+
+    // A session's running commands keep its turn open (background commands),
+    // so only commands tagged with a session are reported.
+    case "shell.created": {
+      const shell = runningShellFromWire(event.data.info)
+      return shell ? [{ type: "shell.started", properties: { shell } }] : []
+    }
+    case "shell.exited": {
+      // The wire status type includes `running`, but OpenCode publishes this
+      // event only once a command reached a terminal status.
+      const { status } = event.data
+      if (status === "running") return []
+      const end: ShellEnd = compact({ kind: "exited", status, exit: event.data.exit })
+      return [{ type: "shell.ended", properties: { shellID: event.data.id, end, endedAt: event.created } }]
+    }
     case "shell.deleted":
-    case "shell.exited":
+      return [{ type: "shell.ended", properties: { shellID: event.data.id, end: { kind: "removed" }, endedAt: event.created } }]
+
+    // PTYs are the terminal panel's own transport; it does not read them from
+    // this stream.
     case "pty.created":
     case "pty.updated":
     case "pty.deleted":

@@ -16,6 +16,47 @@ the user can want independently:
   `POST /api/notifications/emit`). Off by default: enabled only while
   `agentNotifyToolEnabled` is `true`, and the control service refuses the
   action when the setting is off, so a stale plugin cannot keep paging.
+- `openchamber_knowledge` — the project's Notes, Todos and Plans, the items of
+  the Project knowledge panel (`knowledge.list`, `save`, `delete`, `show`,
+  with `kind` naming note, todo or plan; plans are files, so list and save
+  give their path and the agent reads and edits them with its own file tools;
+  dispatched by
+  `../openchamber-control/project-knowledge.js` into
+  `../project-context/runtime.js`). On by default: enabled while
+  `agentKnowledgeToolEnabled` is not `false`, and the control service refuses
+  these actions when it is, so a stale plugin cannot keep writing. Writes are
+  attributed to the session OpenCode reported, never to a payload field.
+- `openchamber_render` — `render.page`, a self-contained HTML page (`html`,
+  `title`) the chat draws inline above the agent's answer, such as a chart or
+  table. The page travels in the call's input, which OpenCode stores and
+  syncs, so the server keeps no copy: `../openchamber-control/render-page.js`
+  only checks the input (`html` at most 200,000 characters so the callback
+  body stays under its 1 MB limit, `title` at most 120) and the setting.
+  On by default: enabled while `agentRenderToolEnabled` is not `false`, and the
+  control service refuses the action when it is, so a stale plugin cannot
+  keep drawing. When to draw (`RENDER_PAGE_WHEN`) is shared with the line
+  every session carries (`../session-knowledge/DOCUMENTATION.md`, *When to
+  draw a page*). The description lists the theme variables the chat injects
+  (`packages/ui/src/components/chat/message/parts/htmlRender.ts`); change both
+  together.
+  The description names the image files a page may show by path, from
+  anywhere on the machine as the image grant route allows, and the temporary
+  directory to save a screenshot in (`os.tmpdir()/opencode`) so it stays out
+  of the project.
+  A mockup of the user's own project is the one page that does not use them:
+  the description tells the agent to take that page's look from the
+  project's code, since the point is how the user's product will look.
+  With `awaitAnswer` the call waits for the user's answer on the page. The
+  plugin sends the call id (`context.id`) with the callback so the server can
+  find the waiting call when the chat answers it, and copies the answer into
+  the call's metadata (`metadata.openchamber.answer`), so every client shows
+  the page as answered. The waiting callback sends Bun's `timeout: false`,
+  since Bun's fetch otherwise ends a request with no response after about six
+  minutes. While the call waits, OpenCode holds any chat message
+  for that session until the call returns, so the plugin registers a
+  `session.prompt` hook: a prompt for the session, from any sender, aborts the
+  waiting call, which returns `{ answered: false, reason: "chat" }`, and the
+  agent reads the message next.
 
 Both default to on, are toggled in Settings → General → OpenChamber Tools, and take
 effect in the running OpenCode within a couple of seconds — OpenChamber rewrites
@@ -34,12 +75,26 @@ both settings are `false`.
   size-limited catalog; with a few large MCP servers ours dropped out of it and
   agents concluded the tool did not exist. `agentToolsCodeMode: true` (the
   "Run through Code Mode" checkbox in the same section, off by default) flips
-  all of them to `codemode: true`.
+  all of them to `codemode: true`, except `openchamber_render`: the chat draws
+  a page from that tool's own call (its input and stored result), and inside
+  an `execute` script the call is only an entry in `execute`'s list, so the
+  page never showed.
 - The plugin accepts the action's inputs either inside `parameters` or beside
   `action`, because models produce both shapes; an explicit `parameters` object
   wins on a conflict. Rejecting the flattened shape turned a call that plainly
   carried a `url` into "url is required", which reads as a broken tool rather
-  than a malformed call.
+  than a malformed call. The schema declares the inputs only inside
+  `parameters`, and `additionalProperties: true` at the root lets flattened
+  inputs and unknown fields (a stale `wait` or `timeout`) through to the
+  adapter.
+
+### Why the inputs are declared once and not beside `action` too
+
+Copying every input to the schema root would let the descriptions reach a
+model that fills in the flattened shape, but outside Code Mode the schema
+ships with every request: the copy costs about 8.7k characters per turn when
+all tools are on, and the flattened calls already work through
+`additionalProperties`.
 
 ## Runtime flow
 
@@ -59,8 +114,9 @@ both settings are `false`.
    directory on its own side.
 5. The route delegates the fixed action allowlist directly to the shared
    OpenChamber control service. The CLI uses the same service through its
-   authenticated HTTP adapter, so Goal Mode ordering, wait behavior,
-   partial-failure reporting, and scheduled-task contracts have one owner.
+   authenticated HTTP adapter, so Goal Mode ordering, CLI wait behavior,
+   result delivery, partial-failure reporting, and scheduled-task contracts
+   have one owner.
 6. Each action definition owns a short presentation title and a separate
    agent-facing description. The generated schema uses the description to state
    required inputs or one non-obvious behavior, while completed calls use the
@@ -77,8 +133,35 @@ both settings are `false`.
 - Obvious fields rely on their names and JSON types. Parameter descriptions are
   reserved for formats, dependencies, scope, and behavior that cannot be safely
   inferred from the field name.
-- Session dispatches do not wait by default. Agents are told to set `wait` only
-  when the user asks or the next step requires the completed result.
+- Session dispatches never wait. An agent that needs the outcome sets
+  `returnResult`: the call still returns at once, with
+  `resultDelivery.status: 'pending'` and a note telling the agent not to poll
+  or sleep, and the session's final answer is delivered into the calling
+  session when it finishes (`../dispatch-results/`). The schema carries no
+  `wait` or `timeout`, and the adapter answers a stale `wait`, `timeout`, or
+  `lastAssistant` on a dispatch with a usage error naming `returnResult`
+  (`agentOnlyUsageError`). `session.messages` does not wait either: it reads
+  what is there. The control service keeps `wait` for the CLI only.
+- Boolean inputs cross two checks. The generated adapter normalizes exactly
+  the strings `"true"` and `"false"` for the fields the calling tool's own
+  parameter schema declares `type: 'boolean'` (derived from that schema at
+  generation time), because a harness can stringify a boolean on the way and
+  every downstream `=== true` would read it as false. Every other value keeps
+  its identity, and the server check still refuses it: the plugin forwards raw
+  JSON, so a field declared `type: 'boolean'` in any tool's schema that arrives
+  as anything else fails the call with a usage error naming the field
+  (`nonBooleanParameterError`), before any action runs. A callback that
+  bypasses the adapter is refused the same way, so the strictness never depends
+  on the plugin having normalized first.
+- `parameters.link` for `session.link` can arrive as a JSON string even though
+  the schema declares an object (#4591). The generated entry parses it once
+  before the merge and keeps the result only when it is a plain object;
+  anything else reaches `linkInputSchema` unchanged. No other field is
+  revived, so prompts and titles that happen to look like JSON stay text.
+- The description draws the line against OpenCode's own `subagent` tool:
+  `subagent` when the agent delegates part of its own task and wants the
+  answer for itself, `session.*` when the user asks for a separate session
+  they will follow and talk to.
 - The tool exposes only agent-relevant actions
   (`OPENCHAMBER_AGENT_TOOL_ACTIONS`): `schedule.status` stays CLI-only because
   `schedule.list` already returns scheduler status, and enable/disable are one
@@ -89,9 +172,43 @@ both settings are `false`.
   create, send, or schedule always wins, even when it relates to the current
   task (strict models otherwise read the old unconditional "never delegate" as
   a hard ban and refused user-requested sends).
-- Optional behavior switches (`worktree`, `goal`, `agent`, `variant`, `wait`)
-  state their default and an explicit "only when the user asks" rule so agents
-  do not invent worktrees, goal mode, or waits the user never requested.
+- Optional behavior switches (`worktree`, `pullRequest`, `goal`, `agent`,
+  `variant`, `returnResult`) state their default and an explicit "only when
+  the user asks" rule so agents do not invent worktrees, goal mode, or result
+  deliveries the user never requested.
+- `pullRequest` is a pull or merge request number in the project. The session
+  starts in a worktree made from it the way the New worktree dialog makes one
+  (`../git/DOCUMENTATION.md`, *Worktree creation from a GitHub pull request*);
+  everything else about the request is resolved on the server.
+- `session.moveToWorktree` moves the calling session (or `sessionId`) into a
+  new worktree of its repository (`../openchamber-sessions/worktree-move.js`).
+  `worktree` is required there and `startRef` defaults to the repository's
+  default branch; `existingBranch` checks out a branch that already exists
+  instead, local or remote (`origin/feature`), and cannot be combined with
+  `branch` or `startRef`. `carry` names the files whose uncommitted changes
+  go along; nothing else moves. The head of the tool description introduces
+  the move (`WORKTREE_MOVE_INTRO`): what it does, when a checkout looks busy,
+  and that whether to use it depends on how the user works, so the agent asks
+  first unless the request already calls for separate work. It also says
+  why to prefer it over `git worktree add` (the session moves along) and
+  over OpenCode's own `worktree_create` with `session_move`, which OpenCode
+  suggests in every session: that one checks out a detached copy of the
+  current commit, so on someone else's branch it starts from their commits,
+  and carries no files. It is an
+  introduction on purpose. It used to be a rule in every session, with a
+  setting to move unasked, and that made one person's workflow everybody's.
+  The session context names the branch (`../session-knowledge/`), and
+  OpenCode tells the agent when it changed between its messages, which the
+  agent cannot see for itself.
+- A rule about when to act belongs where the model reads it before choosing a
+  tool: the head of the tool description and, when it must hold in every
+  session, the session context (`../session-knowledge/`). An action's
+  description is read only after the tool was chosen, so a trigger placed
+  there is missed by an agent that never thought the tool applied. Seen with
+  `session.link`: told only in the action, an agent investigating an issue
+  never linked it; with the rule at the head of the description and in the
+  session context, the next agent linked the issue first thing (2026-10-02).
+  Action descriptions say what the action does and takes.
 - Detailed combination rules are enforced by the shared control service and
   returned as actionable usage errors only after an invalid call. Per-action
   examples and a repeated per-action parameter schema are intentionally omitted.
@@ -104,6 +221,9 @@ both settings are `false`.
   equal to that address: the OS sources a local connection to `<ip>` from
   `<ip>`. A wildcard bind keeps the loopback-only rule, and another machine on
   the network always arrives with its own address.
+  `callback-address.js` owns this rule; the repository credential helper
+  (`lib/git/repository-credential-runtime.js`) reaches the server the same way
+  and shares it.
 - The token is never persisted, logged, returned to the UI, or written into
   the materialized plugin.
 - The plugin adds the callback host to `NO_PROXY`/`no_proxy` inside the managed

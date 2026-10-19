@@ -11,6 +11,7 @@ import { usePushVisibilityBeacon } from '@/hooks/usePushVisibilityBeacon';
 import { useWindowTitle } from '@/hooks/useWindowTitle';
 import { useRoutingSync } from '@/hooks/useRoutingSync';
 import { useRootScrollLock } from '@/hooks/useRootScrollLock';
+import { useGlobalSessionsPolling } from '@/hooks/useGlobalSessionsPolling';
 import { opencodeClient } from '@/lib/opencode/client';
 import type { RuntimeAPIs } from '@/lib/api/types';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
@@ -341,6 +342,9 @@ export function ElectronMiniChatApp({ apis }: ElectronMiniChatAppProps) {
   useWindowTitle();
   useRoutingSync();
   useRootScrollLock();
+  // The header session switcher lists the global session list; this window
+  // is its own app root, so it loads that list itself.
+  useGlobalSessionsPolling(true);
 
   return (
     <ErrorBoundary>
@@ -367,7 +371,7 @@ const ElectronMiniChatContent: React.FC<{ config: MiniChatConfig }> = ({ config 
     <>
       <MiniChatBootstrap config={config} />
       <MiniChatPresencePublisher />
-      <SyncRuntimeEffects embeddedBackgroundWorkEnabled={true} />
+      <SyncRuntimeEffects backgroundWorkEnabled={true} />
       <MiniChatLayout mode={config.mode} autoOpenDraft={config.mode === 'draft'} unavailable={sessionUnavailable} />
     </>
   );

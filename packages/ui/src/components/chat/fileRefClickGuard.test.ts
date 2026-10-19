@@ -1,4 +1,5 @@
 import { describe, expect, test } from 'bun:test';
+import { Window } from 'happy-dom';
 
 import { attachFileRefClickGuard, FILE_REFERENCE_LINK_SELECTOR } from './fileRefClickGuard';
 
@@ -20,9 +21,8 @@ class TestElement {
 }
 class TestHTMLElement extends TestElement {}
 class TestHTMLAnchorElement extends TestHTMLElement {
-  constructor(private readonly rawHref: string, parent: TestElement | null = null) {
+  constructor(private readonly rawHref: string) {
     super();
-    this.parent = parent;
     this.setAttribute('href', rawHref);
   }
 }
@@ -39,6 +39,12 @@ const findClosestTestElement = (start: TestElement | null, selector: string): Te
 class TestContainer {
   listeners = new Map<string, EventListener>();
 
+  constructor(private readonly selectionRoot: Node | null = null) {}
+
+  contains(node: Node | null): boolean {
+    return this.selectionRoot !== null && node !== null && this.selectionRoot.contains(node);
+  }
+
   addEventListener(type: string, listener: (event: MouseEvent) => void): void {
     // SAFETY: dispatch constructs the click-shaped fields the production listener reads.
     this.listeners.set(type, (event) => listener(event as MouseEvent));
@@ -49,9 +55,11 @@ class TestContainer {
     this.listeners.delete(type);
   }
 
-  dispatchClick(target: TestElement): Event {
+  dispatchClick(target: TestElement, modifiers: { ctrlKey?: boolean; metaKey?: boolean } = {}): Event {
     const event = new Event('click', { cancelable: true });
     Object.defineProperty(event, 'target', { value: target });
+    Object.defineProperty(event, 'ctrlKey', { value: modifiers.ctrlKey ?? false });
+    Object.defineProperty(event, 'metaKey', { value: modifiers.metaKey ?? false });
     this.listeners.get('click')?.(event);
     return event;
   }
@@ -63,9 +71,50 @@ const makeAnchor = (href: string, annotated = false): TestHTMLAnchorElement => {
   return anchor;
 };
 
-const setup = () => {
-  const container = new TestContainer();
+const withDomWindow = (run: () => void) => {
+  const dom = new Window();
+  Object.assign(globalThis, { window: dom, document: dom.document });
+  try {
+    run();
+  } finally {
+    Reflect.deleteProperty(globalThis, 'window');
+    Reflect.deleteProperty(globalThis, 'document');
+  }
+};
+
+const selectNode = (node: Node) => {
+  const range = document.createRange();
+  range.selectNodeContents(node);
+  const selection = window.getSelection();
+  selection?.removeAllRanges();
+  selection?.addRange(range);
+};
+
+const withSelectedFileText = (
+  selection: 'range' | 'collapsed',
+  run: (messageBody: HTMLElement) => void,
+) => {
+  withDomWindow(() => {
+    const messageBody = document.createElement('div');
+    const fileText = document.createElement('span');
+    fileText.textContent = 'src/index.ts';
+    messageBody.append(fileText);
+    document.body.append(messageBody);
+
+    if (selection === 'range') {
+      selectNode(fileText);
+    } else {
+      window.getSelection()?.collapse(fileText, 0);
+    }
+
+    run(messageBody);
+  });
+};
+
+const setup = (selectionRoot: Node | null = null) => {
+  const container = new TestContainer(selectionRoot);
   const openedHrefs: string[] = [];
+  const externalFlags: boolean[] = [];
   const cleanup = attachFileRefClickGuard(container, {
     hrefCandidate: (anchor) => {
       const href = anchor.getAttribute('href')?.trim() ?? '';
@@ -73,12 +122,27 @@ const setup = () => {
       return href.startsWith('file:') || href.startsWith('src/') ? href : null;
     },
     isResolvable: (raw) => raw.length > 0,
-    openFileReference: (element) => openedHrefs.push(element.getAttribute('href') ?? ''),
+    openFileReference: (element, options) => {
+      openedHrefs.push(element.getAttribute('href') ?? '');
+      externalFlags.push(options.external);
+    },
   });
-  return { container, openedHrefs, cleanup };
+  return { container, openedHrefs, externalFlags, cleanup };
 };
 
 describe('file reference click guard', () => {
+  test('asks for the default app on the platform modifier click only', () => {
+    const { container, externalFlags } = setup();
+    const isMac = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform);
+    const link = makeAnchor('src/index.ts', true);
+
+    container.dispatchClick(link);
+    container.dispatchClick(link, isMac ? { metaKey: true } : { ctrlKey: true });
+    container.dispatchClick(link, isMac ? { ctrlKey: true } : { metaKey: true });
+
+    expect(externalFlags).toEqual([false, true, false]);
+  });
+
   test('routes a pre-annotation click on an href file reference to the file viewer', () => {
     const { container, openedHrefs } = setup();
     const link = makeAnchor('src/index.ts');
@@ -129,6 +193,60 @@ describe('file reference click guard', () => {
 
     expect(event.defaultPrevented).toBe(true);
     expect(openedHrefs).toEqual(['https://external.example/raw']);
+  });
+
+  test('keeps an annotated file reference closed while text inside it is selected', () => {
+    withSelectedFileText('range', (messageBody) => {
+      const { container, openedHrefs } = setup(messageBody);
+      const link = makeAnchor('src/index.ts', true);
+
+      const event = container.dispatchClick(link);
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(openedHrefs).toEqual([]);
+    });
+  });
+
+  test('opens a file reference on a plain click with a collapsed selection', () => {
+    withSelectedFileText('collapsed', (messageBody) => {
+      const { container, openedHrefs } = setup(messageBody);
+      const link = makeAnchor('src/index.ts', true);
+
+      const event = container.dispatchClick(link);
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(openedHrefs).toEqual(['src/index.ts']);
+    });
+  });
+
+  test('ignores a text selection outside the message body', () => {
+    withDomWindow(() => {
+      const messageBody = document.createElement('div');
+      const elsewhere = document.createElement('p');
+      elsewhere.textContent = 'elsewhere';
+      document.body.append(messageBody, elsewhere);
+      selectNode(elsewhere);
+
+      const { container, openedHrefs } = setup(messageBody);
+      const link = makeAnchor('src/index.ts', true);
+
+      const event = container.dispatchClick(link);
+
+      expect(event.defaultPrevented).toBe(true);
+      expect(openedHrefs).toEqual(['src/index.ts']);
+    });
+  });
+
+  test('leaves non-file links alone even while text is selected', () => {
+    withSelectedFileText('range', (messageBody) => {
+      const { container, openedHrefs } = setup(messageBody);
+      const external = makeAnchor('https://example.com');
+
+      const event = container.dispatchClick(external);
+
+      expect(event.defaultPrevented).toBe(false);
+      expect(openedHrefs).toEqual([]);
+    });
   });
 
   test('removes the click listener on cleanup', () => {

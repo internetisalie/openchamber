@@ -6,6 +6,7 @@
 // ---------------------------------------------------------------------------
 
 import { create } from "zustand"
+import { clearDesktopSessionNotifications } from "@/lib/desktop"
 
 // ---------------------------------------------------------------------------
 // Types
@@ -25,7 +26,7 @@ type TurnCompleteNotification = NotificationBase & {
 type ErrorNotification = NotificationBase & {
   type: "error"
   /** What OpenCode reported for the failed turn; both null when it gave no details. */
-  error?: { name: string | null; message: string | null }
+  error?: { name: string | null; message: string | null; responseBody?: string | null }
 }
 
 export type Notification = TurnCompleteNotification | ErrorNotification
@@ -150,8 +151,11 @@ export function appendNotification(notification: Notification) {
   useNotificationStore.getState().append(notification)
 }
 
+// Also clears the session's native notifications, including ones that left
+// no unseen mark, such as a permission request.
 export function markSessionViewed(sessionId: string) {
   useNotificationStore.getState().markSessionViewed(sessionId)
+  clearDesktopSessionNotifications(sessionId)
 }
 
 // ---------------------------------------------------------------------------

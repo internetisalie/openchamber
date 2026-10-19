@@ -7,11 +7,16 @@ import { getOriginalSessionID, getReviewSessionID } from '@/lib/sessionReviewMet
 import { normalizePath } from '@/lib/pathNormalization';
 import { raiseSessionOrderingBaselines } from '@/sync/session-ordering';
 import { mapWithConcurrency } from '@/lib/concurrency';
-import { persistManagedChatSessions, readManagedChatSessions } from '@/sync/persist-cache';
+import {
+  persistGlobalSessionSnapshot,
+  persistManagedChatSessions,
+  readGlobalSessionSnapshot,
+  readManagedChatSessions,
+} from '@/sync/persist-cache';
 import { isVSCodeRuntime } from '@/lib/desktop';
 import { spaceIdOfDirectory } from '@/lib/spaces/space-route';
 import { useSpacesStore, type SpaceMark } from '@/lib/spaces/spaces-store';
-import { ensureChatsRootDirectory, getChatsRootForHome } from '@/lib/chatDirectories';
+import { ensureChatsRootDirectory, getChatsRoot } from '@/lib/chatDirectories';
 import { countSyncPerformance } from '@/sync/performance-diagnostics';
 import { isSessionArchived } from '@/lib/sessionArchive';
 import {
@@ -65,7 +70,7 @@ type GlobalSessionsState = {
   resetForRuntimeSwitch: () => void;
 };
 
-const PAGE_SIZE = 500;
+const PAGE_SIZE = 200;
 const DIRECTORY_SESSION_REFRESH_CONCURRENCY = 2;
 let directorySessionRefreshActive = 0;
 const directorySessionRefreshWaiters: Array<() => void> = [];
@@ -92,11 +97,6 @@ let mergingSessionPage = false;
 // Bumped on runtime switch: an in-flight load from the previous instance must
 // not apply its (stale) snapshot after the reset.
 let loadGeneration = 0;
-
-export const mergeLiveSessionWithGlobalSession = (
-  liveSession: Session,
-  globalSession: Session,
-): Session => mergeSessionDirectoryMetadata(liveSession, globalSession);
 
 const buildSessionsByDirectory = (sessions: Session[]): Map<string, Session[]> => {
   const next = new Map<string, Session[]>();
@@ -148,6 +148,37 @@ export const isGlobalSessionRecencyOnlyUpdate = (existing: Session, incoming: Se
     && getSessionStructuralSignature(existing) === getSessionStructuralSignature(merged);
 };
 
+/**
+ * Records read from a persisted snapshot. They omit fields the sidebar does
+ * not paint, so one never stands in for a complete record with the same
+ * signature: the first live or authoritative copy replaces it.
+ */
+const persistedSeedRecords = new WeakSet<Session>();
+
+const markPersistedSeed = (sessions: Session[]): Session[] => {
+  for (const session of sessions) persistedSeedRecords.add(session);
+  return sessions;
+};
+
+/**
+ * The startup seed: managed chats and the global snapshot of every other
+ * directory. Never authoritative; `hasLoaded` stays false until a complete
+ * load replaces it.
+ */
+const readPersistedSessionSeed = (): Session[] => {
+  const chats = readManagedChatSessions();
+  const chatIds = new Set(chats.map((session) => session.id));
+  const others = readGlobalSessionSnapshot().filter((session) => !chatIds.has(session.id));
+  return markPersistedSeed(sortSessionsByUpdated([...chats, ...others]));
+};
+
+/** Whether `existing` can stay in place of `incoming`. */
+const isSameSessionRecord = (existing: Session, incoming: Session): boolean => (
+  existing === incoming
+  || ((!persistedSeedRecords.has(existing) || persistedSeedRecords.has(incoming))
+    && getSessionSignature(existing) === getSessionSignature(incoming))
+);
+
 const sameSessionList = (prev: Session[], next: Session[]): boolean => {
   if (prev === next) {
     return true;
@@ -156,7 +187,7 @@ const sameSessionList = (prev: Session[], next: Session[]): boolean => {
     return false;
   }
   for (let index = 0; index < prev.length; index += 1) {
-    if (getSessionSignature(prev[index]) !== getSessionSignature(next[index])) {
+    if (!isSameSessionRecord(prev[index], next[index])) {
       return false;
     }
   }
@@ -273,7 +304,7 @@ const upsertSessionIntoList = (sessions: Session[], session: Session): Session[]
     return [session, ...sessions];
   }
   const mergedSession = mergeSessionDirectoryMetadata(session, sessions[index]);
-  if (getSessionSignature(sessions[index]) === getSessionSignature(mergedSession)) {
+  if (isSameSessionRecord(sessions[index], mergedSession)) {
     return sessions;
   }
   const next = [...sessions];
@@ -319,6 +350,25 @@ const mergeSessionLists = (existing: Session[], incoming?: Session[]): Session[]
   });
 
   return ordered;
+};
+
+/**
+ * Adds the live directory-store sessions this list does not hold yet.
+ *
+ * A record already held, active or archived, always stands: this list hears
+ * every session event and action result itself, while a directory store can
+ * keep an old copy of a session it does not own. Letting that copy win put
+ * sessions the user had marked done back under "In work".
+ */
+const addUnlistedLiveSessions = (active: Session[], archived: Session[], live?: Session[]): Session[] => {
+  if (!live || live.length === 0) return active;
+  const listed = new Set([...active, ...archived].map((session) => session.id));
+  const unlisted = live.filter((session) => {
+    if (listed.has(session.id)) return false;
+    listed.add(session.id);
+    return true;
+  });
+  return unlisted.length > 0 ? [...active, ...unlisted] : active;
 };
 
 const applySnapshot = (
@@ -550,7 +600,7 @@ const applySessionMutations = (
     }
 
     const sessionWithMetadata = mergeSessionDirectoryMetadata(mutation.session, existingSession);
-    if (existingSession && getSessionSignature(existingSession) === getSessionSignature(sessionWithMetadata)) continue;
+    if (existingSession && isSameSessionRecord(existingSession, sessionWithMetadata)) continue;
     nextEntityById ??= new Map(state.entityById);
     nextEntityById.set(sessionId, sessionWithMetadata);
     structureMutations.push({ sessionId, previous: existingSession, next: sessionWithMetadata });
@@ -625,8 +675,7 @@ const buildManagedChatSessionsState = (sessions: Session[], archivedSessions: Se
   reviewTransferBySessionId: buildReviewTransferMap(sessions),
 });
 
-const initialManagedChatSessions = readManagedChatSessions();
-const initialState = buildManagedChatSessionsState(initialManagedChatSessions);
+const initialState = buildManagedChatSessionsState(readPersistedSessionSeed());
 
 export const useGlobalSessionsStore = create<GlobalSessionsState>((set, get) => ({
   ...initialState,
@@ -655,7 +704,7 @@ export const useGlobalSessionsStore = create<GlobalSessionsState>((set, get) => 
   rehydrateManagedChatSessions: () => {
     const state = get();
     if (state.managedChatsHydrated || state.hasLoaded) return;
-    const hydrated = overlayMutationsSince(state, readManagedChatSessions(), state.archivedSessions, 0);
+    const hydrated = overlayMutationsSince(state, readPersistedSessionSeed(), state.archivedSessions, 0);
     const unchanged = sameSessionList(hydrated.activeSessions, state.activeSessions)
       && sameSessionList(hydrated.archivedSessions, state.archivedSessions);
     set(unchanged
@@ -667,7 +716,7 @@ export const useGlobalSessionsStore = create<GlobalSessionsState>((set, get) => 
     loadGeneration += 1;
     inflightLoad = null;
     set({
-      ...buildManagedChatSessionsState(readManagedChatSessions()),
+      ...buildManagedChatSessionsState(readPersistedSessionSeed()),
       mutationRevision: 0,
       mutationRevisionBySessionId: new Map(),
       hasLoaded: false,
@@ -745,7 +794,7 @@ export const useGlobalSessionsStore = create<GlobalSessionsState>((set, get) => 
         set((state) => {
           const reconciled = overlayMutationsSince(
             state,
-            mergeSessionLists(state.activeSessions, fallbackActive),
+            addUnlistedLiveSessions(state.activeSessions, state.archivedSessions, fallbackActive),
             state.archivedSessions,
             baselineRevision,
           );
@@ -807,15 +856,15 @@ export const useGlobalSessionsStore = create<GlobalSessionsState>((set, get) => 
     const refreshedActiveIds = active.map((session) => session.id);
 
     set((state) => {
-      let nextActiveSessions = replaceSessionsForDirectories(state.activeSessions, active, fetched.directories);
-      nextActiveSessions = mergeSessionLists(nextActiveSessions, fallbackActive);
-      if (sameSessionList(state.activeSessions, nextActiveSessions)) {
-        nextActiveSessions = state.activeSessions;
-      }
-
       let nextArchivedSessions = replaceSessionsForDirectories(state.archivedSessions, archived, fetched.directories);
       if (sameSessionList(state.archivedSessions, nextArchivedSessions)) {
         nextArchivedSessions = state.archivedSessions;
+      }
+
+      let nextActiveSessions = replaceSessionsForDirectories(state.activeSessions, active, fetched.directories);
+      nextActiveSessions = addUnlistedLiveSessions(nextActiveSessions, nextArchivedSessions, fallbackActive);
+      if (sameSessionList(state.activeSessions, nextActiveSessions)) {
+        nextActiveSessions = state.activeSessions;
       }
 
       const reconciled = overlayMutationsSince(state, nextActiveSessions, nextArchivedSessions, baselineRevision);
@@ -915,14 +964,32 @@ export const useGlobalSessionsStore = create<GlobalSessionsState>((set, get) => 
   },
 }));
 
+/**
+ * Before the first complete load the store holds the seed, maybe a first page,
+ * and live upserts: a partial list. The global snapshot then keeps its saved
+ * contents plus explicit local mutations; from the first complete load on it
+ * follows the active list.
+ */
+const persistGlobalSnapshotFrom = (state: GlobalSessionsState, previous: GlobalSessionsState): void => {
+  if (state.hasLoaded) {
+    if (state.activeSessions !== previous.activeSessions || !previous.hasLoaded) {
+      persistGlobalSessionSnapshot(state.activeSessions);
+    }
+    return;
+  }
+  if (state.mutationRevision !== previous.mutationRevision) {
+    persistGlobalSessionSnapshot(overlayMutationsSince(state, readGlobalSessionSnapshot(), [], 0).activeSessions);
+  }
+};
+
 useGlobalSessionsStore.subscribe((state, previous) => {
   countSyncPerformance('globalSessionPublications');
+  // Both snapshots split sessions by the chats root, so they wait for it.
+  if (mergingSessionPage || getChatsRoot() === null) return;
   if (
-    !mergingSessionPage
-    && getChatsRootForHome(null) !== null
-    && (state.activeSessions !== previous.activeSessions
-      || (!state.managedChatsHydrated && state.mutationRevision !== previous.mutationRevision)
-      || (state.hasLoaded && !previous.hasLoaded))
+    state.activeSessions !== previous.activeSessions
+    || (!state.managedChatsHydrated && state.mutationRevision !== previous.mutationRevision)
+    || (state.hasLoaded && !previous.hasLoaded)
   ) {
     // A local mutation can precede the initial load. Preserve the saved seed
     // and overlay its explicit mutations instead of persisting a partial list.
@@ -931,6 +998,7 @@ useGlobalSessionsStore.subscribe((state, previous) => {
       : state.activeSessions;
     persistManagedChatSessions(sessions);
   }
+  persistGlobalSnapshotFrom(state, previous);
 });
 
 export const ensureGlobalSessionsLoaded = async (fallbackActive?: Session[]): Promise<LoadResult> => {

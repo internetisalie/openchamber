@@ -18,9 +18,7 @@ import { useWindowTitle } from '@/hooks/useWindowTitle';
 import { useRootScrollLock } from '@/hooks/useRootScrollLock';
 import { opencodeClient } from '@/lib/opencode/client';
 import type { RuntimeAPIs } from '@/lib/api/types';
-import { runtimeFetch } from '@/lib/runtime-fetch';
-import { useFeatureFlagsStore } from '@/stores/useFeatureFlagsStore';
-import { useGitHubAuthStore } from '@/stores/useGitHubAuthStore';
+import { useSourceControlAuthStore } from '@/stores/useSourceControlAuthStore';
 import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { useUIStore } from '@/stores/useUIStore';
 import { onHostSurfaceSeen } from '@/lib/surfaceAttention';
@@ -39,8 +37,7 @@ export function VSCodeApp({ apis }: VSCodeAppProps) {
   const error = useSessionUIStore((state) => state.error);
   const clearError = useSessionUIStore((state) => state.clearError);
   const wideChatLayoutEnabled = useUIStore((state) => state.wideChatLayoutEnabled);
-  const refreshGitHubAuthStatus = useGitHubAuthStore((state) => state.refreshStatus);
-  const setPlanModeEnabled = useFeatureFlagsStore((state) => state.setPlanModeEnabled);
+  const refreshSourceControlAuth = useSourceControlAuthStore((state) => state.refreshAll);
 
   React.useEffect(() => {
     registerRuntimeAPIs(apis);
@@ -71,30 +68,8 @@ export function VSCodeApp({ apis }: VSCodeAppProps) {
   }, [wideChatLayoutEnabled]);
 
   React.useEffect(() => {
-    void refreshGitHubAuthStatus(apis.github, { force: true });
-  }, [apis.github, refreshGitHubAuthStatus]);
-
-  React.useEffect(() => {
-    let cancelled = false;
-
-    const run = async () => {
-      const res = await runtimeFetch('/health', { method: 'GET' }).catch(() => null);
-      if (!res || !res.ok || cancelled) return;
-      const data = (await res.json().catch(() => null)) as null | {
-        planModeExperimentalEnabled?: unknown;
-      };
-      if (!data || cancelled) return;
-      const raw = data.planModeExperimentalEnabled;
-      const enabled = raw === true || raw === 1 || raw === '1' || raw === 'true';
-      setPlanModeEnabled(enabled);
-    };
-
-    void run();
-
-    return () => {
-      cancelled = true;
-    };
-  }, [setPlanModeEnabled]);
+    void refreshSourceControlAuth(apis.sourceControl, { force: true });
+  }, [apis.sourceControl, refreshSourceControlAuth]);
 
   React.useEffect(() => {
     if (!error) {
@@ -112,7 +87,7 @@ export function VSCodeApp({ apis }: VSCodeAppProps) {
           <FireworksProvider>
             <TooltipProvider delayDuration={300} skipDelayDuration={150}>
               <div className="h-full text-foreground bg-background">
-                <SyncAppEffects embeddedBackgroundWorkEnabled={true} />
+                <SyncAppEffects backgroundWorkEnabled />
                 <VSCodeLayout />
                 <AppLinkConfirmDialog />
                 <SharedTrustConfirmDialog />

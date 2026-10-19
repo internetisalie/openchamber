@@ -17,7 +17,7 @@ export const OpenCodePtyOutputDialog: React.FC<Props> = ({ session, onOpenChange
   return (
     <Dialog open={session !== null} onOpenChange={onOpenChange}>
       <DialogContent className="h-[min(44rem,calc(100dvh-1rem))] w-[min(64rem,calc(100vw-1rem))] max-w-none gap-0 overflow-hidden p-0">
-        <DialogHeader className="shrink-0 gap-1 border-b border-[var(--interactive-border)] px-4 py-3 pr-12">
+        <DialogHeader className="shrink-0 gap-1 border-b border-[var(--interactive-border)] px-4 py-3 pe-12">
           <div className="flex min-w-0 items-center gap-2">
             <DialogTitle className="min-w-0 truncate">{session?.title}</DialogTitle>
             <span className="shrink-0 text-xs text-muted-foreground">{t('chat.workStatus.pty.readOnly')}</span>

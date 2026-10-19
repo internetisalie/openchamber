@@ -103,9 +103,16 @@ model context is small. Page/count bounds are not a network-byte quota.
    old canceled request is still settling, retain that pending run and start it
    after the old one finishes. Later activity cancels the pending run as well.
 4. Resolve the small model using the last answer's provider/model and the
-   existing explicit settings/config overrides. `restrictToPreferredProvider`
-   prevents an implicit cross-provider fallback. Production does not pin the
+   existing explicit settings/config overrides. Naming that provider prevents
+   an implicit cross-provider fallback. Production does not pin the
    experimental model. Generation accepts an abort signal and a 120-second limit.
+   When that resolves to the session's own model on a local endpoint
+   (`localEndpoint`), skip generation, whether it came from the fallback or
+   from an explicit Small Model naming the same model: llama.cpp-style
+   servers keep one prompt cache per slot, so a side request evicts the
+   session's cache and the next turn reprocesses the whole history (#3871).
+   A different model on the same machine, configured or found by the family
+   scan, is still used.
 5. Recap describes the substantive work and its current result, including the
    work behind a closing commit or acknowledgment. Suggestion is independent:
    only unfinished requested agent work should produce a sendable user message.
@@ -120,7 +127,13 @@ model context is small. Page/count bounds are not a network-byte quota.
    writer after the final read is not guarded atomically.
 
 Stopping the runtime clears pending timers/runs and aborts in-flight operations.
-No failed session blocks another session.
+No failed session blocks another session. A generation failure is logged with
+its cause (status, code, bounded message) so a cold-start 503 can be told from
+a permanent provider rejection; the two are retried differently upstream, and a
+bare "generation failed" hid which one happened. 404 and the expected
+context/output-budget codes stay quiet, and no failure retries here: this layer
+makes one attempt, and the small-model service owns the bounded backoff it
+runs while a cold catalog has not published the model yet.
 
 ## Settings and consumers
 

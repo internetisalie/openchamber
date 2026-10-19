@@ -3,20 +3,23 @@ const BUILT_IN_CONTEXT_PANEL_MODES = [
   'walkthrough',
   'file',
   'context',
-  'plan',
   'chat',
   'browser',
   'git',
   'pr',
-  'linear',
   'notes',
   'terminal',
   'agent-pty',
 ] as const;
 
-export type BuiltInContextPanelMode = (typeof BUILT_IN_CONTEXT_PANEL_MODES)[number];
+type BuiltInContextPanelMode = (typeof BUILT_IN_CONTEXT_PANEL_MODES)[number];
 export type PluginContextPanelMode = `plugin:${string}`;
 export type ContextPanelMode = BuiltInContextPanelMode | PluginContextPanelMode;
+
+/** These views mount inside the selected zone; the other panes own their lifecycle. */
+export const isZoneMountedContextSurface = (mode: ContextPanelMode): boolean => (
+  mode === 'context' || mode === 'git' || mode === 'pr' || mode === 'notes' || mode === 'agent-pty'
+);
 
 const PLUGIN_MODE = /^plugin:[a-z][a-z0-9-]*$/;
 

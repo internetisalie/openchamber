@@ -21,7 +21,7 @@ import { resolveSendSelection, useSessionUIStore } from '@/sync/session-ui-store
 import { getSyncMessages, getSyncParts, getSyncSessionStatus, getSyncSessions, registerSessionDirectory } from '@/sync/sync-refs';
 import { markPendingUserSendAnimation } from '@/lib/userSendAnimation';
 import { getRuntimeKey } from '@/lib/runtime-switch';
-import { fetchSessionKnowledge, reportSessionKnowledgeDelivered } from '@/lib/sessionKnowledgeApi';
+import { syncSessionKnowledge } from '@/lib/sessionKnowledgeApi';
 
 const HANDOFF_TIMEOUT_MS = 180_000;
 const HANDOFF_POLL_MS = 400;
@@ -180,8 +180,15 @@ export const releaseAutoReviewForward = (key: string): void => {
 
 const autoReviewReviewerInstructions = (): Array<{ text: string; synthetic: true }> => [{
   synthetic: true,
-  text: `This review is part of an automatic review loop. If there are no remaining issues, end your response with this exact final line:\n${AUTO_REVIEW_FINAL_MARKER}\nIf you found issues that require changes, do not include that final status line.`,
+  text: `This review is part of an automatic review loop. When no blocker or non-blocker findings remain open, end your response with this exact final line:\n${AUTO_REVIEW_FINAL_MARKER}\nNits never keep the loop going: list them if useful and still end with that line. While a blocker or non-blocker remains open, leave the line out.`,
 }];
+
+// A review session starts with the same review rules as /workspace-review,
+// so its findings carry severities the loop's stop condition can rely on.
+const reviewSessionInstructions = async (autoReview: boolean | undefined): Promise<Array<{ text: string }>> => {
+  const reviewRules = { text: await renderMagicPrompt('session.review.instructions') };
+  return autoReview ? [reviewRules, ...autoReviewReviewerInstructions()] : [reviewRules];
+};
 
 const runAutoReviewLoop = async (originalSessionID: string): Promise<void> => {
   while (true) {
@@ -377,16 +384,15 @@ const sendPlainMessage = async (
   }
   // Review sessions are real work sessions, so they carry the project's
   // standing context (pinned notes, memory) exactly as a composer send would.
-  const knowledge = await fetchSessionKnowledge(directory, sessionID);
+  await syncSessionKnowledge(directory, sessionID);
   assertAutoReviewRuntimeStillCurrent(expectedRuntimeKey);
-  const sendContext = knowledge.text ? [{ text: knowledge.text }, ...(context ?? [])] : context;
   markPendingUserSendAnimation(sessionID);
   let sentMessageID: string | null = null;
   await optimisticSend({
     sessionId: sessionID,
     content: text,
     directory,
-    context: sendContext,
+    context,
     onMessageID: (messageID) => {
       sentMessageID = messageID;
     },
@@ -410,9 +416,6 @@ const sendPlainMessage = async (
     },
   });
   if (!sentMessageID) throw new Error('Failed to prepare review flow message');
-  if (knowledge.text) {
-    void reportSessionKnowledgeDelivered(directory, sessionID, knowledge.signature);
-  }
   return sentMessageID;
 };
 
@@ -538,7 +541,7 @@ export const startReviewFlow = async (input: StartReviewFlowInput): Promise<void
       const reviewSession = await createOrReuseReviewSession(input.originalSessionID, input.directory, reviewSelection, expectedAutoReviewRuntimeKey);
       const runtimeKey = expectedAutoReviewRuntimeKey ?? getRuntimeKey();
       const waitAfterCreatedAt = Date.now();
-      const sentMessageID = await sendPlainMessage(reviewSession.id, input.directory, handoffReviewPrompt, reviewSelection, input.autoReview ? autoReviewReviewerInstructions() : undefined, input.autoReview ? runtimeKey : undefined);
+      const sentMessageID = await sendPlainMessage(reviewSession.id, input.directory, handoffReviewPrompt, reviewSelection, await reviewSessionInstructions(input.autoReview), input.autoReview ? runtimeKey : undefined);
       if (input.autoReview) {
         startAutoReviewRun({
           originalSessionID: input.originalSessionID,
@@ -574,7 +577,7 @@ export const startReviewFlow = async (input: StartReviewFlowInput): Promise<void
   const reviewSession = await createOrReuseReviewSession(input.originalSessionID, input.directory, reviewSelection, expectedAutoReviewRuntimeKey);
   const runtimeKey = expectedAutoReviewRuntimeKey ?? getRuntimeKey();
   const waitAfterCreatedAt = Date.now();
-  const sentMessageID = await sendPlainMessage(reviewSession.id, input.directory, reviewPrompt, reviewSelection, input.autoReview ? autoReviewReviewerInstructions() : undefined, input.autoReview ? runtimeKey : undefined);
+  const sentMessageID = await sendPlainMessage(reviewSession.id, input.directory, reviewPrompt, reviewSelection, await reviewSessionInstructions(input.autoReview), input.autoReview ? runtimeKey : undefined);
   if (input.autoReview) {
     startAutoReviewRun({
       originalSessionID: input.originalSessionID,

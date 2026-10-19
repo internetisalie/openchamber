@@ -46,13 +46,17 @@ export const NestedRepoPicker: React.FC<NestedRepoPickerProps> = ({
       }}
     >
       <SelectTrigger
-        size="sm"
         className="max-w-[13rem] gap-1.5 px-2 py-1"
         aria-label={t('gitView.empty.selectRepositoryPlaceholder')}
       >
         <Icon name="folder-3" className="size-4 text-muted-foreground" />
-        <span className="min-w-0 truncate font-medium text-left">
-          {selectedRepository ? relativePath(selectedRepository) : ''}
+        {/* The name's grid track has no minimum, so in a narrow row the
+            picker truncates the name down to its icon and chevron instead
+            of keeping its width and sliding under the next control. */}
+        <span className="grid min-w-0 grid-cols-[minmax(0,max-content)]">
+          <span className="truncate font-medium text-start">
+            {selectedRepository ? relativePath(selectedRepository) : ''}
+          </span>
         </span>
       </SelectTrigger>
       <SelectContent align="start">

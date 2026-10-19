@@ -3,7 +3,6 @@ import { getCurrentIntlLocale, useI18n } from '@/lib/i18n';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useDirectorySync, useSessionMessageRecords, useSyncDirectory, useSyncRuntime } from '@/sync/sync-context';
 import { normalizePath } from '@/lib/pathNormalization';
-import { useUIStore } from '@/stores/useUIStore';
 import {
   WorkStatusCollapsibleSection,
   WorkStatusRow,
@@ -31,7 +30,7 @@ const TelemetryRow: React.FC<{ label: string; description: string; value: React.
         <WorkStatusRow label={label} value={value} />
       </div>
     </TooltipTrigger>
-    <TooltipContent side="left" sideOffset={8} className="max-w-[min(320px,calc(100vw-24px))] whitespace-normal break-words text-left">
+    <TooltipContent side="left" sideOffset={8} className="max-w-[min(320px,calc(100vw-24px))] whitespace-normal break-words text-start">
       <p className="font-medium">{label}</p>
       <p>{description}</p>
     </TooltipContent>
@@ -40,9 +39,6 @@ const TelemetryRow: React.FC<{ label: string; description: string; value: React.
 
 export const WorkStatusTelemetrySection: React.FC<Props> = ({ sessionId, directory }) => {
   const { t } = useI18n();
-  const expanded = useUIStore(
-    React.useCallback((state) => state.workStatusExpandedSections['telemetry'] ?? true, []),
-  );
   const { runtimeKey } = useSyncRuntime();
   const syncDirectory = useSyncDirectory();
   const scope = JSON.stringify([runtimeKey, normalizePath(directory ?? syncDirectory), sessionId]);
@@ -52,7 +48,8 @@ export const WorkStatusTelemetrySection: React.FC<Props> = ({ sessionId, directo
       : 'unknown', [sessionId]),
     directory ?? undefined,
   );
-  const eligibleForStats = Boolean(sessionId && expanded && status === 'idle');
+  // The collapsed header still needs the latest completed response speed.
+  const eligibleForStats = Boolean(sessionId && status === 'idle');
 
   const records = useSessionMessageRecords(
     sessionId ?? '',
@@ -105,6 +102,13 @@ export const WorkStatusTelemetrySection: React.FC<Props> = ({ sessionId, directo
               label={t('chat.workStatus.telemetry.speed')}
               description={t('chat.workStatus.telemetry.speedDescription')}
               value={<WorkStatusValue>{formatThroughputRate(stats.tokensPerSecond)}</WorkStatusValue>}
+            />
+          ) : null}
+          {stats.elapsedDurationMs !== null ? (
+            <TelemetryRow
+              label={t('chat.workStatus.telemetry.elapsed')}
+              description={t('chat.workStatus.telemetry.elapsedDescription')}
+              value={<WorkStatusValue>{formatTelemetryDuration(stats.elapsedDurationMs)}</WorkStatusValue>}
             />
           ) : null}
 

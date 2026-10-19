@@ -12,8 +12,9 @@ import {
 import { Icon } from '@/components/icon/Icon';
 import type { IconName } from '@/components/icon/icons';
 import { useI18n } from '@/lib/i18n';
+import { openExternalUrl } from '@/lib/url';
 import { cn } from '@/lib/utils';
-import type { CredentialConnection } from './providerAuth';
+import { connectionNeedsAuth, type CredentialConnection } from './providerAuth';
 
 interface ProviderAccountsProps {
   /** Stored credentials first, then environment variables the server can see. */
@@ -37,6 +38,35 @@ const AccountTile: React.FC<{ icon: IconName }> = ({ icon }) => (
     <Icon name={icon} className="size-4" />
   </span>
 );
+
+/**
+ * The line under an account: what OpenCode reported when the connection needs
+ * a new sign-in, otherwise how the account connects.
+ */
+const AccountSubtitle: React.FC<{ connection: ConnectionInfo; fallback: string }> = ({ connection, fallback }) => (
+  connectionNeedsAuth(connection) && connection.status ? (
+    <div className="typography-micro text-[var(--status-warning)] break-words">{connection.status.message}</div>
+  ) : (
+    <div className="typography-micro text-muted-foreground">{fallback}</div>
+  )
+);
+
+/** Opens the page OpenCode named for signing in again (an SSO login, for one). */
+const SignInAgainButton: React.FC<{ connection: ConnectionInfo; account: string }> = ({ connection, account }) => {
+  const { t } = useI18n();
+  const url = connectionNeedsAuth(connection) ? connection.status?.url : undefined;
+  if (!url) return null;
+  return (
+    <Button
+      variant="outline"
+      size="xs"
+      onClick={() => { void openExternalUrl(url); }}
+      aria-label={t('settings.providers.accounts.signInAria', { account })}
+    >
+      {t('settings.providers.accounts.signIn')}
+    </Button>
+  );
+};
 
 const RenameField: React.FC<{
   initial: string;
@@ -113,8 +143,9 @@ export const ProviderAccounts: React.FC<ProviderAccountsProps> = ({
               <AccountTile icon="terminal-box" />
               <div className="min-w-0 flex-1">
                 <div className="truncate font-mono typography-ui-label text-foreground">{connection.name}</div>
-                <div className="typography-micro text-muted-foreground">{t('settings.providers.accounts.environment')}</div>
+                <AccountSubtitle connection={connection} fallback={t('settings.providers.accounts.environment')} />
               </div>
+              <SignInAgainButton connection={connection} account={connection.name} />
             </div>
           );
         }
@@ -124,11 +155,15 @@ export const ProviderAccounts: React.FC<ProviderAccountsProps> = ({
         const busy = busyId !== null;
         const methodLabel = connection.method === 'oauth'
           ? (unused ? t('settings.providers.accounts.method.oauthUnused') : t('settings.providers.accounts.method.oauth'))
-          : (unused ? t('settings.providers.accounts.method.keyUnused') : t('settings.providers.accounts.method.key'));
+          : connection.method === 'external'
+            ? (unused ? t('settings.providers.accounts.method.externalUnused') : t('settings.providers.accounts.method.external'))
+            : (unused ? t('settings.providers.accounts.method.keyUnused') : t('settings.providers.accounts.method.key'));
+        // An external credential (a cloud CLI login or profile) lives outside OpenCode's store.
+        const methodIcon = connection.method === 'oauth' ? 'user-3' : connection.method === 'external' ? 'terminal-box' : 'key';
 
         return (
           <div key={connection.id} className={cn('flex min-w-0 items-center gap-3 py-2.5', unused && 'opacity-60')}>
-            <AccountTile icon={connection.method === 'oauth' ? 'user-3' : 'key'} />
+            <AccountTile icon={methodIcon} />
             {renamingId === connection.id ? (
               <RenameField
                 initial={connection.label}
@@ -149,10 +184,9 @@ export const ProviderAccounts: React.FC<ProviderAccountsProps> = ({
                       </span>
                     ) : null}
                   </div>
-                  <div className="typography-micro text-muted-foreground">
-                    {methodLabel}
-                  </div>
+                  <AccountSubtitle connection={connection} fallback={methodLabel} />
                 </div>
+                <SignInAgainButton connection={connection} account={connection.label} />
                 {canSwitch && !active && !unused ? (
                   <Button
                     variant="outline"

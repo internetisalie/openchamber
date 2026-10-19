@@ -293,7 +293,7 @@ export function GiteaPickerDialog({ open, onOpenChange, onSelect }: {
       ) : null}
       {repositories.length > 1 && repo ? (
         <Select value={repo.remote} onValueChange={setSelectedRemote}>
-          <SelectTrigger size="sm" aria-label={t('gitView.empty.selectRepositoryPlaceholder')}>
+          <SelectTrigger aria-label={t('gitView.empty.selectRepositoryPlaceholder')}>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>{repositories.map((candidate) => (
@@ -354,7 +354,7 @@ export function GiteaPickerDialog({ open, onOpenChange, onSelect }: {
         {visibleItems.map((item) => (
           <button type="button" key={`${repo?.instanceUrl}:${repo?.owner}/${repo?.name}:${kind}:${item.number}`} disabled={selecting !== null}
             onClick={() => void select(item.number)}
-            className="flex w-full items-start gap-3 rounded-md px-2 py-2 text-left hover:bg-[var(--interactive-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)]">
+            className="flex w-full items-start gap-3 rounded-md px-2 py-2 text-start hover:bg-[var(--interactive-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--interactive-focus-ring)]">
             <span className="shrink-0 text-sm text-muted-foreground">#{item.number}</span>
             <span className="min-w-0 break-words text-sm text-foreground">{item.title}
               {repo ? <span className="block break-all text-xs text-muted-foreground">{repositoryLabel(repo)}</span> : null}

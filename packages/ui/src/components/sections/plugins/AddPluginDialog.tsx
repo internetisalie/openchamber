@@ -150,8 +150,8 @@ export const AddPluginDialog: React.FC<AddPluginDialogProps> = ({
           onSelect={(id) => handleTabChange(id as TabKey)}
           layoutMode="fit"
           variant="active-pill"
-          activePillLowercase={false}
-          className="h-10"
+          pillSize="form"
+          className="h-8"
         />
 
         <div className="flex flex-col gap-4">
@@ -252,7 +252,7 @@ export const AddPluginDialog: React.FC<AddPluginDialogProps> = ({
                     type="button"
                     onClick={() => setScope(value)}
                     disabled={submitting}
-                    className="flex items-center gap-2 py-1 text-left disabled:opacity-50"
+                    className="flex items-center gap-2 py-1 text-start disabled:opacity-50"
                   >
                     <Radio
                       checked={selected}

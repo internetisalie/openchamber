@@ -8,10 +8,12 @@ import {
   GUEST_ATTACH_DATA_MAX,
   GUEST_ATTACH_TITLE_MAX,
   GUEST_COMPOSE_TEXT_MAX,
-  GUEST_OPENCODE_RESPONSE_MAX,
-  GUEST_REQUEST_RESPONSE_MAX,
+  GUEST_GENERATE_PROMPT_MAX,
+  GUEST_GENERATE_SYSTEM_MAX,
+  GUEST_GENERATE_TIMEOUT_MS,
   readHostMessage,
 } from './contract.ts';
+import { GUEST_POPOVER_DATA_MAX, isGuestPopoverRequest } from './popover.ts';
 import {
   guestMessageSchema,
   hostMessageSchema,
@@ -34,7 +36,7 @@ test('background action messages round-trip and reject invalid payloads', () => 
 });
 
 const readyPayload = {
-  features: ['openCodeRequest'],
+  features: { openCodeRequest: true },
   theme: {
     mode: 'dark',
     tokens: {
@@ -76,7 +78,42 @@ const readyPayload = {
   item: null,
 };
 
+describe('guest generate timeout invariant', () => {
+  test('exceeds the Small Model deadline for the largest guest-shaped request', () => {
+    // The server derives its deadline from prompt size (issue #5017): 60 s base
+    // plus 40 ms per estimated token (~4 chars/token), capped at 900 s —
+    // `generationBudgetMs` in packages/web/server/lib/small-model/index.js.
+    // The arithmetic is inlined here rather than importing that module: the SDK
+    // tests must not pull in the web server's dependency tree.
+    const guestPromptChars = GUEST_GENERATE_PROMPT_MAX + GUEST_GENERATE_SYSTEM_MAX;
+    const serverBudgetMs = Math.min(900_000, 60_000 + Math.ceil(guestPromptChars / 4) * 40);
+    // 72 000 chars ≈ 18 000 tokens → 780 s. A shorter SDK wait would time out
+    // first and orphan the model's remaining work.
+    expect(serverBudgetMs).toBe(780_000);
+    expect(GUEST_GENERATE_TIMEOUT_MS).toBeGreaterThan(serverBudgetMs);
+  });
+});
+
 describe('parseHostMessage', () => {
+  test('accepts bounded popover messages and refuses unsafe guest payloads', () => {
+    const open = {
+      channel: OPENCHAMBER_SDK_CHANNEL, v: 1, type: 'popover-open', id: 'call-1', payload: {
+        id: 'preview-1', anchor: { x: 10, y: 20, width: 30, height: 40 }, width: 320, height: 160, data: { sha: 'abc' },
+      },
+    };
+    expect(guestMessageSchema.safeParse(open).success).toBe(true);
+    expect(isGuestPopoverRequest(open.payload)).toBe(true);
+    expect(guestMessageSchema.safeParse({ ...open, payload: { ...open.payload, anchor: { ...open.payload.anchor, x: Number.NaN } } }).success).toBe(false);
+    expect(guestMessageSchema.safeParse({ ...open, payload: { ...open.payload, data: 'x'.repeat(GUEST_POPOVER_DATA_MAX + 1) } }).success).toBe(false);
+    expect(isGuestPopoverRequest({ ...open.payload, data: [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[null]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]] })).toBe(false);
+  });
+
+  test('reads popover close pushes only when their bounded shape is valid', () => {
+    const closed = { channel: OPENCHAMBER_SDK_CHANNEL, v: 1, type: 'popover-closed', payload: { id: 'preview-1', reason: 'escape' } };
+    expect(parseHostMessage(closed)).toEqual(closed);
+    expect(parseHostMessage({ ...closed, payload: { ...closed.payload, reason: 'late' } })).toBeNull();
+  });
+
   test('requires computed theme text colors and rejects malformed values', () => {
     const tokens = { ...readyPayload.theme.tokens, primaryText: '#112233', successText: '#224433', warningText: '#664422', errorText: '#882233', infoText: '#334488' };
     const envelope = { channel: OPENCHAMBER_SDK_CHANNEL, v: OPENCHAMBER_SDK_API_VERSION, type: 'ready', payload: { ...readyPayload, theme: { ...readyPayload.theme, tokens } } };
@@ -105,11 +142,24 @@ describe('parseHostMessage', () => {
     });
   });
 
-  test('defaults missing host features and rejects unknown features', () => {
+  test('accepts older hosts without features and advertises OpenCode requests', () => {
     const envelope = { channel: OPENCHAMBER_SDK_CHANNEL, v: 1, type: 'ready' };
     expect(parseHostMessage({ ...envelope, payload: { ...readyPayload, features: undefined } }))
-      .toMatchObject({ type: 'ready', payload: { features: [] } });
-    expect(parseHostMessage({ ...envelope, payload: { ...readyPayload, features: ['unknown'] } })).toBeNull();
+      .toMatchObject({ type: 'ready', payload: { features: undefined } });
+    expect(parseHostMessage({ ...envelope, payload: readyPayload }))
+      .toMatchObject({ type: 'ready', payload: { features: { openCodeRequest: true } } });
+  });
+
+  test('keeps known ready features while dropping a future feature', () => {
+    const message = parseHostMessage({
+      channel: OPENCHAMBER_SDK_CHANNEL,
+      v: OPENCHAMBER_SDK_API_VERSION,
+      type: 'ready',
+      payload: { ...readyPayload, features: { statusControls: true, futureCapability: true } },
+    });
+    expect(message?.type).toBe('ready');
+    if (message?.type !== 'ready') throw new Error('Expected ready snapshot');
+    expect(message.payload.features).toEqual({ statusControls: true });
   });
 
   test('accepts a null directory', () => {
@@ -397,24 +447,25 @@ describe('parseHostMessage', () => {
     });
   });
 
-  test('allows a 4 MiB OpenCode response on the shared result wire', () => {
-    const body = 'x'.repeat(GUEST_OPENCODE_RESPONSE_MAX);
-    expect(body.length).toBeGreaterThan(GUEST_REQUEST_RESPONSE_MAX);
+  test('allows both operation limits on the shared result wire', () => {
+    for (const length of [4 * 1024 * 1024, 8_000_000]) {
+      const body = 'x'.repeat(length);
+      expect(parseHostMessage({
+        channel: OPENCHAMBER_SDK_CHANNEL,
+        v: 1,
+        type: 'result',
+        id: 'oc-opencode',
+        ok: true,
+        payload: { status: 200, body },
+      })).toMatchObject({ type: 'result', ok: true, payload: { status: 200, body } });
+    }
     expect(parseHostMessage({
       channel: OPENCHAMBER_SDK_CHANNEL,
       v: 1,
       type: 'result',
       id: 'oc-opencode',
       ok: true,
-      payload: { status: 200, body },
-    })).toMatchObject({ type: 'result', ok: true, payload: { status: 200, body } });
-    expect(parseHostMessage({
-      channel: OPENCHAMBER_SDK_CHANNEL,
-      v: 1,
-      type: 'result',
-      id: 'oc-opencode',
-      ok: true,
-      payload: { status: 200, body: `${body}x` },
+      payload: { status: 200, body: 'x'.repeat(8_000_001) },
     })).toBeNull();
   });
 
@@ -925,5 +976,36 @@ describe('actions, commands, and badge wire shapes', () => {
     expect(parseGuestMessage({ ...envelope, type: 'badge', id: 'b-1', payload: { count: 1000 } })).toBeNull();
     expect(parseGuestMessage({ ...envelope, type: 'badge', id: 'b-1', payload: { count: -1 } })).toBeNull();
     expect(parseGuestMessage({ ...envelope, type: 'badge', id: 'b-1', payload: { count: 1.5 } })).toBeNull();
+  });
+
+  test('shells messages parse, including every scope, and refuse out-of-range bounds', () => {
+    const envelope = { channel: OPENCHAMBER_SDK_CHANNEL, v: OPENCHAMBER_SDK_API_VERSION };
+    expect(parseGuestMessage({ ...envelope, type: 'shells-subscribe', id: 'c1', payload: { subscriptionId: 's1', scope: { kind: 'session', sessionId: 'ses_1' } } })?.type).toBe('shells-subscribe');
+    expect(parseGuestMessage({ ...envelope, type: 'shells-subscribe', id: 'c1p', payload: { subscriptionId: 's1', scope: { kind: 'project', projectId: 'p1' } } })?.type).toBe('shells-subscribe');
+    expect(parseGuestMessage({ ...envelope, type: 'shells-subscribe', id: 'c1g', payload: { subscriptionId: 's1', scope: { kind: 'global' } } })?.type).toBe('shells-subscribe');
+    expect(parseGuestMessage({ ...envelope, type: 'shells-subscribe', id: 'c1x', payload: { subscriptionId: 's1', scope: { kind: 'nope' } } })).toBeNull();
+    expect(parseGuestMessage({ ...envelope, type: 'shells-unsubscribe', id: 'c2', payload: { subscriptionId: 's1' } })?.type).toBe('shells-unsubscribe');
+    expect(parseGuestMessage({ ...envelope, type: 'shell-output', id: 'c3', payload: { shellId: 'sh_1', cursor: 0, tailBytes: 65536 } })?.type).toBe('shell-output');
+    expect(parseGuestMessage({ ...envelope, type: 'shell-output', id: 'c4', payload: { shellId: 'sh_1', tailBytes: 65537 } })).toBeNull();
+    expect(parseGuestMessage({ ...envelope, type: 'shell-output', id: 'c5', payload: { shellId: 'sh_1', cursor: -1 } })).toBeNull();
+    expect(parseGuestMessage({ ...envelope, type: 'shell-stop', id: 'c6', payload: { shellId: 'sh_1' } })?.type).toBe('shell-stop');
+    expect(parseHostMessage({ ...envelope, type: 'shells', payload: { subscriptionId: 's1', snapshot: { kind: 'shells', scope: { kind: 'global' }, shells: [{ id: 'sh_1', sessionID: 'ses_1', command: 'sleep 1', startedAt: 1, background: true }], ended: [] } } })?.type).toBe('shells');
+    expect(parseHostMessage({ ...envelope, type: 'shells', payload: { subscriptionId: 's1', snapshot: { kind: 'shells', scope: { kind: 'session', sessionId: 'ses_1' }, shells: [], ended: [] } } })?.type).toBe('shells');
+  });
+
+  test('accepts ended shells with a known status and refuses anything else', () => {
+    const snapshot = (ended: unknown[]) => ({ ...envelope, type: 'shells', payload: { subscriptionId: 's1', snapshot: { kind: 'shells', scope: { kind: 'global' }, shells: [], ended } } });
+    const done = { id: 'sh_1', sessionID: 'ses_1', command: 'make', startedAt: 1, background: true, endedAt: 2 };
+    expect(parseHostMessage(snapshot([{ ...done, status: 'exited', exit: 0 }, { ...done, id: 'sh_2', status: 'stopped' }]))?.type).toBe('shells');
+    expect(parseHostMessage(snapshot([{ ...done, status: 'crashed' }]))).toBeNull();
+    expect(parseHostMessage(snapshot([{ ...done, status: 'exited', exit: 1.5 }]))).toBeNull();
+    expect(parseHostMessage({ ...envelope, type: 'shells', payload: { subscriptionId: 's1', snapshot: { kind: 'shells', scope: { kind: 'global' }, shells: [] } } })).toBeNull();
+  });
+
+  test('accepts shell output and shell stop result payloads', () => {
+    expect(parseHostMessage({ ...envelope, type: 'result', id: 'c1', ok: true, payload: { output: 'tick', cursor: 14, skipped: false } }))
+      .toMatchObject({ type: 'result', ok: true, payload: { output: 'tick', cursor: 14, skipped: false } });
+    expect(parseHostMessage({ ...envelope, type: 'result', id: 'c2', ok: true, payload: { stopped: true } }))
+      .toMatchObject({ type: 'result', ok: true, payload: { stopped: true } });
   });
 });

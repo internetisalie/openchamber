@@ -12,6 +12,7 @@ import {
 } from "./global-session-status"
 import { resetSessionOrdering, useSessionOrderingStore } from "./session-ordering"
 import { resetSessionActivityTiming, useSessionActivityTimingStore } from "./session-activity-timing"
+import { applyBackgroundShellEvents, resetBackgroundShells } from "./background-shells"
 
 beforeEach(() => {
   replaceGlobalSessionStatusById(new Map())
@@ -257,6 +258,14 @@ describe("background subagent keeps its parent's turn open", () => {
     expect(timing().settledMs.has("parent")).toBe(true)
   })
 
+  test("a caller can resolve nested lineage without changing the display resolver", () => {
+    const parents = new Map([["grandchild", "nested-child"], ["nested-child", "nested-parent"]])
+    const active = new Set(["grandchild"])
+    expect(hasActiveSubagent("nested-parent", active, (id) => parents.get(id))).toBe(true)
+    expect(hasActiveSubagent("nested-parent", active)).toBe(false)
+    expect(hasActiveSubagent("parent", new Set(["child"]))).toBe(true)
+  })
+
   test("a subagent ending while the parent runs again leaves the parent's timer alone", () => {
     applyGlobalSessionStatusEvents("/repo", [busy("parent"), busy("child")])
     applyGlobalSessionStatusEvents("/repo", [idle("parent")])
@@ -271,5 +280,46 @@ describe("background subagent keeps its parent's turn open", () => {
     applyGlobalSessionStatusEvents("/repo", [busy("parent"), busy("child")])
     applyGlobalSessionStatusSnapshot("/repo", { child: { type: "busy" } }, ["parent", "child"])
     expect(timing().startedAt.has("parent")).toBe(true)
+  })
+})
+
+describe("a background command keeps its session's turn open", () => {
+  const busy = (sessionID: string): SyncEvent => ({ type: "session.status", properties: { sessionID, status: { type: "busy" } } } as SyncEvent)
+  const idle = (sessionID: string): SyncEvent => ({ type: "session.idle", properties: { sessionID } } as SyncEvent)
+  const started: SyncEvent = {
+    type: "shell.started",
+    properties: { shell: { id: "sh_1", sessionID: "session", command: "sleep 300", file: "/tmp/sh_1.out", startedAt: 1 } },
+  }
+  const ended: SyncEvent = { type: "shell.ended", properties: { shellID: "sh_1", end: { kind: "exited", status: "exited", exit: 0 }, endedAt: 2 } }
+  const timing = () => useSessionActivityTimingStore.getState()
+
+  beforeEach(() => resetBackgroundShells())
+
+  test("the timer runs through the pause and settles when the command ends", () => {
+    applyGlobalSessionStatusEvents("/repo", [busy("session")])
+    applyBackgroundShellEvents("/repo", [started])
+    applyGlobalSessionStatusEvents("/repo", [idle("session")])
+
+    expect(useGlobalSessionStatusStore.getState().activeSessionIds.has("session")).toBe(false)
+    expect(timing().startedAt.has("session")).toBe(true)
+
+    applyBackgroundShellEvents("/repo", [ended])
+    expect(timing().startedAt.has("session")).toBe(false)
+    expect(timing().settledMs.has("session")).toBe(true)
+  })
+
+  test("a command ending while the session runs again leaves the timer alone", () => {
+    applyGlobalSessionStatusEvents("/repo", [busy("session")])
+    applyBackgroundShellEvents("/repo", [started])
+    applyGlobalSessionStatusEvents("/repo", [idle("session"), busy("session")])
+    applyBackgroundShellEvents("/repo", [ended])
+    expect(timing().startedAt.has("session")).toBe(true)
+  })
+
+  test("a status snapshot does not settle a session waiting on its command", () => {
+    applyGlobalSessionStatusEvents("/repo", [busy("session")])
+    applyBackgroundShellEvents("/repo", [started])
+    applyGlobalSessionStatusSnapshot("/repo", {}, ["session"])
+    expect(timing().startedAt.has("session")).toBe(true)
   })
 })

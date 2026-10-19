@@ -5,7 +5,9 @@ import { cn } from "@/lib/utils"
 import { Icon } from "@/components/icon/Icon";
 import { shortcutRegistry } from "@/lib/shortcuts";
 import { handleDropdownNavigationKey } from "./dropdown-navigation";
+import { useMenuWindowDismiss } from "./menu-window-dismiss";
 import { dropdownMenuItemClass, dropdownMenuPopupClass, dropdownMenuSeparatorClass, dropdownMenuSubTriggerClass } from "./dropdown-menu.styles";
+import { GlassRedrawGuard } from "./glass-redraw-guard"
 
 type AsChildProps = { asChild?: boolean };
 type AsChildRenderProps = {
@@ -36,7 +38,8 @@ function renderFromAsChild(asChild: boolean | undefined, children: React.ReactNo
   return { children };
 }
 
-type DropdownMenuProps = React.ComponentProps<typeof BaseMenu.Root> & {
+// The wrapper owns `actionsRef` to close the menu on window blur.
+type DropdownMenuProps = Omit<React.ComponentProps<typeof BaseMenu.Root>, "actionsRef"> & {
   disableGlobalShortcuts?: boolean;
 };
 
@@ -51,6 +54,7 @@ function DropdownMenu({
   const [collisionBoundary, setCollisionBoundary] = React.useState<Element | null>(null);
   const [uncontrolledOpen, setUncontrolledOpen] = React.useState(defaultOpen ?? false);
   const isOpen = open ?? uncontrolledOpen;
+  const actionsRef = useMenuWindowDismiss(isOpen);
   const portalContextValue = React.useMemo<DropdownPortalContextValue>(() => ({
     portalContainer,
     collisionBoundary,
@@ -72,6 +76,7 @@ function DropdownMenu({
     <DropdownPortalContext.Provider value={portalContextValue}>
       <BaseMenu.Root
         {...props}
+        actionsRef={actionsRef}
         defaultOpen={defaultOpen}
         open={open}
         onOpenChange={handleOpenChange}
@@ -161,7 +166,7 @@ function DropdownMenuContent({
   };
 
   return (
-    <BaseMenu.Portal container={portalToBody ? undefined : portalContext?.portalContainer || undefined}>
+    <BaseMenu.Portal className="contents" container={portalToBody ? undefined : portalContext?.portalContainer || undefined}>
       <BaseMenu.Positioner
         sideOffset={sideOffset}
         align={align}
@@ -185,6 +190,7 @@ function DropdownMenuContent({
           onKeyDown={handleKeyDown}
         >
           {children}
+          <GlassRedrawGuard />
         </BaseMenu.Popup>
       </BaseMenu.Positioner>
     </BaseMenu.Portal>
@@ -241,12 +247,12 @@ function DropdownMenuRadioItem({
     <BaseMenu.RadioItem
       data-slot="dropdown-menu-radio-item"
       className={cn(
-        "data-[highlighted]:bg-interactive-hover hover:bg-interactive-hover data-[checked]:bg-interactive-selection data-[checked]:text-interactive-selection-foreground relative flex cursor-pointer items-start gap-2 rounded-lg py-1 pl-2 pr-8 typography-ui-label outline-hidden select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-3.5",
+        "data-[highlighted]:bg-interactive-hover hover:bg-interactive-hover relative flex cursor-pointer items-start gap-2 rounded-lg py-1 ps-2 pe-8 typography-ui-label outline-hidden select-none data-[disabled]:pointer-events-none data-[disabled]:opacity-50 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-3.5",
         className
       )}
       {...props}
     >
-      <span className="pointer-events-none absolute right-2 flex size-3.5 items-center justify-center text-primary">
+      <span className="pointer-events-none absolute inset-e-2 flex size-3.5 items-center justify-center text-foreground">
         <BaseMenu.RadioItemIndicator>
           <Icon name="check" className="size-3" />
         </BaseMenu.RadioItemIndicator>
@@ -268,7 +274,7 @@ function DropdownMenuLabel({
       data-slot="dropdown-menu-label"
       data-inset={inset}
       className={cn(
-        "px-2 py-1 typography-ui-label font-medium text-muted-foreground data-[inset]:pl-8",
+        "px-2 py-1 typography-ui-label font-medium text-muted-foreground data-[inset]:ps-8",
         className
       )}
       {...props}
@@ -314,7 +320,7 @@ function DropdownMenuSubTrigger({
       {...props}
     >
       {children}
-      <Icon name="arrow-right-s" className="ml-auto size-3.5" />
+      <Icon name="arrow-right-s" className="ms-auto size-3.5" />
     </BaseMenu.SubmenuTrigger>
   )
 }
@@ -338,7 +344,7 @@ function DropdownMenuSubContent({
   };
 
   return (
-    <BaseMenu.Portal container={portalContext?.portalContainer || undefined}>
+    <BaseMenu.Portal className="contents" container={portalContext?.portalContainer || undefined}>
       <BaseMenu.Positioner className="z-50">
         <BaseMenu.Popup
           data-slot="dropdown-menu-sub-content"
@@ -353,6 +359,7 @@ function DropdownMenuSubContent({
           onKeyDown={handleKeyDown}
         >
           {children}
+          <GlassRedrawGuard />
         </BaseMenu.Popup>
       </BaseMenu.Positioner>
     </BaseMenu.Portal>

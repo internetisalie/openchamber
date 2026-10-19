@@ -63,6 +63,7 @@ const summaryFromStatus = (status: GiteaPullRequestStatus): PrVisualSummary | nu
     ? status.pull?.merged === true ? 'merged' : 'closed'
     : draft ? 'draft' : 'open';
   return {
+    provider: null,
     number: item.number, visualState, prState: status.pull?.merged === true ? 'merged' : item.state,
     draft, title: item.title, url: item.url, base: null, head: null, checks: null,
     canMerge: null, mergeableState: null, repo: { owner: status.repo.owner, repo: status.repo.name },

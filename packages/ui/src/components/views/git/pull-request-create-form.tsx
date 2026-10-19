@@ -46,7 +46,7 @@ export function PullRequestCreateForm({
     <>
       <div className="flex items-center justify-between gap-2">
         <div className="min-w-0">
-          <div className="typography-ui-label text-foreground">{t('gitView.pr.createTitle')}</div>
+          <div className="typography-ui-label text-foreground">{t('gitView.pullRequest.title')}</div>
           <div className="typography-micro text-muted-foreground truncate">
             {branch} <span className="opacity-60">(local)</span> → {base} <span className="opacity-60">({targetLabel})</span>
           </div>
@@ -72,7 +72,7 @@ export function PullRequestCreateForm({
         <div className="typography-micro text-muted-foreground">{t('gitView.pr.field.baseBranch')}</div>
         {baseBranches.length > 0 ? (
           <Select value={base} onValueChange={onBaseChange}>
-            <SelectTrigger size="lg" aria-label={t('gitView.pr.field.baseBranch')}><SelectValue placeholder={t('gitView.pr.placeholder.selectBaseBranch')} /></SelectTrigger>
+            <SelectTrigger aria-label={t('gitView.pr.field.baseBranch')}><SelectValue placeholder={t('gitView.pr.placeholder.selectBaseBranch')} /></SelectTrigger>
             <SelectContent>
               {baseBranches.map((candidate) => <SelectItem key={candidate} value={candidate}>{candidate}</SelectItem>)}
             </SelectContent>
@@ -100,49 +100,47 @@ export function PullRequestCreateForm({
           }
         }}>
         <Checkbox size="sm" checked={draft} onChange={onDraftChange}
-          ariaLabel={t('gitView.pr.actions.toggleDraftAria')} />
-        <span className="typography-ui-label text-foreground select-none">{t('gitView.pr.field.draft')}</span>
+          ariaLabel={t('gitView.pr.actions.createDraftPr')} />
+        <span className="typography-ui-label text-foreground select-none">{t('gitView.pr.actions.createDraftPr')}</span>
       </div>
 
       {isMobile ? (
         <div className="space-y-2">
           <div className="flex items-center justify-between gap-2">
-            <span className="typography-micro text-muted-foreground">{t('gitView.pr.additionalContext.optional')}</span>
+            <span className="typography-micro text-muted-foreground">{t('gitView.pr.generate.notesAria')}</span>
             <Button variant="outline" size="sm" onClick={() => setIsContextSheetOpen(true)}>
-              {additionalContext.trim() ? t('gitView.pr.actions.edit') : t('gitView.pr.actions.add')}
+              {t('gitView.pr.generate.withNotes')}
             </Button>
           </div>
           {additionalContext.trim() ? (
             <span className="inline-flex items-center rounded-full bg-[var(--interactive-selection)] px-2 py-0.5 text-xs text-[var(--interactive-selection-foreground)]">
-              {t('gitView.pr.additionalContext.added')}
+              {t('gitView.pr.generate.notesAria')}
             </span>
           ) : null}
         </div>
       ) : (
         <Collapsible open={isContextOpen} onOpenChange={setIsContextOpen}>
           <CollapsibleTrigger className="flex w-full items-center justify-between rounded-lg border border-[var(--interactive-border)] bg-[var(--surface-elevated)] px-3 py-2 hover:bg-[var(--interactive-hover)]">
-            <span className="typography-micro text-muted-foreground">{t('gitView.pr.additionalContext.optional')}</span>
+            <span className="typography-micro text-muted-foreground">{t('gitView.pr.generate.notesAria')}</span>
             <span className="typography-micro text-[var(--primary-base)]">
-              {isContextOpen ? t('gitView.pr.actions.hide') : additionalContext.trim() ? t('gitView.pr.actions.edit') : t('gitView.pr.actions.add')}
+              {isContextOpen ? t('gitView.common.close') : t('gitView.pr.generate.withNotes')}
             </span>
           </CollapsibleTrigger>
           <CollapsibleContent>
             <div className="mt-2 space-y-2 rounded-lg border border-[var(--interactive-border)] bg-[var(--surface-elevated)] p-3">
               <Textarea value={additionalContext} onChange={(event) => onAdditionalContextChange(event.target.value)}
                 className="min-h-[100px] bg-transparent" placeholder={t('gitView.pr.placeholder.additionalContext')} />
-              <p className="typography-micro text-muted-foreground">{t('gitView.pr.additionalContext.hint')}</p>
             </div>
           </CollapsibleContent>
         </Collapsible>
       )}
 
       <MobileOverlayPanel open={isContextSheetOpen} onClose={() => setIsContextSheetOpen(false)}
-        title={t('gitView.pr.additionalContext.title')}
+        title={t('gitView.pr.generate.notesAria')}
         footer={<Button size="sm" onClick={() => setIsContextSheetOpen(false)} className="w-full">{t('gitView.common.done')}</Button>}>
         <div className="space-y-3">
           <Textarea value={additionalContext} onChange={(event) => onAdditionalContextChange(event.target.value)}
             className="min-h-[200px] bg-transparent" placeholder={t('gitView.pr.placeholder.additionalContext')} autoFocus />
-          <p className="typography-micro text-muted-foreground">{t('gitView.pr.additionalContext.hint')}</p>
         </div>
       </MobileOverlayPanel>
 
