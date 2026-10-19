@@ -6,7 +6,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { prepareForkOpenCodeCli } from './prepare-fork-opencode-cli.mjs';
 
-const version = '2.0.32-internetisalie.b505ae437739';
+const version = '2.0.32-internetisalie.1';
 const fixture = (t, reportedVersion = version) => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fork-cli-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));

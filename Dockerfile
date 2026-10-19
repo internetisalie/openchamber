@@ -27,7 +27,7 @@ FROM oven/bun:1.4.3 AS runtime
 WORKDIR /home/openchamber
 
 # The released fork binary is the same glibc artifact bundled by Linux Electron.
-ADD --checksum=sha256:23db6901a0d9426e830253ba0a31d05f320b43720a2d1b3504c1d489d8ede11a --chmod=755 https://github.com/internetisalie/opencode/releases/download/v2.0.32-internetisalie.b505ae437739/opencode-linux-x64-baseline /usr/local/bin/opencode
+ADD --checksum=sha256:3b95cdddd549dbb4f351cfafc74ec89d2028205d0eefbec149f8a2ba4ed03d57 --chmod=755 https://github.com/internetisalie/opencode/releases/download/v2.0.32-internetisalie.1/opencode-linux-x64-baseline /usr/local/bin/opencode
 RUN opencode --version
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
