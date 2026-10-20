@@ -45,6 +45,7 @@ import { handleComposerHostMouseDown } from './hostMouseDown';
 import { getComposerHeightLimit, isComposerContentCapped } from './heightLimit';
 import { restoreDeferredEnterModifiers } from '../keyboardPolicy';
 import { timerCaretBlink } from '@/lib/codemirror/caretBlink';
+import { transcriptPrediction, acceptTranscriptPrediction, dismissTranscriptPrediction, type TranscriptPrediction } from '../prediction/extension';
 
 export interface ComposerSelection {
     start: number;
@@ -82,9 +83,12 @@ export interface ComposerEditorHandle {
     caretCoords(position?: number): { top: number; bottom: number; left: number } | null;
     /** The scrollable element, for measuring and scroll compensation. */
     getScrollDOM(): HTMLElement | null;
+    acceptPrediction(): boolean;
+    dismissPrediction(): boolean;
 }
 
 export interface ComposerEditorProps {
+    prediction?: TranscriptPrediction;
     value: string;
     onChange: (change: ComposerChange) => void;
     /** Caret or selection moved without the document changing. */
@@ -173,6 +177,7 @@ function isDeferredSyntheticEvent(event: KeyboardEvent): boolean {
  */
 const editableCompartment = new Compartment();
 const placeholderCompartment = new Compartment();
+const predictionCompartment = new Compartment();
 
 /** Marks the transaction that writes a changed `value` prop into the editor. */
 const valuePropWrite = Annotation.define<true>();
@@ -300,6 +305,7 @@ export const ComposerEditor = React.forwardRef<ComposerEditorHandle, ComposerEdi
                             placeholderExtension(handlersRef.current.placeholder ?? ''),
                         ),
                         composerEditorTheme,
+                        predictionCompartment.of(handlersRef.current.prediction ? transcriptPrediction(handlersRef.current.prediction) : []),
                         EditorView.updateListener.of((update) => {
                             const handlers = handlersRef.current;
                             const selection = readSelection(update.state);
@@ -427,6 +433,13 @@ export const ComposerEditor = React.forwardRef<ComposerEditorHandle, ComposerEdi
         React.useEffect(() => {
             viewRef.current?.dispatch({ effects: setLanguageContext.of(languageContext) });
         }, [languageContext]);
+
+        React.useLayoutEffect(() => {
+            const view = viewRef.current;
+            if (!view) return;
+            dismissTranscriptPrediction(view);
+            view.dispatch({ effects: predictionCompartment.reconfigure(props.prediction ? transcriptPrediction(props.prediction) : []) });
+        }, [props.prediction]);
 
         React.useEffect(() => {
             viewRef.current?.dispatch({
@@ -603,6 +616,12 @@ export const ComposerEditor = React.forwardRef<ComposerEditorHandle, ComposerEdi
             },
             getScrollDOM() {
                 return viewRef.current?.scrollDOM ?? null;
+            },
+            acceptPrediction() {
+                return viewRef.current ? acceptTranscriptPrediction(viewRef.current) : false;
+            },
+            dismissPrediction() {
+                return viewRef.current ? dismissTranscriptPrediction(viewRef.current) : false;
             },
         }), []);
 

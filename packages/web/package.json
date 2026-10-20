@@ -1,7 +1,7 @@
 {
   "name": "@openchamber/web",
   "version": "2.4.0",
-  "forkRelease": "2.4.0-internetisalie.3",
+  "forkRelease": "2.4.0-internetisalie.4",
   "private": false,
   "type": "module",
   "main": "./server/index.js",

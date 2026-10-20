@@ -116,6 +116,8 @@ import { useDirectoryStore } from '@/stores/useDirectoryStore';
 import { selectSkillsForDirectory, useSkillsStore } from '@/stores/useSkillsStore';
 import { selectCommandsForDirectory, useCommandsStore } from '@/stores/useCommandsStore';
 import { useRuntimeAPIs } from '@/hooks/useRuntimeAPIs';
+import { getDirectoryState } from '@/sync/sync-refs';
+import { transcriptCorpus, transcriptPredictionEnabled } from './composer/prediction/transcript';
 import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
 import { usePermissionStore } from '@/stores/permissionStore';
 import { cyclePermissionMode } from './permissionAutoAccept';
@@ -697,7 +699,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     }, [getLargeTextPasteScope]);
     const { expanded: persistedExpandedInput, setExpanded: setExpandedInput } = useChatColumnExpandedInput();
     const isExpandedInput = !isBtwActive && persistedExpandedInput;
-    const { git: runtimeGit, vscode: vscodeApi, linear: runtimeLinear, gitea: runtimeGitea } = useRuntimeAPIs();
+    const { runtime, git: runtimeGit, vscode: vscodeApi, linear: runtimeLinear, gitea: runtimeGitea } = useRuntimeAPIs();
     const cycleAgentShortcutOverride = useUIStore((state) => state.shortcutOverrides.cycle_agent);
     const cycleAgentShortcut = React.useMemo(() => (
         getEffectiveShortcutCombo('cycle_agent', cycleAgentShortcutOverride ? { cycle_agent: cycleAgentShortcutOverride } : undefined)
@@ -2462,6 +2464,16 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
             return;
         }
 
+        if (!e.ctrlKey && !e.metaKey && !e.altKey && !e.shiftKey) {
+            const consumed = e.key === 'Tab' ? composerRef.current?.acceptPrediction()
+                : e.key === 'Escape' ? composerRef.current?.dismissPrediction() : false;
+            if (consumed) {
+                e.preventDefault();
+                e.stopPropagation();
+                return;
+            }
+        }
+
         if (isBtwActive && currentSessionId && e.key === 'Escape') {
             e.preventDefault();
             e.stopPropagation();
@@ -4007,6 +4019,21 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
     const goalArmed = useSessionGoalArmStore((state) => state.armed);
     // Set by the footer's desktop dictation; the mobile overlay lives outside the box.
     const [desktopDictating, setDesktopDictating] = React.useState(false);
+    const prediction = React.useMemo(() => {
+        const directory = currentSessionDirectoryForSync ?? currentDirectory;
+        if (!transcriptPredictionEnabled(runtime.platform, isMobile, isCapacitorApp()) || isBtwActive
+            || inputMode !== 'normal' || openAutocomplete || hasPendingForm || largeTextPasteOffer
+            || desktopDictating || !currentSessionId || !directory) return undefined;
+        return {
+            scope: JSON.stringify([activeRuntimeKey, directory, currentSessionId]),
+            readCorpus: () => {
+                if (getRuntimeKey() !== activeRuntimeKey) return [];
+                const state = getDirectoryState(directory);
+                return state ? transcriptCorpus(state, currentSessionId) : [];
+            },
+        };
+    }, [runtime.platform, isMobile, isBtwActive, inputMode, openAutocomplete, hasPendingForm,
+        largeTextPasteOffer, desktopDictating, currentSessionId, currentSessionDirectoryForSync, currentDirectory, activeRuntimeKey]);
     const goalObjectiveLength = goalArmed ? message.length : 0;
     const waitingForOpenCode = useOpenCodeStartupStore((state) => state.waitingSends > 0);
 
@@ -4354,6 +4381,7 @@ const ChatInputComponent: React.FC<ChatInputProps> = ({
                                 ref={composerRef}
                                 viewStore={composerViewStore}
                                 data-testid="chat-input"
+                                prediction={prediction}
                                 value={message}
                                 languageContext={languageContext}
                                 onChange={handleComposerChange}
