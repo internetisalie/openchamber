@@ -15,13 +15,13 @@ vi.mock('@openchamber/ui/lib/runtime-switch', () => ({
   initializeRuntimeEndpoint: vi.fn(),
   switchRuntimeEndpoint: vi.fn(),
 }));
-vi.mock('@openchamber/ui/lib/desktopRelayRestore', () => ({ restoreDesktopRuntime: vi.fn(() => Promise.resolve()) }));
+vi.mock('@openchamber/ui/lib/desktopRuntimeRestore', () => ({ restoreDesktopRuntime: vi.fn(() => Promise.resolve()) }));
 vi.mock('@openchamber/ui/lib/runtime-url', () => ({ configureRuntimeUrlResolver: vi.fn(() => ({})) }));
 vi.mock('@openchamber/ui/lib/opencode/client', () => ({ opencodeClient: { reconnectToRuntimeBaseUrl: vi.fn() } }));
 vi.mock('./api', () => ({ createWebAPIs: vi.fn() }));
 
 import { initializeRuntimeEndpoint } from '@openchamber/ui/lib/runtime-switch';
-import { restoreDesktopRuntime } from '@openchamber/ui/lib/desktopRelayRestore';
+import { restoreDesktopRuntime } from '@openchamber/ui/lib/desktopRuntimeRestore';
 import { createConfiguredWebAPIs, readRuntimeBootstrapConfig } from './runtimeConfig';
 
 const originalWindow = globalThis.window;

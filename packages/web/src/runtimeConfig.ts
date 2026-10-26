@@ -2,7 +2,7 @@ import { getRuntimeExtraHeadersSync, refreshLocalRuntimeUrlAuthToken, refreshRun
 import { installRuntimeFetchBridge } from '@openchamber/ui/lib/runtime-fetch';
 import { initializeRuntimeEndpoint } from '@openchamber/ui/lib/runtime-switch';
 import { warmDesktopHostStatuses } from '@openchamber/ui/lib/desktopHostStatus';
-import { restoreDesktopRuntime } from '@openchamber/ui/lib/desktopRelayRestore';
+import { restoreDesktopRuntime } from '@openchamber/ui/lib/desktopRuntimeRestore';
 import { getInjectedBootOutcome } from '@openchamber/ui/lib/desktopBoot';
 import { configureRuntimeUrlResolver } from '@openchamber/ui/lib/runtime-url';
 import { opencodeClient } from '@openchamber/ui/lib/opencode/client';
@@ -55,8 +55,8 @@ export const readRuntimeBootstrapConfig = (): RuntimeBootstrapConfig => {
 
 // Resolved once the desktop host restore (if any) has picked a transport.
 // Immediately-resolved everywhere else. See createConfiguredWebAPIs.
-let desktopRelayRestoreReady: Promise<void> = Promise.resolve();
-export const getDesktopRelayRestoreReady = (): Promise<void> => desktopRelayRestoreReady;
+let desktopRuntimeRestoreReady: Promise<void> = Promise.resolve();
+export const getDesktopRuntimeRestoreReady = (): Promise<void> => desktopRuntimeRestoreReady;
 
 export const createConfiguredWebAPIs = () => {
   const { apiBaseUrl, clientToken, localOrigin, runtimeHeaders, relayHostId, explicitRuntime } = readRuntimeBootstrapConfig();
@@ -91,7 +91,7 @@ export const createConfiguredWebAPIs = () => {
     // Main window and menu New Window: the default host on relaunch.
     return restoreDesktopRuntime();
   };
-  desktopRelayRestoreReady = Promise.race([
+  desktopRuntimeRestoreReady = Promise.race([
     restoreDesktopHost().catch(() => {}),
     // Never hold the app hostage: a stuck probe/tunnel gives up to the UI.
     new Promise<void>((resolve) => { window.setTimeout(resolve, 10_000); }),
@@ -104,7 +104,7 @@ export const createConfiguredWebAPIs = () => {
   // on real values instead of probing for the first time under the user's
   // cursor. After the endpoint is settled and past the app's own bootstrap:
   // this is unprompted work and the machine's network is busiest at launch.
-  void desktopRelayRestoreReady.then(() => {
+  void desktopRuntimeRestoreReady.then(() => {
     window.setTimeout(() => { void warmDesktopHostStatuses().catch(() => {}); }, HOST_STATUS_WARMUP_DELAY_MS);
   });
   return createWebAPIs({ urls });

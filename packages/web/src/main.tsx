@@ -1,4 +1,4 @@
-import { createConfiguredWebAPIs, getDesktopRelayRestoreReady } from './runtimeConfig';
+import { createConfiguredWebAPIs, getDesktopRuntimeRestoreReady } from './runtimeConfig';
 import { registerSW } from 'virtual:pwa-register';
 
 import type { RuntimeAPIs } from '@openchamber/ui/lib/api/types';
@@ -94,8 +94,8 @@ const start = async (): Promise<void> => {
     return;
   }
 
-  // Hold the render until a desktop relay-host restore has picked its transport.
-  await getDesktopRelayRestoreReady();
+  // Hold the render until the desktop runtime restore has selected its endpoint and transport.
+  await getDesktopRuntimeRestoreReady();
   await import('@openchamber/ui/main');
 };
 

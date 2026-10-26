@@ -66,6 +66,7 @@ import { RUNTIME_CONFIG_SCRIPT_PATHNAME, claimRuntimeConfigScriptRequest, create
 import { settleMainProcessCompileCache } from './compile-cache.mjs';
 import { probeDirectHostWithRetry } from './host-probe-policy.mjs';
 import { probeElectronHostWithDeadline } from './electron-host-probe.mjs';
+import { retainDesktopBootFailure } from './desktop-boot-fallback.mjs';
 import { requestRemoteHostUpdate } from './remote-host-update.mjs';
 import { assertUpdaterCapability, readLinuxPackageType } from './updater-capability.mjs';
 import { relaunchAfterExit } from './linux-relaunch.mjs';
@@ -4871,11 +4872,19 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       if (Object.prototype.hasOwnProperty.call(nextConfigInput, 'localClientToken') && isLocalRuntimeUrl(state.apiBaseUrl || state.sidecarUrl || state.localOrigin || '')) {
         state.clientToken = readDesktopLocalClientToken();
       }
-      state.bootOutcome = computeBootOutcome({
+      const outcome = computeBootOutcome({
         envTargetUrl: envTarget || null,
         probe: null,
         config: updatedConfig,
         localAvailable: Boolean(state.sidecarUrl || state.localOrigin),
+      });
+      const defaultHost = updatedConfig.hosts.find((host) => host.id === updatedConfig.defaultHostId);
+      state.bootOutcome = envTarget ? outcome : retainDesktopBootFailure({
+        outcome,
+        sshInstanceId: resolveDefaultSshInstanceId(updatedConfig.defaultHostId, sshManager.readInstances().instances),
+        sshForwarded: Boolean(defaultHost && sshManager.isForwardedApiUrl(defaultHost.apiUrl || defaultHost.url, defaultHost.id)),
+        unreachableHosts: state.unreachableHosts,
+        relayCapable: Boolean(sanitizeHostRelayForStorage(defaultHost?.relay)),
       });
       state.initScript = buildInitScript(state.localOrigin, state.bootOutcome, state.apiBaseUrl, state.clientToken, state.requestHeaders || {});
       syncMainWindowInitScript(state.initScript);

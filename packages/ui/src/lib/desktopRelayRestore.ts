@@ -1,15 +1,10 @@
 import { isElectronShell } from '@/lib/desktop';
-import { desktopHostProbe, desktopHostsGet, desktopHostsSet, desktopLocalClientTokenGet, getDesktopHostApiUrl, normalizeHostUrl } from '@/lib/desktopHosts';
+import { desktopHostProbe, desktopHostsGet, desktopHostsSet, normalizeHostUrl } from '@/lib/desktopHosts';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import { getRuntimeKey, switchRuntimeEndpoint } from '@/lib/runtime-switch';
 
 // Let the post-switch bootstrap traffic settle before the background refresh.
 const CANDIDATE_REFRESH_DELAY_MS = 5_000;
-
-// How long the stored direct address keeps startup to itself before the relay
-// takes over. A live LAN probe answers well inside this window; a dead one no
-// longer stalls startup for the probe's full timeout.
-const DIRECT_PROBE_HEADSTART_MS = 1_500;
 
 let candidateRefreshInFlight = false;
 
@@ -97,115 +92,4 @@ export const scheduleDesktopHostCandidateRefresh = (hostId: string): void => {
   window.setTimeout(() => {
     void refreshDesktopHostCandidates(hostId).catch(() => undefined);
   }, CANDIDATE_REFRESH_DELAY_MS);
-};
-
-/**
- * Restore the saved desktop host before the application mounts. Direct hosts
- * replace the injected endpoint and credentials; relay-capable hosts select a
- * reachable direct address or the E2EE tunnel.
- *
- * Safe to call unconditionally; it is a no-op outside the Electron shell and when
- * no saved target exists. Explicit-instance windows supply their own host id.
- */
-export const restoreDesktopRuntime = async (
-  targetHostId?: string,
-  options?: { reconnectActive?: boolean },
-): Promise<void> => {
-  if (!isElectronShell()) return;
-  const config = await desktopHostsGet().catch(() => null);
-  if (!config) return;
-  // An explicit target (a "new window for host X") wins over the default-host
-  // relaunch logic.
-  const hostId = targetHostId || config.defaultHostId;
-  if (!hostId) return;
-  if (hostId === 'local') {
-    const localOrigin = normalizeHostUrl(config.localOrigin || '');
-    if (!localOrigin) return;
-    const clientToken = await desktopLocalClientTokenGet();
-    switchRuntimeEndpoint({ apiBaseUrl: localOrigin, clientToken, runtimeKey: 'local' });
-    return;
-  }
-  const host = config.hosts.find((entry) => entry.id === hostId);
-  if (!host) return;
-  if (!host.relay) {
-    const apiBaseUrl = normalizeHostUrl(getDesktopHostApiUrl(host));
-    if (!apiBaseUrl) return;
-    switchRuntimeEndpoint({
-      apiBaseUrl,
-      clientToken: host.clientToken || null,
-      requestHeaders: host.requestHeaders || null,
-      runtimeKey: `host:${host.id}`,
-      sshForwarded: host.sshForwarded === true,
-    });
-    return;
-  }
-  // Must match runtimeKeyForHost() in DesktopHostSwitcher so switch/resolve agree.
-  const runtimeKey = `host:${host.id}`;
-  // `reconnectActive`: the host was just paired again and carries a new token,
-  // so an already active runtime for it must switch over as well.
-  if (getRuntimeKey() === runtimeKey && !options?.reconnectActive) return;
-
-  const switchToDirect = (url: string) => {
-    switchRuntimeEndpoint({
-      apiBaseUrl: url,
-      clientToken: host.clientToken || null,
-      requestHeaders: host.requestHeaders || null,
-      runtimeKey,
-    });
-  };
-  const switchToRelay = () => {
-    switchRuntimeEndpoint({
-      apiBaseUrl: typeof window !== 'undefined' ? window.location.origin : '',
-      clientToken: host.clientToken || null,
-      runtimeKey,
-      relay: host.relay ?? undefined,
-    });
-    // On the relay because the stored direct address did not answer (yet) —
-    // ask the server for its current LAN address in the background and
-    // hot-switch back to direct if it simply moved (DHCP re-lease).
-    scheduleDesktopHostCandidateRefresh(host.id);
-  };
-
-  const directUrl = host.apiUrl ? normalizeHostUrl(getDesktopHostApiUrl(host)) : null;
-  if (!directUrl) {
-    switchToRelay();
-    return;
-  }
-
-  // Race the direct probe against a short headstart instead of serializing the
-  // full probe timeout in front of the relay fallback: a live LAN answers well
-  // inside the window (direct keeps priority); a dead one no longer delays
-  // startup — the relay takes over and a late direct success hot-switches back
-  // (stable runtimeKey → transport-only swap, same as the candidate refresh).
-  const probeOk = (probe: { status: string }) =>
-    probe.status !== 'unreachable' && probe.status !== 'wrong-service' && probe.status !== 'incompatible';
-  const probePromise = desktopHostProbe(directUrl, {
-    clientToken: host.clientToken || null,
-    requestHeaders: host.requestHeaders || null,
-    // Identity gate: a re-leased LAN address may now belong to a different
-    // machine; the probe must not send the token on a serverId mismatch.
-    expectedServerId: host.relay.serverId,
-  }).catch(() => ({ status: 'unreachable' as const, latencyMs: 0 }));
-
-  const winner = await Promise.race([
-    probePromise,
-    new Promise<null>((resolve) => setTimeout(() => resolve(null), DIRECT_PROBE_HEADSTART_MS)),
-  ]);
-  if (winner) {
-    if (probeOk(winner)) {
-      switchToDirect(directUrl);
-      return;
-    }
-    switchToRelay();
-    return;
-  }
-
-  // Headstart expired: connect via relay now; adopt the direct transport if the
-  // still-running probe succeeds a moment later.
-  switchToRelay();
-  void probePromise.then((probe) => {
-    if (!probeOk(probe)) return;
-    if (getRuntimeKey() !== runtimeKey) return; // user switched away meanwhile
-    switchToDirect(directUrl);
-  });
 };

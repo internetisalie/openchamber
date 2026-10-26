@@ -164,7 +164,8 @@ call `GET /api/client-auth/connection/candidates` (UI session or client bearer;
 registered with the auth/access routes) over any live transport — including
 through the tunnel — to learn the server's **current** LAN URLs plus the relay
 candidate, and update its saved candidate set (mobile: `mobileConnections.ts`;
-desktop: `desktopRelayRestore.ts`).
+desktop: the candidate-refresh helper in `desktopRelayRestore.ts`, invoked by
+`desktopRuntimeRestore.ts` after selecting a relay transport).
 
 Identity gating: the response carries the stable `serverId` (base64url SHA-256 of
 the public signing JWK — the same identity the relay routes by, exposed by the

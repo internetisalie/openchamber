@@ -22,10 +22,18 @@ API endpoint, client token, request headers and runtime identity together.
 An explicitly empty token or header set clears the previous instance's credentials;
 only uninitialized authentication falls back to preload-injected values.
 Guest-frame URL-token minting uses the active runtime's URL resolver, including
-its sub-path prefix, rather than the window's startup endpoint.
+its sub-path prefix, rather than the window's startup endpoint. Session-wide,
+explicit-base and Local URL-token mints preserve their selected base's sub-path
+prefix too; guest-frame mints retain their guest-specific scope.
 Selecting a default does not switch the already-running renderer. Windows opened
 for a specific instance and `OPENCHAMBER_SERVER_URL` keep their explicit target;
 relay-capable windows select their transport through the desktop restore path.
+Native fallback and recovery outcomes stay authoritative for direct defaults.
+A failed SSH startup stays on Local without probing the torn-down forward;
+saving settings does not clear that failure until the shell has a live forward.
+A known unreachable direct default remains rejected through settings saves.
+A different saved direct endpoint must pass the native host probe before restore;
+an already active endpoint with the same identity and credentials is a no-op.
 
 Sandboxed extension frames may load `/api/guests/` pages from the window's
 configured HTTP(S) API origin, including serverless launches with bundled UI.
@@ -445,7 +453,7 @@ The server (`packages/web/server/lib/fs/ripgrep.js`) looks for ripgrep in this o
 - One-click open/reveal/open-in-app actions.
 - Desktop host switcher and deep-link imports.
 - Local and remote instance handling. The switcher lists Local only with the origin main reports for the local server, never with the page's own origin. A window can show another instance's own page, for example after a connect link redirects to that server. Such a page cannot switch to Local in place, because the local server answers only the app's own origins and the local token stays with local pages. The switcher asks main through the remote-safe `desktop_switch_to_local`, and main loads the Local UI into the main window the way `openchamber://host/local` does. The command acts only for the main window, because other windows keep the runtime they were opened with. Everywhere else it returns false and the switcher switches in place.
-- Which instance a new window opens on. The main window and the menu New Window open the default instance: on launch the renderer reconnects a relay-capable default host (`restoreDesktopRelayRuntime` with no target). A window opened for a specific instance (the switcher's "Open in new window", a host deep link, Mini Chat) is marked with `--openchamber-explicit-runtime` and keeps that instance. A direct instance arrives as an injected endpoint and skips the restore; a relay-capable one arrives as `--openchamber-relay-host-id`, and the renderer connects it with `reconnectActive`, because boot already set that host's runtime key and a plain restore would treat the window as connected. Mini Chat passes the parent's runtime key, so main resolves a relay-capable parent to its host id.
+- Which instance a new window opens on. The main window and the menu New Window restore the saved default through `restoreDesktopRuntime`, subject to native startup fallback/recovery outcomes and a direct-host probe. An already selected direct runtime with identical identity and credentials is unchanged. A window opened for a specific instance (the switcher's "Open in new window", a host deep link, Mini Chat) is marked with `--openchamber-explicit-runtime` and keeps that instance. An explicit direct window skips the saved-default restore; a relay-capable one arrives as `--openchamber-relay-host-id` and reconnects with `reconnectActive`. Mini Chat passes the parent's runtime key, so main resolves a relay-capable parent to its host id.
 - SSH host import, connections, logs, and port forwarding.
 - SSH uses OpenSSH ControlMaster on macOS/Linux. Windows uses independent hidden OpenSSH processes for setup commands and each long-lived forward because Win32 OpenSSH does not support ControlMaster reliably.
 - With ControlMaster, every forward, the main one included, is added with `ssh -O forward`: the master holds the listener, and that command's exit status is the answer. A `-N -L` client through the master would open a remote login shell and exit with that shell's status, which says nothing about the forward. The connection monitor then watches the local port and the master.

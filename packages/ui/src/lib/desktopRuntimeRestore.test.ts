@@ -1,24 +1,34 @@
 import { describe, expect, test } from 'bun:test';
-import { restoreDesktopRuntime } from './desktopRelayRestore';
-import { desktopHostsGet } from './desktopHosts';
+import { restoreDesktopRuntime } from './desktopRuntimeRestore';
+import { desktopHostsGet, type HostProbeResult } from './desktopHosts';
+import type { DesktopBootOutcome } from './desktopBoot';
 import { resolveGuestFrameUrl } from './guests/frame-url';
-import { clearRuntimeUrlAuthToken, getRuntimeBearerTokenSync, getRuntimeExtraHeadersSync, setRuntimeBearerToken, setRuntimeExtraHeaders } from './runtime-auth';
+import { clearRuntimeUrlAuthToken, getRuntimeBearerTokenSync, getRuntimeExtraHeadersSync, refreshRuntimeUrlAuthToken, setRuntimeBearerToken, setRuntimeExtraHeaders } from './runtime-auth';
 import { runtimeFetch } from './runtime-fetch';
-import { getRuntimeApiBaseUrl, getRuntimeKey, isSshForwardedRuntime, switchRuntimeEndpoint } from './runtime-switch';
+import { getRuntimeApiBaseUrl, getRuntimeKey, isSshForwardedRuntime, subscribeRuntimeEndpointChanged, switchRuntimeEndpoint } from './runtime-switch';
 
 const startupA = 'https://runtime-a.test';
 const savedB = 'https://runtime-b.test/chamber';
+const localOrigin = 'http://127.0.0.1:3000';
 const savedConfig = (defaultHostId: string | null = 'b'): Awaited<ReturnType<typeof desktopHostsGet>> => ({
   hosts: [{ id: 'b', label: 'B', url: savedB, clientToken: 'oc_client_fixture_b', requestHeaders: { 'X-Fixture-Host': 'b' } }],
   defaultHostId,
   initialHostChoiceCompleted: true,
-  localOrigin: 'http://127.0.0.1:3000',
+  localOrigin,
 });
 
 const withReloadedDesktop = async (
   config: Awaited<ReturnType<typeof desktopHostsGet>>,
   run: (requests: Request[], commands: string[]) => Promise<void>,
-  options: { electron?: boolean; failRead?: boolean } = {},
+  options: {
+    electron?: boolean;
+    failRead?: boolean;
+    bootOutcome?: DesktopBootOutcome;
+    initialUrl?: string;
+    initialKey?: string;
+    probeStatus?: 'ok' | 'unreachable' | 'wrong-service' | 'incompatible';
+    probe?: () => Promise<HostProbeResult>;
+  } = {},
 ) => {
   const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
   const previousFetch = globalThis.fetch;
@@ -29,6 +39,7 @@ const withReloadedDesktop = async (
     location: { origin: 'openchamber-ui://app', href: 'openchamber-ui://app/index.html?session=b-session' },
     __OPENCHAMBER_ELECTRON__: { runtime: options.electron === false ? 'web' : 'electron' },
     __OPENCHAMBER_LOCAL_ORIGIN__: config.localOrigin,
+    __OPENCHAMBER_DESKTOP_BOOT_OUTCOME__: options.bootOutcome ?? { target: 'remote', status: 'ok', hostId: 'a', url: startupA },
     __OPENCHAMBER_DESKTOP__: {
       invoke: async (command: string) => {
         commands.push(command);
@@ -37,6 +48,7 @@ const withReloadedDesktop = async (
           return config;
         }
         if (command === 'desktop_local_client_token_get') return 'oc_client_fixture_local';
+        if (command === 'desktop_host_probe') return options.probe ? options.probe() : { status: options.probeStatus ?? 'ok', latencyMs: 1 };
         throw new Error(`unexpected desktop command: ${command}`);
       },
     },
@@ -59,7 +71,8 @@ const withReloadedDesktop = async (
       }
       return new Response(null, { status: 404 });
     }, { preconnect: async () => {} });
-    switchRuntimeEndpoint({ apiBaseUrl: startupA, runtimeKey: 'host:a', clientToken: 'oc_client_fixture_a', requestHeaders: { 'X-Fixture-Host': 'a' } });
+    switchRuntimeEndpoint({ apiBaseUrl: options.initialUrl ?? startupA, runtimeKey: options.initialKey ?? 'host:a', clientToken: 'oc_client_fixture_a', requestHeaders: { 'X-Fixture-Host': 'a' } });
+    await refreshRuntimeUrlAuthToken(options.initialUrl ?? startupA).catch(() => {});
     await run(requests, commands);
   } finally {
     clearRuntimeUrlAuthToken();
@@ -175,5 +188,83 @@ describe('desktop default restore before application mount', () => {
       expect(getRuntimeApiBaseUrl()).toBe(savedB);
       expect(isSshForwardedRuntime()).toBe(true);
     });
+  });
+
+  test('first load and reload retain Local after the default SSH tunnel fails without probing its forward', async () => {
+    const config = savedConfig();
+    config.hosts[0].url = 'http://127.0.0.1:43001';
+    for (let load = 0; load < 3; load += 1) {
+      await withReloadedDesktop(config, async (requests, commands) => {
+        requests.length = 0;
+        await restoreDesktopRuntime();
+        expect(getRuntimeApiBaseUrl()).toBe(localOrigin);
+        expect(getRuntimeKey()).toBe('local');
+        expect(getRuntimeBearerTokenSync()).toBe('oc_client_fixture_a');
+        expect(commands).toEqual(['desktop_hosts_get']);
+        expect(requests.some((request) => request.url.includes(':43001'))).toBe(false);
+      }, { initialUrl: localOrigin, initialKey: 'local', bootOutcome: { target: 'local', status: 'ok', sshStartupFallbackHostId: 'b' } });
+    }
+  });
+
+  test('keeps the shell recovery runtime for an unreachable direct default on first load', async () => {
+    await withReloadedDesktop(savedConfig(), async (_, commands) => {
+      await restoreDesktopRuntime();
+      expect(getRuntimeApiBaseUrl()).toBe(startupA);
+      expect(commands).toEqual(['desktop_hosts_get']);
+    }, { bootOutcome: { target: 'remote', status: 'unreachable', hostId: 'b', url: savedB } });
+  });
+
+  test('rechecks a direct default after settings recompute reports remote-ok but its endpoint is still unreachable', async () => {
+    await withReloadedDesktop(savedConfig(), async () => {
+      await restoreDesktopRuntime();
+      expect(getRuntimeApiBaseUrl()).toBe(startupA);
+      expect(getRuntimeBearerTokenSync()).toBe('oc_client_fixture_a');
+    }, { bootOutcome: { target: 'remote', status: 'ok', hostId: 'b', url: savedB }, probeStatus: 'unreachable' });
+  });
+
+  test('does not restore a changed saved default whose probe identifies the wrong service or version', async () => {
+    for (const probeStatus of ['wrong-service', 'incompatible'] as const) {
+      await withReloadedDesktop(savedConfig(), async () => {
+        await restoreDesktopRuntime();
+        expect(getRuntimeApiBaseUrl()).toBe(startupA);
+      }, { probeStatus });
+    }
+  });
+
+  test('an already active direct default does not emit changes, reprobe or mint URL tokens', async () => {
+    await withReloadedDesktop(savedConfig(), async (requests, commands) => {
+      switchRuntimeEndpoint({ apiBaseUrl: savedB, runtimeKey: 'host:b', clientToken: 'oc_client_fixture_b', requestHeaders: { 'X-Fixture-Host': 'b' } });
+      await refreshRuntimeUrlAuthToken(savedB);
+      requests.length = 0;
+      let changes = 0;
+      const stop = subscribeRuntimeEndpointChanged(() => { changes += 1; });
+      try {
+        await restoreDesktopRuntime();
+        expect(changes).toBe(0);
+        expect(commands).toEqual(['desktop_hosts_get']);
+        expect(requests).toEqual([]);
+      } finally { stop(); }
+    }, { bootOutcome: { target: 'remote', status: 'ok', hostId: 'b', url: savedB } });
+  });
+
+  test('matching identity still replaces stale direct credentials and headers', async () => {
+    await withReloadedDesktop(savedConfig(), async () => {
+      switchRuntimeEndpoint({ apiBaseUrl: savedB, runtimeKey: 'host:b', clientToken: 'oc_client_fixture_stale', requestHeaders: { 'X-Fixture-Host': 'stale' } });
+      await restoreDesktopRuntime();
+      expect(getRuntimeBearerTokenSync()).toBe('oc_client_fixture_b');
+      expect(getRuntimeExtraHeadersSync()).toEqual({ 'X-Fixture-Host': 'b' });
+    });
+  });
+
+  test('does not replace a runtime selected while the direct probe is pending', async () => {
+    await withReloadedDesktop(savedConfig(), async () => {
+      await restoreDesktopRuntime();
+      expect(getRuntimeKey()).toBe('host:c');
+      expect(getRuntimeApiBaseUrl()).toBe('https://runtime-c.test');
+      expect(getRuntimeBearerTokenSync()).toBe('oc_client_fixture_c');
+    }, { probe: async () => {
+      switchRuntimeEndpoint({ apiBaseUrl: 'https://runtime-c.test', runtimeKey: 'host:c', clientToken: 'oc_client_fixture_c' });
+      return { status: 'ok', latencyMs: 1 };
+    } });
   });
 });

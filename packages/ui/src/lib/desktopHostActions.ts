@@ -9,7 +9,7 @@
 import { takePendingDesktopHostActions } from '@/lib/desktop';
 import { runtimeKeyForDesktopHost } from '@/lib/desktopCurrentHost';
 import { desktopHostsGet, desktopHostsSet, getDesktopHostApiUrl, importDesktopHostPairing, normalizeHostUrl } from '@/lib/desktopHosts';
-import { restoreDesktopRuntime } from '@/lib/desktopRelayRestore';
+import { restoreDesktopRuntime } from '@/lib/desktopRuntimeRestore';
 import { switchRuntimeEndpoint } from '@/lib/runtime-switch';
 
 type HostActionFailure = 'invalid-link' | 'unreachable' | 'failed';
