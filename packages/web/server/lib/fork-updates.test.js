@@ -9,6 +9,7 @@ it.each([
   ['2.4.0-internetisalie.1', '2.4.0-internetisalie.2', false],
   ['2.4.1-internetisalie.1', '2.4.0-internetisalie.10', true],
   ['2.4.0-internetisalie.1', '2.4.0', null],
+  ['2.4.0-internetisalie.1', '2.4.0-internetisalie.dev', null],
   ['2.4.0-internetisalie.1', '2.4.0-internetisalie.abcdef', null],
 ])('compares %s with %s', (target, current, expected) => {
   expect(isNewerForkVersion(target, current)).toBe(expected);
