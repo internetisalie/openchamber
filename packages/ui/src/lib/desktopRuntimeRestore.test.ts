@@ -3,6 +3,7 @@ import { restoreDesktopRuntime } from './desktopRuntimeRestore';
 import { desktopHostsGet, type HostProbeResult } from './desktopHosts';
 import type { DesktopBootOutcome } from './desktopBoot';
 import { resolveGuestFrameUrl } from './guests/frame-url';
+import { adoptRelayTunnel, deactivateRelayTunnel, getActiveRelayTunnel } from './relay/runtime-tunnel';
 import { clearRuntimeUrlAuthToken, getRuntimeBearerTokenSync, getRuntimeExtraHeadersSync, refreshRuntimeUrlAuthToken, setRuntimeBearerToken, setRuntimeExtraHeaders } from './runtime-auth';
 import { runtimeFetch } from './runtime-fetch';
 import { getRuntimeApiBaseUrl, getRuntimeKey, isSshForwardedRuntime, subscribeRuntimeEndpointChanged, switchRuntimeEndpoint } from './runtime-switch';
@@ -82,6 +83,14 @@ const withReloadedDesktop = async (
     if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow);
     else Reflect.deleteProperty(globalThis, 'window');
   }
+};
+
+const selectMatchingB = async (
+  config: Awaited<ReturnType<typeof desktopHostsGet>>,
+  changes: Partial<Parameters<typeof switchRuntimeEndpoint>[0]> = {},
+) => {
+  switchRuntimeEndpoint({ apiBaseUrl: savedB, runtimeKey: 'host:b', clientToken: config.hosts[0].clientToken, requestHeaders: config.hosts[0].requestHeaders, sshForwarded: config.hosts[0].sshForwarded === true, ...changes });
+  await refreshRuntimeUrlAuthToken(changes.apiBaseUrl ?? savedB).catch(() => {});
 };
 
 describe('desktop default restore before application mount', () => {
@@ -266,5 +275,83 @@ describe('desktop default restore before application mount', () => {
       switchRuntimeEndpoint({ apiBaseUrl: 'https://runtime-c.test', runtimeKey: 'host:c', clientToken: 'oc_client_fixture_c' });
       return { status: 'ok', latencyMs: 1 };
     } });
+  });
+
+  test('replaces a token-only mismatch when the saved host has no request headers', async () => {
+    const config = savedConfig();
+    delete config.hosts[0].requestHeaders;
+    await withReloadedDesktop(config, async () => {
+      await selectMatchingB(config, { clientToken: 'oc_client_fixture_stale' });
+      await restoreDesktopRuntime();
+      expect(getRuntimeBearerTokenSync()).toBe('oc_client_fixture_b');
+      expect(getRuntimeExtraHeadersSync()).toEqual({});
+    });
+  });
+
+  test('replaces a header-value-only mismatch with an unchanged token and endpoint', async () => {
+    const config = savedConfig();
+    await withReloadedDesktop(config, async () => {
+      await selectMatchingB(config, { requestHeaders: { 'X-Fixture-Host': 'stale' } });
+      await restoreDesktopRuntime();
+      expect(getRuntimeExtraHeadersSync()).toEqual({ 'X-Fixture-Host': 'b' });
+    });
+  });
+
+  test('drops an extra active header when all saved header values already match', async () => {
+    const config = savedConfig();
+    await withReloadedDesktop(config, async () => {
+      await selectMatchingB(config, { requestHeaders: { 'X-Fixture-Host': 'b', 'X-Fixture-Stale': 'remove' } });
+      await restoreDesktopRuntime();
+      expect(getRuntimeExtraHeadersSync()).toEqual({ 'X-Fixture-Host': 'b' });
+    });
+  });
+
+  test('replaces a URL-only mismatch within the same runtime identity and credentials', async () => {
+    const config = savedConfig();
+    await withReloadedDesktop(config, async () => {
+      await selectMatchingB(config, { apiBaseUrl: 'https://runtime-b.test/old-path' });
+      await restoreDesktopRuntime();
+      expect(getRuntimeApiBaseUrl()).toBe(savedB);
+    });
+  });
+
+  test('replaces an SSH-flag-only mismatch with the shell-confirmed forwarding state', async () => {
+    const config = savedConfig();
+    config.hosts[0].sshForwarded = true;
+    await withReloadedDesktop(config, async () => {
+      await selectMatchingB(config, { sshForwarded: false });
+      await restoreDesktopRuntime();
+      expect(isSshForwardedRuntime()).toBe(true);
+    });
+  });
+
+  test('replaces a key-only mismatch even when URL, credentials and transport match', async () => {
+    const config = savedConfig();
+    await withReloadedDesktop(config, async () => {
+      await selectMatchingB(config, { runtimeKey: 'host:stale-b' });
+      await restoreDesktopRuntime();
+      expect(getRuntimeKey()).toBe('host:b');
+    });
+  });
+
+  test('replaces only the active relay transport when all direct runtime fields match', async () => {
+    const config = savedConfig();
+    await withReloadedDesktop(config, async () => {
+      await selectMatchingB(config);
+      let closed = false;
+      adoptRelayTunnel({ relayUrl: 'wss://relay.fixture.invalid', serverId: 'fixture-b', hostEncPubJwk: {} }, {
+        fetch: async () => { throw new Error('unexpected relay fetch'); },
+        openWebSocket: () => { throw new Error('unexpected relay socket'); },
+        getStatus: () => ({ state: 'idle' }),
+        subscribeStatus: () => () => {},
+        retry: () => {},
+        close: () => { closed = true; },
+      });
+      try {
+        await restoreDesktopRuntime();
+        expect(getActiveRelayTunnel()).toBeNull();
+        expect(closed).toBe(true);
+      } finally { deactivateRelayTunnel(); }
+    });
   });
 });

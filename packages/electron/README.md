@@ -29,8 +29,12 @@ Selecting a default does not switch the already-running renderer. Windows opened
 for a specific instance and `OPENCHAMBER_SERVER_URL` keep their explicit target;
 relay-capable windows select their transport through the desktop restore path.
 Native fallback and recovery outcomes stay authoritative for direct defaults.
-A failed SSH startup stays on Local without probing the torn-down forward;
-saving settings does not clear that failure until the shell has a live forward.
+A recorded failed SSH startup uses the shell's Local binding for the main window,
+its reload, a reopened main window and the menu New Window, without injecting
+the failed forward's token or headers. With no Local backend, new bundled windows
+carry no API binding or runtime credentials. Saving settings retains that recorded
+failure until the shell has a live forward; an untried default or a temporarily
+reconnecting successful boot does not acquire a startup-failure marker.
 A known unreachable direct default remains rejected through settings saves.
 A different saved direct endpoint must pass the native host probe before restore;
 an already active endpoint with the same identity and credentials is a no-op.
