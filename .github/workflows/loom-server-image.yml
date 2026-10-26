@@ -13,7 +13,7 @@ on:
       - bun.lock
   push:
     branches: [v2-fork-trunk]
-    tags: [loom-image-*]
+    tags: [loom-image-*, v*-internetisalie.*]
   workflow_dispatch:
 
 permissions:
@@ -26,6 +26,32 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
+        with:
+          node-version: '24.14.0'
+      - name: Stamp fork release identity
+        id: fork_version
+        run: |
+          set -euo pipefail
+          APP_VERSION=$(node -p "require('./packages/web/package.json').version")
+          IMAGE_TAG="$GITHUB_SHA"
+          if [ "$GITHUB_REF_TYPE" = tag ] && [[ "$GITHUB_REF_NAME" == v* ]]; then
+            FORK_RELEASE="${GITHUB_REF_NAME#v}"
+            [[ "$FORK_RELEASE" =~ ^[0-9]+\.[0-9]+\.[0-9]+-internetisalie\.[1-9][0-9]*$ ]]
+            test "${FORK_RELEASE%-internetisalie.*}" = "$APP_VERSION"
+            IMAGE_TAG="$GITHUB_REF_NAME"
+          else
+            FORK_RELEASE="${APP_VERSION}-internetisalie.dev"
+          fi
+          export FORK_RELEASE
+          node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const path = 'packages/web/package.json';
+          const pkg = JSON.parse(readFileSync(path, 'utf8'));
+          pkg.forkRelease = process.env.FORK_RELEASE;
+          writeFileSync(path, `${JSON.stringify(pkg, null, 2)}\n`);
+          NODE
+          echo "image_tag=$IMAGE_TAG" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
       - name: Login to GHCR
         if: github.event_name != 'pull_request'
@@ -41,4 +67,4 @@ jobs:
           file: Dockerfile
           platforms: linux/amd64
           push: ${{ github.event_name != 'pull_request' }}
-          tags: ghcr.io/internetisalie/openchamber:${{ github.sha }}
+          tags: ghcr.io/internetisalie/openchamber:${{ steps.fork_version.outputs.image_tag }}

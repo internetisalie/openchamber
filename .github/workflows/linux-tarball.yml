@@ -46,14 +46,24 @@ jobs:
           APP_VERSION=$(node -p "require('./packages/electron/package.json').version")
           SDK_VERSION=$(node -p "require('./packages/sdk/package.json').version")
           WEB_VERSION=$(node -p "require('./packages/web/package.json').version")
-          FORK_RELEASE=$(node -p "require('./packages/web/package.json').forkRelease")
           test "$SDK_VERSION" = "$APP_VERSION"
           test "$WEB_VERSION" = "$APP_VERSION"
           if [ "$GITHUB_REF_TYPE" = tag ]; then
+            [[ "$GITHUB_REF_NAME" == v* ]]
+            FORK_RELEASE="${GITHUB_REF_NAME#v}"
             [[ "$FORK_RELEASE" =~ ^[0-9]+\.[0-9]+\.[0-9]+-internetisalie\.[1-9][0-9]*$ ]]
             test "${FORK_RELEASE%-internetisalie.*}" = "$APP_VERSION"
-            test "$GITHUB_REF_NAME" = "v$FORK_RELEASE"
+          else
+            FORK_RELEASE="${APP_VERSION}-internetisalie.dev"
           fi
+          export FORK_RELEASE
+          node --input-type=module <<'NODE'
+          import { readFileSync, writeFileSync } from 'node:fs';
+          const path = 'packages/web/package.json';
+          const pkg = JSON.parse(readFileSync(path, 'utf8'));
+          pkg.forkRelease = process.env.FORK_RELEASE;
+          writeFileSync(path, `${JSON.stringify(pkg, null, 2)}\n`);
+          NODE
           echo "app=$APP_VERSION" >> "$GITHUB_OUTPUT"
           echo "fork=$FORK_RELEASE" >> "$GITHUB_OUTPUT"
 
