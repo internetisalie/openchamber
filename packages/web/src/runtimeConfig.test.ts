@@ -15,13 +15,13 @@ vi.mock('@openchamber/ui/lib/runtime-switch', () => ({
   initializeRuntimeEndpoint: vi.fn(),
   switchRuntimeEndpoint: vi.fn(),
 }));
-vi.mock('@openchamber/ui/lib/desktopRelayRestore', () => ({ restoreDesktopRelayRuntime: vi.fn(() => Promise.resolve()) }));
+vi.mock('@openchamber/ui/lib/desktopRelayRestore', () => ({ restoreDesktopRuntime: vi.fn(() => Promise.resolve()) }));
 vi.mock('@openchamber/ui/lib/runtime-url', () => ({ configureRuntimeUrlResolver: vi.fn(() => ({})) }));
 vi.mock('@openchamber/ui/lib/opencode/client', () => ({ opencodeClient: { reconnectToRuntimeBaseUrl: vi.fn() } }));
 vi.mock('./api', () => ({ createWebAPIs: vi.fn() }));
 
 import { initializeRuntimeEndpoint } from '@openchamber/ui/lib/runtime-switch';
-import { restoreDesktopRelayRuntime } from '@openchamber/ui/lib/desktopRelayRestore';
+import { restoreDesktopRuntime } from '@openchamber/ui/lib/desktopRelayRestore';
 import { createConfiguredWebAPIs, readRuntimeBootstrapConfig } from './runtimeConfig';
 
 const originalWindow = globalThis.window;
@@ -124,7 +124,7 @@ describe('createConfiguredWebAPIs', () => {
 
     createConfiguredWebAPIs();
 
-    expect(restoreDesktopRelayRuntime).not.toHaveBeenCalled();
+    expect(restoreDesktopRuntime).not.toHaveBeenCalled();
   });
 
   test('a relay-capable explicit window still restores through its injected host id', () => {
@@ -137,7 +137,7 @@ describe('createConfiguredWebAPIs', () => {
 
     createConfiguredWebAPIs();
 
-    expect(restoreDesktopRelayRuntime).toHaveBeenCalledWith('relay-host', { reconnectActive: true });
+    expect(restoreDesktopRuntime).toHaveBeenCalledWith('relay-host', { reconnectActive: true });
   });
 
   test('the main window still restores the default host', () => {
@@ -148,6 +148,19 @@ describe('createConfiguredWebAPIs', () => {
 
     createConfiguredWebAPIs();
 
-    expect(restoreDesktopRelayRuntime).toHaveBeenCalledWith();
+    expect(restoreDesktopRuntime).toHaveBeenCalledWith();
+  });
+
+  test('an environment-selected instance keeps its runtime instead of the saved default', () => {
+    const current = makeWindow();
+    current.__OPENCHAMBER_API_BASE_URL__ = 'https://forced.example.com';
+    current.__OPENCHAMBER_DESKTOP_BOOT_OUTCOME__ = {
+      target: 'remote', status: 'ok', hostId: '__env', url: 'https://forced.example.com',
+    };
+    installWindow(current);
+
+    createConfiguredWebAPIs();
+
+    expect(restoreDesktopRuntime).not.toHaveBeenCalled();
   });
 });

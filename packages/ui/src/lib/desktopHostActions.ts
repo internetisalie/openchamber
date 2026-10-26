@@ -9,7 +9,7 @@
 import { takePendingDesktopHostActions } from '@/lib/desktop';
 import { runtimeKeyForDesktopHost } from '@/lib/desktopCurrentHost';
 import { desktopHostsGet, desktopHostsSet, getDesktopHostApiUrl, importDesktopHostPairing, normalizeHostUrl } from '@/lib/desktopHosts';
-import { restoreDesktopRelayRuntime } from '@/lib/desktopRelayRestore';
+import { restoreDesktopRuntime } from '@/lib/desktopRelayRestore';
 import { switchRuntimeEndpoint } from '@/lib/runtime-switch';
 
 type HostActionFailure = 'invalid-link' | 'unreachable' | 'failed';
@@ -24,7 +24,7 @@ const activateHost = async (hostId: string, options?: { reconnectActive?: boolea
   const host = (await desktopHostsGet()).hosts.find((entry) => entry.id === hostId);
   if (!host) throw new Error('host-not-found');
   if (host.relay) {
-    await restoreDesktopRelayRuntime(host.id, options);
+    await restoreDesktopRuntime(host.id, options);
     return;
   }
   const apiBaseUrl = normalizeHostUrl(getDesktopHostApiUrl(host));

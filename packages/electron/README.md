@@ -16,6 +16,15 @@ backend. Its injected empty local origin stays authoritative: the bundled
 When a local backend is enabled, its configured HTTP origin remains listed even
 while it is unreachable.
 
+The main renderer restores the saved default instance before mounting the
+application, including after a renderer-only reload. The restore replaces the
+API endpoint, client token, request headers and runtime identity together.
+An explicitly empty token or header set clears the previous instance's credentials;
+only uninitialized authentication falls back to preload-injected values.
+Selecting a default does not switch the already-running renderer. Windows opened
+for a specific instance and `OPENCHAMBER_SERVER_URL` keep their explicit target;
+relay-capable windows select their transport through the desktop restore path.
+
 Sandboxed extension frames may load `/api/guests/` pages from the window's
 configured HTTP(S) API origin, including serverless launches with bundled UI.
 This permission is limited to extension pages; it does not change top-level

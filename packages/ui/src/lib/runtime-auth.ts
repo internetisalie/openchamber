@@ -8,8 +8,8 @@ type RuntimeAuthCredential =
 type RuntimeAuthCredentialProvider = () => RuntimeAuthCredential | Promise<RuntimeAuthCredential>;
 
 let credentialProvider: RuntimeAuthCredentialProvider = () => null;
-let runtimeBearerToken = '';
-let runtimeExtraHeaders: Record<string, string> = {};
+let runtimeBearerToken: string | null = null;
+let runtimeExtraHeaders: Record<string, string> | null = null;
 let runtimeUrlAuthToken = '';
 let runtimeUrlAuthTokenExpiresAt = 0;
 let runtimeUrlAuthRefreshPromise: Promise<string> | null = null;
@@ -102,13 +102,13 @@ const resetRuntimeAuthGeneration = (): void => {
 };
 
 export const setRuntimeAuthCredentialProvider = (provider: RuntimeAuthCredentialProvider): void => {
-  runtimeBearerToken = '';
+  runtimeBearerToken = null;
   resetRuntimeAuthGeneration();
   credentialProvider = provider;
 };
 
 export const clearRuntimeAuthCredentialProvider = (): void => {
-  runtimeBearerToken = '';
+  runtimeBearerToken = null;
   resetRuntimeAuthGeneration();
   credentialProvider = () => null;
 };
@@ -124,19 +124,19 @@ export const setRuntimeExtraHeaders = (headers: Record<string, string> | null | 
   // These headers are for runtime HTTP fetches and URL-token minting. Browser-owned
   // realtime transports (EventSource/WebSocket) cannot attach arbitrary headers.
   const next = sanitizeRuntimeExtraHeaders(headers);
-  if (runtimeExtraHeadersEqual(runtimeExtraHeaders, next)) return;
+  if (runtimeExtraHeaders !== null && runtimeExtraHeadersEqual(runtimeExtraHeaders, next)) return;
   runtimeExtraHeaders = next;
   resetRuntimeAuthGeneration();
 };
 
 export const getRuntimeExtraHeadersSync = (): Record<string, string> => {
-  if (Object.keys(runtimeExtraHeaders).length > 0) return runtimeExtraHeaders;
+  if (runtimeExtraHeaders !== null) return runtimeExtraHeaders;
   if (typeof window === 'undefined') return {};
   const injected = (window as typeof window & { __OPENCHAMBER_RUNTIME_HEADERS__?: Record<string, string> }).__OPENCHAMBER_RUNTIME_HEADERS__;
   return injected && typeof injected === 'object' ? sanitizeRuntimeExtraHeaders(injected) : {};
 };
 
-export const getRuntimeBearerTokenSync = (): string => runtimeBearerToken || readInjectedBearerToken();
+export const getRuntimeBearerTokenSync = (): string => runtimeBearerToken ?? readInjectedBearerToken();
 
 export const setRuntimeUrlAuthToken = (token: string | null | undefined, expiresAt: number | null | undefined): void => {
   const normalized = normalizeBearerToken(token);

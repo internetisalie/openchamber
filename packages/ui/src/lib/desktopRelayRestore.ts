@@ -1,5 +1,5 @@
 import { isElectronShell } from '@/lib/desktop';
-import { desktopHostProbe, desktopHostsGet, desktopHostsSet, getDesktopHostApiUrl, normalizeHostUrl } from '@/lib/desktopHosts';
+import { desktopHostProbe, desktopHostsGet, desktopHostsSet, desktopLocalClientTokenGet, getDesktopHostApiUrl, normalizeHostUrl } from '@/lib/desktopHosts';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import { getRuntimeKey, switchRuntimeEndpoint } from '@/lib/runtime-switch';
 
@@ -100,18 +100,14 @@ export const scheduleDesktopHostCandidateRefresh = (hostId: string): void => {
 };
 
 /**
- * On desktop startup, reconnect a relay-capable default host. The Electron
- * shell boots the LOCAL UI for any host that carries a relay leg and defers
- * transport selection to the renderer: here we probe the direct address first
- * (cheap, preferred on the home network) and fall back to the E2EE tunnel via
- * switchRuntimeEndpoint({ relay }) — the multi-transport model mobile uses.
- * Direct-only hosts never reach this path (the shell injects their
- * apiBaseUrl/token as window globals before render).
+ * Restore the saved desktop host before the application mounts. Direct hosts
+ * replace the injected endpoint and credentials; relay-capable hosts select a
+ * reachable direct address or the E2EE tunnel.
  *
  * Safe to call unconditionally; it is a no-op outside the Electron shell and when
- * the default host is local or already active.
+ * no saved target exists. Explicit-instance windows supply their own host id.
  */
-export const restoreDesktopRelayRuntime = async (
+export const restoreDesktopRuntime = async (
   targetHostId?: string,
   options?: { reconnectActive?: boolean },
 ): Promise<void> => {
@@ -120,10 +116,29 @@ export const restoreDesktopRelayRuntime = async (
   if (!config) return;
   // An explicit target (a "new window for host X") wins over the default-host
   // relaunch logic.
-  const hostId = targetHostId || (config.defaultHostId !== 'local' ? config.defaultHostId : null);
+  const hostId = targetHostId || config.defaultHostId;
   if (!hostId) return;
+  if (hostId === 'local') {
+    const localOrigin = normalizeHostUrl(config.localOrigin || '');
+    if (!localOrigin) return;
+    const clientToken = await desktopLocalClientTokenGet();
+    switchRuntimeEndpoint({ apiBaseUrl: localOrigin, clientToken, runtimeKey: 'local' });
+    return;
+  }
   const host = config.hosts.find((entry) => entry.id === hostId);
-  if (!host?.relay) return;
+  if (!host) return;
+  if (!host.relay) {
+    const apiBaseUrl = normalizeHostUrl(getDesktopHostApiUrl(host));
+    if (!apiBaseUrl) return;
+    switchRuntimeEndpoint({
+      apiBaseUrl,
+      clientToken: host.clientToken || null,
+      requestHeaders: host.requestHeaders || null,
+      runtimeKey: `host:${host.id}`,
+      sshForwarded: host.sshForwarded === true,
+    });
+    return;
+  }
   // Must match runtimeKeyForHost() in DesktopHostSwitcher so switch/resolve agree.
   const runtimeKey = `host:${host.id}`;
   // `reconnectActive`: the host was just paired again and carries a new token,
