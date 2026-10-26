@@ -2,10 +2,10 @@ name: fork PR checks
 
 on:
   pull_request:
-    branches: [v2.0.1-internetisalie-trunk]
+    branches: [v2-fork-trunk]
     types: [opened, synchronize, reopened, ready_for_review]
   push:
-    branches: [v2.0.1-internetisalie-trunk]
+    branches: [v2-fork-trunk]
 
 permissions:
   contents: read
