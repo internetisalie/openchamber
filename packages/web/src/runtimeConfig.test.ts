@@ -1,4 +1,6 @@
 import { afterAll, beforeEach, describe, expect, test, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { runInNewContext } from 'node:vm';
 
 vi.mock('@openchamber/ui/lib/runtime-auth', () => ({
   getRuntimeBearerTokenSync: vi.fn(() => ''),
@@ -22,7 +24,7 @@ vi.mock('./api', () => ({ createWebAPIs: vi.fn() }));
 
 import { initializeRuntimeEndpoint } from '@openchamber/ui/lib/runtime-switch';
 import { restoreDesktopRuntime } from '@openchamber/ui/lib/desktopRuntimeRestore';
-import { createConfiguredWebAPIs, readRuntimeBootstrapConfig } from './runtimeConfig';
+import { createConfiguredWebAPIs, getDesktopRuntimeRestoreReady, readRuntimeBootstrapConfig } from './runtimeConfig';
 
 const originalWindow = globalThis.window;
 
@@ -94,6 +96,49 @@ describe('readRuntimeBootstrapConfig', () => {
 });
 
 describe('createConfiguredWebAPIs', () => {
+  test('readiness stays pending until the desktop restore finishes', async () => {
+    let finishRestore!: () => void;
+    vi.mocked(restoreDesktopRuntime).mockReturnValueOnce(new Promise<void>((resolve) => { finishRestore = resolve; }));
+    const settled = vi.fn();
+    vi.useFakeTimers();
+    try {
+      createConfiguredWebAPIs();
+      const ready = getDesktopRuntimeRestoreReady().then(settled);
+      await vi.advanceTimersByTimeAsync(0);
+      expect(settled).not.toHaveBeenCalled();
+      finishRestore();
+      await ready;
+      expect(settled).toHaveBeenCalledOnce();
+    } finally { vi.useRealTimers(); }
+  });
+
+  test('the actual main start sequence mounts only after saved-default readiness', async () => {
+    let finishRestore!: () => void;
+    vi.mocked(restoreDesktopRuntime).mockReturnValueOnce(new Promise<void>((resolve) => { finishRestore = resolve; }));
+    const source = readFileSync(new URL('./main.tsx', import.meta.url), 'utf8');
+    const start = source.indexOf('const start = async (): Promise<void> => {');
+    expect(start).toBeGreaterThan(-1);
+    const sequence = source.slice(start, source.indexOf('\n};', start) + 4)
+      .replace(': Promise<void>', '')
+      .replace("import('@openchamber/ui/main')", 'mountDesktop()')
+      .replace("import('@openchamber/ui/apps/renderMobileApp')", 'mountMobile()');
+    const mountDesktop = vi.fn(async () => ({}));
+    const mountMobile = vi.fn();
+    vi.useFakeTimers();
+    try {
+      const running: Promise<void> = runInNewContext(`${sequence}; start();`, {
+        window, hostedSurface: 'desktop', createConfiguredWebAPIs, getDesktopRuntimeRestoreReady,
+        watchHostedSurfaceViewport: vi.fn(), mountDesktop, mountMobile,
+      });
+      await vi.advanceTimersByTimeAsync(0);
+      expect(mountDesktop).not.toHaveBeenCalled();
+      finishRestore();
+      await running;
+      expect(mountDesktop).toHaveBeenCalledOnce();
+      expect(mountMobile).not.toHaveBeenCalled();
+    } finally { vi.useRealTimers(); }
+  });
+
   test('uses the configured desktop host id across changing SSH tunnel URLs', () => {
     const current = makeWindow();
     current.__OPENCHAMBER_DESKTOP_BOOT_OUTCOME__ = {

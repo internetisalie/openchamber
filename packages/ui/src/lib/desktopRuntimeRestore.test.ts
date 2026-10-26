@@ -118,6 +118,45 @@ describe('desktop default restore before application mount', () => {
     });
   });
 
+  test('an already active Local default does not switch, reread its token or mint URL auth', async () => {
+    await withReloadedDesktop(savedConfig('local'), async (requests, commands) => {
+      switchRuntimeEndpoint({ apiBaseUrl: localOrigin, runtimeKey: 'local', clientToken: 'oc_client_fixture_local' });
+      await refreshRuntimeUrlAuthToken(localOrigin);
+      requests.length = 0;
+      let changes = 0;
+      const stop = subscribeRuntimeEndpointChanged(() => { changes += 1; });
+      try {
+        await restoreDesktopRuntime();
+        expect(getRuntimeBearerTokenSync()).toBe('oc_client_fixture_local');
+        expect(changes).toBe(0);
+        expect(commands).toEqual(['desktop_hosts_get']);
+        expect(requests).toEqual([]);
+      } finally { stop(); }
+    }, { bootOutcome: { target: 'local', status: 'ok' } });
+  });
+
+  test('a Local identity with stale host headers restores the shell Local binding', async () => {
+    await withReloadedDesktop(savedConfig('local'), async () => {
+      await restoreDesktopRuntime();
+      expect(getRuntimeBearerTokenSync()).toBe('oc_client_fixture_local');
+      expect(getRuntimeExtraHeadersSync()).toEqual({});
+    }, { initialUrl: localOrigin, initialKey: 'local', bootOutcome: { target: 'local', status: 'ok' } });
+  });
+
+  test('an explicit active relay host reaches the existing delegation with its reconnect option', async () => {
+    const config = savedConfig('local');
+    config.hosts[0].apiUrl = savedB;
+    config.hosts[0].relay = { relayUrl: 'wss://relay.fixture.invalid', serverId: 'fixture-b', hostEncPubJwk: {} };
+    await withReloadedDesktop(config, async (_, commands) => {
+      await selectMatchingB(config);
+      await restoreDesktopRuntime('b', { reconnectActive: true });
+      expect(commands).toEqual(['desktop_hosts_get', 'desktop_hosts_get', 'desktop_host_probe']);
+      expect(getRuntimeApiBaseUrl()).toBe(savedB);
+      expect(getRuntimeKey()).toBe('host:b');
+      expect(getRuntimeBearerTokenSync()).toBe('oc_client_fixture_b');
+    });
+  });
+
   test('does not carry immutable A credentials to a direct B with no credentials', async () => {
     const config = savedConfig();
     delete config.hosts[0].clientToken;
@@ -203,6 +242,19 @@ describe('desktop default restore before application mount', () => {
       expect(getRuntimeApiBaseUrl()).toBe(startupA);
       expect(commands).toEqual(['desktop_hosts_get']);
     }, { bootOutcome: { target: 'remote', status: 'unreachable', hostId: 'b', url: savedB } });
+  });
+
+  test('a startup failure for another host does not block the later saved default', async () => {
+    for (const bootOutcome of [
+      { target: 'remote', status: 'unreachable', hostId: 'a', url: startupA },
+      { target: 'local', status: 'ok', sshStartupFallbackHostId: 'a' },
+    ] satisfies DesktopBootOutcome[]) {
+      await withReloadedDesktop(savedConfig(), async () => {
+        await restoreDesktopRuntime();
+        expect(getRuntimeApiBaseUrl()).toBe(savedB);
+        expect(getRuntimeKey()).toBe('host:b');
+      }, { bootOutcome });
+    }
   });
 
   test('rechecks a direct default after settings recompute reports remote-ok but its endpoint is still unreachable', async () => {

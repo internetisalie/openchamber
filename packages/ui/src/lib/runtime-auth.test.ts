@@ -13,6 +13,23 @@ import {
 } from './runtime-auth';
 
 describe('runtime auth headers', () => {
+  test('uninitialized runtime headers read preload, while explicit empty headers clear it', async () => {
+    const previousWindow = Object.getOwnPropertyDescriptor(globalThis, 'window');
+    const auth: typeof import('./runtime-auth') = await import(`./runtime-auth.ts?uninitialized-headers=${Date.now()}`);
+    try {
+      Object.defineProperty(globalThis, 'window', {
+        configurable: true,
+        value: { __OPENCHAMBER_RUNTIME_HEADERS__: { 'X-Fixture-Startup': 'a' } },
+      });
+      expect(auth.getRuntimeExtraHeadersSync()).toEqual({ 'X-Fixture-Startup': 'a' });
+      auth.setRuntimeExtraHeaders({});
+      expect(auth.getRuntimeExtraHeadersSync()).toEqual({});
+    } finally {
+      if (previousWindow) Object.defineProperty(globalThis, 'window', previousWindow);
+      else Reflect.deleteProperty(globalThis, 'window');
+    }
+  });
+
   test('does not add authorization by default', async () => {
     clearRuntimeAuthCredentialProvider();
     const headers = await buildRuntimeAuthHeaders({ Accept: 'application/json' });
