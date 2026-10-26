@@ -1,13 +1,10 @@
 import { isElectronShell } from '@/lib/desktop';
 import { getInjectedBootOutcome } from '@/lib/desktopBoot';
 import { desktopHostProbe, desktopHostsGet, desktopLocalClientTokenGet, getDesktopHostApiUrl, normalizeHostUrl, type DesktopHost, type HostProbeResult } from '@/lib/desktopHosts';
-import { scheduleDesktopHostCandidateRefresh } from '@/lib/desktopRelayRestore';
+import { restoreDesktopRelayRuntime } from '@/lib/desktopRelayRestore';
 import { getRuntimeBearerTokenSync, getRuntimeExtraHeadersSync } from '@/lib/runtime-auth';
 import { getActiveRelayTunnel } from '@/lib/relay/runtime-tunnel';
 import { getRuntimeApiBaseUrl, getRuntimeKey, isSshForwardedRuntime, switchRuntimeEndpoint } from '@/lib/runtime-switch';
-
-// Give a stored direct address a headstart before selecting the relay transport.
-const DIRECT_PROBE_HEADSTART_MS = 1_500;
 
 const probeAcceptsRuntime = (probe: HostProbeResult): boolean =>
   probe.status === 'ok' || probe.status === 'auth' || probe.status === 'update-recommended';
@@ -67,34 +64,6 @@ const restoreLocalRuntime = async (localOrigin: string | null | undefined): Prom
   switchRuntimeEndpoint({ apiBaseUrl: url, clientToken, runtimeKey: 'local' });
 };
 
-const switchToRelayHost = (host: DesktopHost): void => {
-  switchRuntimeEndpoint({
-    apiBaseUrl: typeof window !== 'undefined' ? window.location.origin : '',
-    clientToken: host.clientToken || null,
-    runtimeKey: `host:${host.id}`,
-    relay: host.relay,
-  });
-  scheduleDesktopHostCandidateRefresh(host.id);
-};
-
-const restoreRelayHost = async (host: DesktopHost, reconnectActive?: boolean): Promise<void> => {
-  const runtimeKey = `host:${host.id}`;
-  if (getRuntimeKey() === runtimeKey && !reconnectActive) return;
-  const directUrl = host.apiUrl ? normalizeHostUrl(getDesktopHostApiUrl(host)) : null;
-  if (!directUrl) return switchToRelayHost(host);
-  const probePromise = probeDirectHost(host, directUrl);
-  const winner = await Promise.race([
-    probePromise,
-    new Promise<null>((resolve) => setTimeout(() => resolve(null), DIRECT_PROBE_HEADSTART_MS)),
-  ]);
-  if (winner && probeAcceptsRuntime(winner)) return switchToDirectHost(host, directUrl);
-  switchToRelayHost(host);
-  if (winner) return;
-  void probePromise.then((probe) => {
-    if (probeAcceptsRuntime(probe) && getRuntimeKey() === runtimeKey) switchToDirectHost(host, directUrl);
-  });
-};
-
 /** Restore a saved desktop target before mount; preserve native fallback/recovery decisions. */
 export const restoreDesktopRuntime = async (
   targetHostId?: string,
@@ -107,7 +76,7 @@ export const restoreDesktopRuntime = async (
   if (hostId === 'local') return restoreLocalRuntime(config.localOrigin);
   const host = config.hosts.find((entry) => entry.id === hostId);
   if (!host) return;
-  if (host.relay) return restoreRelayHost(host, options?.reconnectActive);
+  if (host.relay) return restoreDesktopRelayRuntime(targetHostId, options);
   if (shellRejectedHost(hostId)) return;
   await restoreDirectHost(host);
 };

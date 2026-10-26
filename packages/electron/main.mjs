@@ -66,7 +66,6 @@ import { RUNTIME_CONFIG_SCRIPT_PATHNAME, claimRuntimeConfigScriptRequest, create
 import { settleMainProcessCompileCache } from './compile-cache.mjs';
 import { probeDirectHostWithRetry } from './host-probe-policy.mjs';
 import { probeElectronHostWithDeadline } from './electron-host-probe.mjs';
-import { recomputeDesktopBootOutcome, resolveDefaultDesktopWindow } from './desktop-boot-fallback.mjs';
 import { requestRemoteHostUpdate } from './remote-host-update.mjs';
 import { assertUpdaterCapability, readLinuxPackageType } from './updater-capability.mjs';
 import { relaunchAfterExit } from './linux-relaunch.mjs';
@@ -2917,10 +2916,13 @@ const openMainWindow = async () => {
       requestHeaders: {},
     });
   }
-  const { targetUrl, runtimeConfig } = resolveDefaultDesktopWindow({
-    config, state, localUiUrl, localClientToken: readDesktopLocalClientToken(), packaged: shouldUsePackagedUi(),
-  });
-  return activateMainWindow(targetUrl, state.localOrigin, state.bootOutcome, runtimeConfig);
+  const apiBaseUrl = host?.apiUrl || host?.url || state.sidecarUrl || state.apiBaseUrl || '';
+  const clientToken = host?.clientToken || resolveStoredClientTokenForUrl(apiBaseUrl, config) || state.clientToken || '';
+  const requestHeaders = sanitizeRuntimeRequestHeaders(host?.requestHeaders || {});
+  const targetUrl = host?.url && apiBaseUrl && !state.unreachableHosts.has(apiBaseUrl)
+    ? (shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : host.url)
+    : localUiUrl;
+  return activateMainWindow(targetUrl, state.localOrigin, state.bootOutcome, { apiBaseUrl, clientToken, requestHeaders });
 };
 
 // A session (and message) to open in a new window, from a link. IDs end up in
@@ -4869,7 +4871,12 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
       if (Object.prototype.hasOwnProperty.call(nextConfigInput, 'localClientToken') && isLocalRuntimeUrl(state.apiBaseUrl || state.sidecarUrl || state.localOrigin || '')) {
         state.clientToken = readDesktopLocalClientToken();
       }
-      state.bootOutcome = recomputeDesktopBootOutcome({ config: updatedConfig, state, envTargetUrl: envTarget, sshManager, computeBootOutcome });
+      state.bootOutcome = computeBootOutcome({
+        envTargetUrl: envTarget || null,
+        probe: null,
+        config: updatedConfig,
+        localAvailable: Boolean(state.sidecarUrl || state.localOrigin),
+      });
       state.initScript = buildInitScript(state.localOrigin, state.bootOutcome, state.apiBaseUrl, state.clientToken, state.requestHeaders || {});
       syncMainWindowInitScript(state.initScript);
       return null;
@@ -4999,9 +5006,24 @@ const handleInvoke = async (browserWindow, command, args = {}) => {
     case 'desktop_new_window': {
       const config = readDesktopHostsConfig();
       const localUiUrl = shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : (state.sidecarUrl || state.localOrigin);
-      const { targetUrl, runtimeConfig } = resolveDefaultDesktopWindow({
-        config, state, localUiUrl, localClientToken: readDesktopLocalClientToken(), packaged: shouldUsePackagedUi(),
-      });
+      let targetUrl = localUiUrl;
+      let runtimeConfig = {
+        apiBaseUrl: state.sidecarUrl || state.localOrigin || '',
+        clientToken: readDesktopLocalClientToken(),
+        requestHeaders: {},
+      };
+      if (config.defaultHostId && config.defaultHostId !== LOCAL_HOST_ID) {
+        const host = config.hosts.find((entry) => entry.id === config.defaultHostId);
+        const apiUrl = host?.apiUrl || host?.url;
+        if (host?.url && apiUrl && !state.unreachableHosts.has(apiUrl)) {
+          targetUrl = shouldUsePackagedUi() ? buildPackagedUiUrl('/index.html') : host.url;
+          runtimeConfig = {
+            apiBaseUrl: normalizeHostUrl(apiUrl),
+            clientToken: sanitizeClientTokenForStorage(host.clientToken),
+            requestHeaders: sanitizeRuntimeRequestHeaders(host.requestHeaders),
+          };
+        }
+      }
       await createAdditionalWindow(targetUrl, runtimeConfig);
       return null;
     }

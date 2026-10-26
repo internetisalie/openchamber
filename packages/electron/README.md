@@ -16,28 +16,14 @@ backend. Its injected empty local origin stays authoritative: the bundled
 When a local backend is enabled, its configured HTTP origin remains listed even
 while it is unreachable.
 
-The main renderer restores the saved default instance before mounting the
-application, including after a renderer-only reload. The restore replaces the
-API endpoint, client token, request headers and runtime identity together.
-An explicitly empty token or header set clears the previous instance's credentials;
-only uninitialized authentication falls back to preload-injected values.
-Guest-frame URL-token minting uses the active runtime's URL resolver, including
-its sub-path prefix, rather than the window's startup endpoint. Session-wide,
-explicit-base and Local URL-token mints preserve their selected base's sub-path
-prefix too; guest-frame mints retain their guest-specific scope.
-Selecting a default does not switch the already-running renderer. Windows opened
-for a specific instance and `OPENCHAMBER_SERVER_URL` keep their explicit target;
-relay-capable windows select their transport through the desktop restore path.
-Native fallback and recovery outcomes stay authoritative for direct defaults.
-A recorded failed SSH startup uses the shell's Local binding for the main window,
-its reload, a reopened main window and the menu New Window, without injecting
-the failed forward's token or headers. With no Local backend, new bundled windows
-carry no API binding or runtime credentials. Saving settings retains that recorded
-failure until the shell has a live forward; an untried default or a temporarily
-reconnecting successful boot does not acquire a startup-failure marker.
-A known unreachable direct default remains rejected through settings saves.
-A different saved direct endpoint must pass the native host probe before restore;
-an already active endpoint with the same identity and credentials is a no-op.
+Before mount, the main renderer restores the saved default's endpoint, credentials
+and runtime identity, including after a renderer-only reload. Empty credentials
+clear the previous instance's authentication; only uninitialized auth reads the
+preload values. The restore leaves a shell-reported startup fallback unchanged.
+Explicit-instance and environment-selected windows keep their injected target.
+Guest-frame URL-token minting follows the active runtime resolver. Session-wide,
+explicit-base, Local and guest mints preserve the selected base's sub-path;
+guest-specific scope is unchanged.
 
 Sandboxed extension frames may load `/api/guests/` pages from the window's
 configured HTTP(S) API origin, including serverless launches with bundled UI.
@@ -457,7 +443,7 @@ The server (`packages/web/server/lib/fs/ripgrep.js`) looks for ripgrep in this o
 - One-click open/reveal/open-in-app actions.
 - Desktop host switcher and deep-link imports.
 - Local and remote instance handling. The switcher lists Local only with the origin main reports for the local server, never with the page's own origin. A window can show another instance's own page, for example after a connect link redirects to that server. Such a page cannot switch to Local in place, because the local server answers only the app's own origins and the local token stays with local pages. The switcher asks main through the remote-safe `desktop_switch_to_local`, and main loads the Local UI into the main window the way `openchamber://host/local` does. The command acts only for the main window, because other windows keep the runtime they were opened with. Everywhere else it returns false and the switcher switches in place.
-- Which instance a new window opens on. The main window and the menu New Window restore the saved default through `restoreDesktopRuntime`, subject to native startup fallback/recovery outcomes and a direct-host probe. An already selected direct runtime with identical identity and credentials is unchanged. A window opened for a specific instance (the switcher's "Open in new window", a host deep link, Mini Chat) is marked with `--openchamber-explicit-runtime` and keeps that instance. An explicit direct window skips the saved-default restore; a relay-capable one arrives as `--openchamber-relay-host-id` and reconnects with `reconnectActive`. Mini Chat passes the parent's runtime key, so main resolves a relay-capable parent to its host id.
+- Which instance a new window opens on. The main window and the menu New Window use `restoreDesktopRuntime` before mount to restore the saved default, subject to the shell's boot outcome. A window opened for a specific instance (the switcher's "Open in new window", a host deep link, Mini Chat) is marked with `--openchamber-explicit-runtime` and keeps that instance. An explicit direct window skips the saved-default restore; a relay-capable one arrives as `--openchamber-relay-host-id` and reconnects with `reconnectActive`. Mini Chat passes the parent's runtime key, so main resolves a relay-capable parent to its host id.
 - SSH host import, connections, logs, and port forwarding.
 - SSH uses OpenSSH ControlMaster on macOS/Linux. Windows uses independent hidden OpenSSH processes for setup commands and each long-lived forward because Win32 OpenSSH does not support ControlMaster reliably.
 - With ControlMaster, every forward, the main one included, is added with `ssh -O forward`: the master holds the listener, and that command's exit status is the answer. A `-N -L` client through the master would open a remote login shell and exit with that shell's status, which says nothing about the forward. The connection monitor then watches the local port and the master.
