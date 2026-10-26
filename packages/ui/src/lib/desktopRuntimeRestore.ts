@@ -60,9 +60,10 @@ const restoreDirectHost = async (host: DesktopHost): Promise<void> => {
 const restoreLocalRuntime = async (localOrigin: string | null | undefined): Promise<void> => {
   const url = normalizeHostUrl(localOrigin || '');
   if (!url) return;
-  if (getRuntimeKey() === 'local' && getRuntimeApiBaseUrl() === url
-    && !getActiveRelayTunnel() && Object.keys(getRuntimeExtraHeadersSync()).length === 0) return;
   const clientToken = await desktopLocalClientTokenGet();
+  if (getRuntimeKey() === 'local' && getRuntimeApiBaseUrl() === url
+    && getRuntimeBearerTokenSync() === clientToken
+    && !getActiveRelayTunnel() && Object.keys(getRuntimeExtraHeadersSync()).length === 0) return;
   switchRuntimeEndpoint({ apiBaseUrl: url, clientToken, runtimeKey: 'local' });
 };
 

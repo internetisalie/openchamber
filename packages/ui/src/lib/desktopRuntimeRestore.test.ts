@@ -118,7 +118,7 @@ describe('desktop default restore before application mount', () => {
     });
   });
 
-  test('an already active Local default does not switch, reread its token or mint URL auth', async () => {
+  test('an identical Local default checks its token without switching, probing or minting URL auth', async () => {
     await withReloadedDesktop(savedConfig('local'), async (requests, commands) => {
       switchRuntimeEndpoint({ apiBaseUrl: localOrigin, runtimeKey: 'local', clientToken: 'oc_client_fixture_local' });
       await refreshRuntimeUrlAuthToken(localOrigin);
@@ -129,7 +129,7 @@ describe('desktop default restore before application mount', () => {
         await restoreDesktopRuntime();
         expect(getRuntimeBearerTokenSync()).toBe('oc_client_fixture_local');
         expect(changes).toBe(0);
-        expect(commands).toEqual(['desktop_hosts_get']);
+        expect(commands).toEqual(['desktop_hosts_get', 'desktop_local_client_token_get']);
         expect(requests).toEqual([]);
       } finally { stop(); }
     }, { bootOutcome: { target: 'local', status: 'ok' } });
@@ -140,6 +140,19 @@ describe('desktop default restore before application mount', () => {
       await restoreDesktopRuntime();
       expect(getRuntimeBearerTokenSync()).toBe('oc_client_fixture_local');
       expect(getRuntimeExtraHeadersSync()).toEqual({});
+    }, { initialUrl: localOrigin, initialKey: 'local', bootOutcome: { target: 'local', status: 'ok' } });
+  });
+
+  test('a Local token-only mismatch restores the shell token with already-empty headers', async () => {
+    await withReloadedDesktop(savedConfig('local'), async (requests) => {
+      setRuntimeExtraHeaders({});
+      expect(getRuntimeBearerTokenSync()).toBe('oc_client_fixture_a');
+      expect(getRuntimeExtraHeadersSync()).toEqual({});
+      await restoreDesktopRuntime();
+      expect(getRuntimeBearerTokenSync()).toBe('oc_client_fixture_local');
+      await runtimeFetch('/api/session/local-session');
+      const request = requests.find((entry) => entry.url.endsWith('/api/session/local-session'));
+      expect(request?.headers.get('Authorization')).toBe('Bearer oc_client_fixture_local');
     }, { initialUrl: localOrigin, initialKey: 'local', bootOutcome: { target: 'local', status: 'ok' } });
   });
 
