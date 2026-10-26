@@ -21,9 +21,6 @@ and runtime identity, including after a renderer-only reload. Empty credentials
 clear the previous instance's authentication; only uninitialized auth reads the
 preload values. The restore leaves a shell-reported startup fallback unchanged.
 Explicit-instance and environment-selected windows keep their injected target.
-Guest-frame URL-token minting follows the active runtime resolver. Session-wide,
-explicit-base, Local and guest mints preserve the selected base's sub-path;
-guest-specific scope is unchanged.
 
 Sandboxed extension frames may load `/api/guests/` pages from the window's
 configured HTTP(S) API origin, including serverless launches with bundled UI.
