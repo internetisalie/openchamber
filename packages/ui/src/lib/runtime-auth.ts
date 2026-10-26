@@ -1,5 +1,6 @@
 import { getActiveRelayTunnel } from '@/lib/relay/runtime-tunnel';
 import { z } from 'zod';
+import { createRuntimeUrlResolver, getRuntimeUrlResolver } from '@/lib/runtime-url';
 
 type RuntimeAuthCredential =
   | { type: 'bearer'; token: string }
@@ -52,22 +53,11 @@ const readInjectedBearerToken = (): string => {
   return normalizeBearerToken(injected);
 };
 
-const readInjectedApiBaseUrl = (): string => {
-  if (typeof window === 'undefined') return '';
-  const injected = (window as typeof window & { __OPENCHAMBER_API_BASE_URL__?: string }).__OPENCHAMBER_API_BASE_URL__;
-  return typeof injected === 'string' ? injected.trim() : '';
-};
-
 const buildAuthUrl = (apiBaseUrl: string | null | undefined, path: string): string => {
-  const base = typeof apiBaseUrl === 'string' && apiBaseUrl.trim()
-    ? apiBaseUrl.trim()
-    : readInjectedApiBaseUrl();
-  if (!base) return path;
-  try {
-    return new URL(path, `${base.replace(/\/+$/, '')}/`).toString();
-  } catch {
-    return path;
-  }
+  const resolver = apiBaseUrl?.trim()
+    ? createRuntimeUrlResolver({ apiBaseUrl })
+    : getRuntimeUrlResolver();
+  return resolver.auth(path);
 };
 
 const normalizeOrigin = (value: string): string => {

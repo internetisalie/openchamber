@@ -21,6 +21,8 @@ application, including after a renderer-only reload. The restore replaces the
 API endpoint, client token, request headers and runtime identity together.
 An explicitly empty token or header set clears the previous instance's credentials;
 only uninitialized authentication falls back to preload-injected values.
+Guest-frame URL-token minting uses the active runtime's URL resolver, including
+its sub-path prefix, rather than the window's startup endpoint.
 Selecting a default does not switch the already-running renderer. Windows opened
 for a specific instance and `OPENCHAMBER_SERVER_URL` keep their explicit target;
 relay-capable windows select their transport through the desktop restore path.

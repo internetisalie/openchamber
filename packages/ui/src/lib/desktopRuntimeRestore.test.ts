@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import { restoreDesktopRuntime } from './desktopRelayRestore';
 import { desktopHostsGet } from './desktopHosts';
+import { resolveGuestFrameUrl } from './guests/frame-url';
 import { clearRuntimeUrlAuthToken, getRuntimeBearerTokenSync, getRuntimeExtraHeadersSync, setRuntimeBearerToken, setRuntimeExtraHeaders } from './runtime-auth';
 import { runtimeFetch } from './runtime-fetch';
 import { getRuntimeApiBaseUrl, getRuntimeKey, isSshForwardedRuntime, switchRuntimeEndpoint } from './runtime-switch';
@@ -51,7 +52,11 @@ const withReloadedDesktop = async (
   try {
     Object.defineProperty(globalThis, 'window', { configurable: true, value: runtimeWindow });
     globalThis.fetch = Object.assign(async (input: RequestInfo | URL, init?: RequestInit) => {
-      requests.push(new Request(input, init));
+      const request = new Request(input, init);
+      requests.push(request);
+      if (request.url.startsWith('https://runtime-b.test/chamber/auth/url-token')) {
+        return Response.json({ token: 'fixture_guest_url_token_b', expiresAt: Date.now() + 60_000 });
+      }
       return new Response(null, { status: 404 });
     }, { preconnect: async () => {} });
     switchRuntimeEndpoint({ apiBaseUrl: startupA, runtimeKey: 'host:a', clientToken: 'oc_client_fixture_a', requestHeaders: { 'X-Fixture-Host': 'a' } });
@@ -89,6 +94,23 @@ describe('desktop default restore before application mount', () => {
       expect(getRuntimeKey()).toBe('local');
       expect(getRuntimeBearerTokenSync()).toBe('oc_client_fixture_local');
       expect(getRuntimeExtraHeadersSync()).toEqual({});
+    });
+  });
+
+  test('authorizes a guest frame on restored B instead of the immutable A injection', async () => {
+    await withReloadedDesktop(savedConfig(), async (requests) => {
+      await restoreDesktopRuntime();
+      const frame = await resolveGuestFrameUrl('openchamber-agent-memory', 'dist/index.html');
+      expect(frame.kind).toBe('url');
+      if (frame.kind !== 'url') throw new Error('expected a direct guest URL');
+      const url = new URL(frame.url);
+      expect(url.origin).toBe('https://runtime-b.test');
+      expect(url.pathname).toBe('/chamber/api/guests/openchamber-agent-memory/dist/index.html');
+      expect(url.searchParams.get('oc_url_token')).toBe('fixture_guest_url_token_b');
+      const mint = requests.find((request) => new URL(request.url).searchParams.get('scope') === 'guest:openchamber-agent-memory');
+      expect(mint?.url).toBe('https://runtime-b.test/chamber/auth/url-token?scope=guest%3Aopenchamber-agent-memory');
+      expect(mint?.headers.get('Authorization')).toBe('Bearer oc_client_fixture_b');
+      expect(mint?.headers.get('X-Fixture-Host')).toBe('b');
     });
   });
 
