@@ -18,10 +18,11 @@ metadata from older remote servers.
   are accepted. Unknown installed identities, including historical hash versions,
   have unknown ordering. Failed metadata reads stay failures and never fall back.
 - `packages/web/package.json` records `forkRelease` separately from the upstream
-  package version. Release preparation must set it to the exact numbered tag
-  version before building archives, desktop bundles or container images. The
-  Linux release workflow refuses a tag that differs from this field. The CLI
-  version and server status report it; Electron SSH matching uses the same value.
+  package version. Linux release and image builds derive it from the numbered
+  release tag, validate its pattern and upstream version, and stamp it before
+  building. Non-release builds use `<version>-internetisalie.dev`. Packed web
+  metadata and CLI version checks must match the derived release identity. The
+  CLI version and server status report it; Electron SSH matching uses the same value.
 - OpenChamber install requests return HTTP 409 `FORK_MANUAL_UPDATE_REQUIRED`
   before filesystem changes, installer processes or server shutdown. CLI update
   returns a nonzero status, including JSON and quiet modes.

@@ -1,15 +1,26 @@
 import { afterEach, expect, it, vi } from 'vitest';
 import { checkForUpdates, executeUpdate, getCurrentVersion, getUpdateCommand } from './package-manager.js';
+import pkg from '../../package.json' with { type: 'json' };
+
+const [major, minor, patch] = pkg.version.split('.');
+const nextVersion = `${major}.${minor}.${Number(patch) + 1}-internetisalie.1`;
 
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
 
 it('checks only fork GitHub metadata without transmitting client usage', async () => {
-  const fetch = vi.fn(async () => Response.json({ tag_name: 'v2.4.0-internetisalie.10', draft: false, prerelease: false }));
+  const fetch = vi.fn(async () => Response.json({ tag_name: `v${nextVersion}`, draft: false, prerelease: false }));
   vi.stubGlobal('fetch', fetch);
   vi.stubEnv('OPENCHAMBER_DISABLE_UPDATES', '');
   vi.stubEnv('OPENCHAMBER_UPDATE_API_URL', 'https://upstream.invalid');
   const info = await checkForUpdates({ currentVersion: '99.0.0', reportUsage: true });
-  expect(info).toMatchObject({ available: true, currentVersion: getCurrentVersion(), version: '2.4.0-internetisalie.10', installBlocked: 'manual-install' });
+  expect(getCurrentVersion()).toBe(pkg.forkRelease);
+  expect(info).toMatchObject({ currentVersion: pkg.forkRelease, version: nextVersion, installBlocked: 'manual-install' });
+  if (pkg.forkRelease === `${pkg.version}-internetisalie.dev`) {
+    expect(info.available).toBeNull();
+  } else {
+    expect(/^\d+\.\d+\.\d+-internetisalie\.[1-9]\d*$/.test(pkg.forkRelease)).toBe(true);
+    expect(info.available).toBe(true);
+  }
   expect(fetch).toHaveBeenCalledExactlyOnceWith('https://api.github.com/repos/internetisalie/openchamber/releases/latest', expect.objectContaining({ redirect: 'error' }));
   expect(fetch.mock.calls[0][1].body).toBeUndefined();
 });
