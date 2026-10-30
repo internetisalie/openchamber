@@ -12,6 +12,7 @@ const installWindow = (): void => {
   Object.defineProperty(globalThis, 'window', {
     configurable: true,
     value: {
+      location: new URL('http://localhost'),
       addEventListener: events.addEventListener.bind(events),
       removeEventListener: events.removeEventListener.bind(events),
       dispatchEvent: events.dispatchEvent.bind(events),

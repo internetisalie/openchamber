@@ -29,6 +29,7 @@ type ProjectSectionCacheEntry = {
   project: ProjectItem;
   activeSessions: Session[];
   archivedSessions: Session[];
+  groupingSessions: Session[];
   availableWorktrees: WorktreeMetadata[];
   workspaceDirectories: readonly string[];
   rootBranch: string | null;
@@ -92,6 +93,7 @@ type Args = {
     isRepo: boolean,
     workspaceDirectories?: readonly string[],
   ) => SessionGroup[];
+  getGroupingSessions: (sessions: readonly Session[]) => Session[];
   hasSessionSearchQuery: boolean;
   normalizedSessionSearchQuery: string;
   filterSessionNodesForSearch: (nodes: SessionNode[], query: string) => SessionNode[];
@@ -119,6 +121,7 @@ export const useSessionSidebarSections = (args: Args) => {
     sessionOrderRanks,
     lastRepoStatus,
     buildGroupedSessions,
+    getGroupingSessions,
     hasSessionSearchQuery,
     normalizedSessionSearchQuery,
     filterSessionNodesForSearch,
@@ -140,6 +143,8 @@ export const useSessionSidebarSections = (args: Args) => {
     const sections = normalizedProjects.map((project) => {
       const activeSessions = getSessionsForProject(project.id);
       const archivedSessions = getArchivedSessionsForProject(project.id);
+      const projectSessions = dedupeSessionsById([...activeSessions, ...archivedSessions]);
+      const groupingSessions = getGroupingSessions(projectSessions);
       const worktreesForProject = availableWorktreesByProject.get(project.normalizedPath) ?? EMPTY_WORKTREES;
       const workspaceDirectories = workspaceDirectoriesByProject.get(project.normalizedPath) ?? EMPTY_WORKSPACE_DIRECTORIES;
       const isRepo = projectRepoStatus.has(project.id)
@@ -154,6 +159,7 @@ export const useSessionSidebarSections = (args: Args) => {
         && cached.project === project
         && sameSessions(cached.activeSessions, activeSessions)
         && sameSessions(cached.archivedSessions, archivedSessions)
+        && sameSessions(cached.groupingSessions, groupingSessions)
         && cached.availableWorktrees === worktreesForProject
         && cached.workspaceDirectories === workspaceDirectories
         && cached.rootBranch === rootBranch
@@ -178,6 +184,8 @@ export const useSessionSidebarSections = (args: Args) => {
           reason = 'sessions';
         } else if (!sameSessions(cached.archivedSessions, archivedSessions)) {
           reason = 'archived';
+        } else if (!sameSessions(cached.groupingSessions, groupingSessions)) {
+          reason = 'lineage';
         } else if (cached.availableWorktrees !== worktreesForProject) {
           reason = 'worktrees';
         } else if (cached.workspaceDirectories !== workspaceDirectories) {
@@ -193,7 +201,6 @@ export const useSessionSidebarSections = (args: Args) => {
         }
         streamPerfCount(`ui.sidebar.project_section.rebuilt_reason.${reason}`);
       }
-      const projectSessions = dedupeSessionsById([...activeSessions, ...archivedSessions]);
       const groups = buildGroupedSessions(
         projectSessions,
         project.normalizedPath,
@@ -207,6 +214,7 @@ export const useSessionSidebarSections = (args: Args) => {
         project,
         activeSessions,
         archivedSessions,
+        groupingSessions,
         availableWorktrees: worktreesForProject,
         workspaceDirectories,
         rootBranch,
@@ -231,6 +239,7 @@ export const useSessionSidebarSections = (args: Args) => {
     projectRepoStatus,
     lastRepoStatus,
     buildGroupedSessions,
+    getGroupingSessions,
     projectRootBranches,
     gitBranches,
     sessionOrderRanks,

@@ -10,6 +10,7 @@ const BUILT_IN_CONTEXT_PANEL_MODES = [
   'notes',
   'terminal',
   'agent-pty',
+  'workflows',
 ] as const;
 
 type BuiltInContextPanelMode = (typeof BUILT_IN_CONTEXT_PANEL_MODES)[number];
@@ -18,7 +19,7 @@ export type ContextPanelMode = BuiltInContextPanelMode | PluginContextPanelMode;
 
 /** These views mount inside the selected zone; the other panes own their lifecycle. */
 export const isZoneMountedContextSurface = (mode: ContextPanelMode): boolean => (
-  mode === 'context' || mode === 'git' || mode === 'pr' || mode === 'notes' || mode === 'agent-pty'
+  mode === 'context' || mode === 'git' || mode === 'pr' || mode === 'notes' || mode === 'agent-pty' || mode === 'workflows'
 );
 
 const PLUGIN_MODE = /^plugin:[a-z][a-z0-9-]*$/;

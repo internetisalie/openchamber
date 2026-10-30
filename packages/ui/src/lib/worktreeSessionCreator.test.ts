@@ -71,9 +71,9 @@ mock.module('@/components/ui', () => ({
 
 mock.module('@/lib/gitApi', () => ({
   checkIsGitRepository: async () => true,
-  resolveGitRepositoryPrefix: async () => '',
   resolveGitPrimaryRoot: async () => project.path,
-  validateWorktreeDirectory: async () => true,
+  resolveGitRepositoryPrefix: async () => '',
+  validateWorktreeDirectory: async () => ({ valid: true, insideWorktreeRoot: true }),
 }));
 
 mock.module('@/lib/git/branchNameGenerator', () => ({
@@ -95,6 +95,7 @@ mock.module('@/lib/sharedTrustConfirmation', () => ({
 
 mock.module('@/lib/pathNormalization', () => ({
   normalizePath: (value: string | null) => value,
+  normalizeTerminalDirectory: (value: string) => value,
 }));
 
 mock.module('@/lib/projectResolution', () => ({

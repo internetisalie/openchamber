@@ -20,8 +20,10 @@ type NestedRepoPickerProps = {
 };
 
 /**
- * Repository switcher shown on git surfaces when a project root is not itself
- * a git repository but nested repositories were discovered under it.
+ * Repository switcher shown on git surfaces when nested repositories were
+ * discovered under the project root. The root is listed first when it is a
+ * repository of its own — including one with no commits yet — so the user can
+ * switch back to it; a non-repository root is not a choice.
  */
 export const NestedRepoPicker: React.FC<NestedRepoPickerProps> = ({
   repositories,
@@ -32,6 +34,10 @@ export const NestedRepoPicker: React.FC<NestedRepoPickerProps> = ({
   const { t } = useI18n();
 
   const relativePath = (repository: string): string => {
+    // The root has no path relative to itself, so it goes by its folder name.
+    if (repository === repositoryRoot) {
+      return repository.split('/').filter(Boolean).pop() ?? repository;
+    }
     const rootPrefix = `${repositoryRoot ?? ''}/`;
     return repository.startsWith(rootPrefix) ? repository.slice(rootPrefix.length) : repository;
   };

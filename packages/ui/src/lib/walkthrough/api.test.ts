@@ -27,7 +27,7 @@ const {
   fetchWalkthroughStage,
   generateWalkthrough,
 } = await import('./api');
-const { WalkthroughError, pullRequestWalkthroughTarget } = await import('./types');
+const { WalkthroughError } = await import('./types');
 import type { SourceControlReadContext } from '@/lib/api/types';
 import type { WalkthroughResult, WalkthroughTarget } from './types';
 
@@ -82,43 +82,6 @@ describe('walkthrough api', () => {
     const result = await fetchWalkthrough('/repo', TARGET);
 
     expect(result.hunkCount).toBe(3);
-  });
-
-  test('Gitea uses its selected instance and remote without borrowing a bound GitHub account', async () => {
-    const source = { kind: 'pr', number: 42, gitea: {
-      instanceUrl: 'https://git.example.test', owner: 'team', repo: 'project', remote: 'upstream',
-    } } as const;
-    const target = pullRequestWalkthroughTarget(source, CONTEXT);
-    expect(target).toEqual({ source });
-    if (!target) throw new Error('Gitea target missing');
-    nextResponse = new Response(JSON.stringify({ source, walkthrough: null, hunks: [], hunkCount: 0 }), {
-      headers: { 'Content-Type': 'application/json' },
-    });
-    await fetchWalkthrough('/repo', target);
-    expect(requests[0].options.query).toEqual({ directory: '/repo', source: JSON.stringify(source) });
-    expect(pullRequestWalkthroughTarget({ kind: 'pr', number: 42 }, null)).toBeNull();
-    expect(pullRequestWalkthroughTarget({ kind: 'pr', number: 42 }, CONTEXT))
-      .toEqual({ source: { kind: 'pr', number: 42 }, context: CONTEXT });
-  });
-
-  test('rejects a Gitea walkthrough from another instance, repository, remote, or PR', async () => {
-    const source = { kind: 'pr', number: 42, gitea: {
-      instanceUrl: 'https://git.example.test', owner: 'team', repo: 'project', remote: 'upstream',
-    } } as const;
-    const target = pullRequestWalkthroughTarget(source, null);
-    if (!target) throw new Error('Gitea target missing');
-    for (const other of [
-      { ...source, number: 43 },
-      ...[
-        { instanceUrl: 'https://other.example.test' }, { owner: 'other' },
-        { repo: 'other' }, { remote: 'origin' },
-      ].map((identity) => ({ ...source, gitea: { ...source.gitea, ...identity } })),
-    ]) {
-      nextResponse = new Response(JSON.stringify({ source: other, walkthrough: null, hunks: [], hunkCount: 0 }), {
-        headers: { 'Content-Type': 'application/json' },
-      });
-      await expect(fetchWalkthrough('/repo', target)).rejects.toThrow('different Gitea repository');
-    }
   });
 
   test('reports HTML served with 200 as a server without the routes', async () => {
@@ -248,6 +211,20 @@ describe('walkthrough api', () => {
     await expect(generateWalkthrough('/repo', PR_TARGET)).rejects.toThrow(
       'different source-control context',
     );
+  });
+
+  test('reads an earlier revision of a change request, and refuses an answer for another one', async () => {
+    const sha = 'A'.repeat(40);
+    const target = { ...PR_TARGET, source: { ...PR_TARGET.source, revision: sha } };
+    nextResponse = new Response(JSON.stringify({ ...PR_RESULT, source: { ...PR_TARGET.source, revision: sha.toLowerCase() } }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+    expect(await fetchWalkthrough('/repo', target)).toMatchObject({ source: { revision: sha.toLowerCase() } });
+    expect(JSON.parse(requests[0].options.query?.source ?? '')).toEqual({ kind: 'pr', number: 42, revision: sha });
+
+    // A server that ignored the revision answers for the current one.
+    nextResponse = new Response(JSON.stringify(PR_RESULT), { headers: { 'Content-Type': 'application/json' } });
+    await expect(fetchWalkthrough('/repo', target)).rejects.toThrow('different source-control context');
   });
 
   test('rejects progress and cancellation results without echoed authority', async () => {

@@ -1,46 +1,71 @@
-import { afterAll, afterEach, beforeEach, expect, test } from 'bun:test';
+import { afterAll, afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import React, { act } from 'react';
 import type { Root } from 'react-dom/client';
 import { Window } from 'happy-dom';
 import type { Session } from '@/lib/opencode/model';
 import { opencodeClient } from '@/lib/opencode/client';
-import { ensureChatsRootDirectory } from '@/lib/chatDirectories';
+import { ensureChatsRootDirectory, getChatsRoot, isChatDirectoryPath } from '@/lib/chatDirectories';
 import { sessionEvents, type SessionDeleteRequest } from '@/lib/sessionEvents';
+import type { SpaceArchive } from '@/lib/spaces/spaces-api';
+import { createProjectIdFromPath } from '@/lib/projectId';
 const browser = new Window({ url: 'http://localhost' });
 let root: Root;
 const descriptors = new Map<string, PropertyDescriptor | undefined>();
 // React DOM detects input-event support when imported, so install the DOM first.
-for (const [key, value] of Object.entries({ window: browser, document: browser.document, navigator: browser.navigator, localStorage: browser.localStorage, Element: browser.Element, HTMLElement: browser.HTMLElement, IS_REACT_ACT_ENVIRONMENT: true })) {
+for (const [key, value] of Object.entries({ window: browser, document: browser.document, navigator: browser.navigator, localStorage: browser.localStorage, Element: browser.Element, HTMLElement: browser.HTMLElement, IS_REACT_ACT_ENVIRONMENT: true,
+  // The row's context menu orders its items and animates its popup.
+  Node: browser.Node, MouseEvent: browser.MouseEvent, DOMRect: browser.DOMRect, getComputedStyle: browser.getComputedStyle.bind(browser), requestAnimationFrame: (callback: FrameRequestCallback) => { callback(0); return 1; }, cancelAnimationFrame: () => undefined })) {
   descriptors.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
   Object.defineProperty(globalThis, key, { value, configurable: true });
+}
+const PROJECT = { id: createProjectIdFromPath('/workspace'), path: '/workspace' };
+const HOME_INFO = { home: '/home/test', chatsRoot: '/managed/chats' };
+let spaceArchives: SpaceArchive[] = [];
+const fetchSpy = spyOn(globalThis, 'fetch').mockImplementation(async (input) => {
+  const path = new URL(input instanceof Request ? input.url : String(input), 'http://localhost').pathname;
+  if (path === '/api/config/settings') return Response.json({ projects: [PROJECT] });
+  if (path.endsWith('/fs/home')) return Response.json(HOME_INFO);
+  if (path === '/api/openchamber/spaces/archives') return Response.json({ archives: spaceArchives });
+  if (path.endsWith('/archives')) return Response.json({ archives: [] });
+  if (path === '/api/config' || path === '/api/project') return Response.json([]);
+  if (path.endsWith('/location')) return Response.json({ directory: '/workspace', project: { id: 'project', directory: '/workspace', canonical: '/workspace' } });
+  if (path.endsWith('/session/active')) return Response.json({ data: {} });
+  if (path.endsWith('/vcs')) return Response.json({ data: { branch: { current: 'main', default: 'main' } } });
+  return Response.json({ data: [], cursor: {} });
+});
+const homeInfoSpy = spyOn(opencodeClient, 'getFilesystemHomeInfo').mockResolvedValue(HOME_INFO);
+try {
+  await ensureChatsRootDirectory();
+} finally {
+  homeInfoSpy.mockRestore();
 }
 const { createRoot } = await import('react-dom/client');
 const { I18nProvider } = await import('@/lib/i18n');
 const { useUIStore } = await import('@/stores/useUIStore');
 const { useGlobalSessionsStore } = await import('@/stores/useGlobalSessionsStore');
 const { useSessionUIStore } = await import('@/sync/session-ui-store');
+const { useProjectsStore } = await import('@/stores/useProjectsStore');
 const { ArchiveSessionsView, ArchiveView } = await import('./ArchiveView');
+const { refreshSpaceArchives, useSpaceArchivesStore } = await import('@/lib/spaces/space-archives');
+const { updateDesktopSettings } = await import('@/lib/persistence');
 const initialUI = useUIStore.getState();
 const initialSessions = useGlobalSessionsStore.getState();
 const initialSessionUI = useSessionUIStore.getState();
+const initialProjects = useProjectsStore.getState();
 const session = (id: string, title: string, archived = 2): Session => ({
   id, title, projectID: 'project', cost: 0, tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }, directory: '/workspace',
   time: { created: 1, updated: 1, archived },
 });
 
-const originalHomeInfo = opencodeClient.getFilesystemHomeInfo;
-opencodeClient.getFilesystemHomeInfo = async () => ({ home: '/home' });
-try {
-  await ensureChatsRootDirectory();
-} finally {
-  opencodeClient.getFilesystemHomeInfo = originalHomeInfo;
-}
-
 beforeEach(() => {
+  expect(getChatsRoot()).toBe(HOME_INFO.chatsRoot);
   const host = document.createElement('div');
   document.body.append(host);
   root = createRoot(host);
+  spaceArchives = [];
+  useSpaceArchivesStore.getState().resetForRuntimeSwitch();
   useUIStore.setState({ isArchivePageOpen: true });
+  useProjectsStore.setState({ projects: [PROJECT] });
 });
 
 afterEach(async () => {
@@ -48,11 +73,13 @@ afterEach(async () => {
   useUIStore.setState(initialUI);
   useGlobalSessionsStore.setState(initialSessions);
   useSessionUIStore.setState(initialSessionUI);
+  useProjectsStore.setState(initialProjects);
   document.body.replaceChildren();
 });
 
 afterAll(async () => {
   await browser.happyDOM.close();
+  fetchSpy.mockRestore();
   for (const [key, descriptor] of descriptors) {
     if (descriptor) Object.defineProperty(globalThis, key, descriptor);
     else Reflect.deleteProperty(globalThis, key);
@@ -97,10 +124,7 @@ test('archives Global sessions in one dedicated bucket and opens them with their
     projectID: 'global',
     directory: '/returned/global-directory',
   };
-  useGlobalSessionsStore.setState({
-    archivedSessions: [globalSession, session('ses_project', 'Project task')],
-    activeSessions: [],
-  });
+  useGlobalSessionsStore.getState().applySnapshot([], [globalSession, session('ses_project', 'Project task')], 'ready');
   await act(async () => root.render(<I18nProvider><ArchiveView /></I18nProvider>));
 
   const globalBucket = [...document.querySelectorAll('button')]
@@ -121,7 +145,7 @@ test('keeps archived managed Chats out of the Global bucket and its bulk-delete 
     ...session('ses_managed', 'Archived managed Chat'),
     slug: 'ses_managed',
     projectID: 'global',
-    directory: '/home/.config/openchamber/chats/2026-09-14/ses_managed',
+    directory: `${HOME_INFO.chatsRoot}/2026-09-14/ses_managed`,
     version: '1',
   };
   const globalSession = {
@@ -134,6 +158,7 @@ test('keeps archived managed Chats out of the Global bucket and its bulk-delete 
     activeSessions: [],
   });
   const deleteRequests: SessionDeleteRequest[] = [];
+  expect(isChatDirectoryPath(managedChat.directory)).toBe(true);
   const unsubscribe = sessionEvents.onDeleteRequest((request) => {
     deleteRequests.push(request);
   });
@@ -141,9 +166,7 @@ test('keeps archived managed Chats out of the Global bucket and its bulk-delete 
   try {
     await act(async () => root.render(<I18nProvider><ArchiveView /></I18nProvider>));
 
-    expect(document.querySelector(
-      'button[title="/home/.config/openchamber/chats/2026-09-14/ses_managed"]',
-    )).not.toBeNull();
+    expect(document.body.textContent).toContain('Archived managed Chat');
     const globalBucket = [...document.querySelectorAll('button')]
       .find((button) => button.textContent?.includes('global') && !button.getAttribute('aria-label'));
     if (!globalBucket) throw new Error('Global archive bucket missing');
@@ -164,29 +187,100 @@ test('keeps archived managed Chats out of the Global bucket and its bulk-delete 
     unsubscribe();
   }
 });
-test('the chats of a deleted space are grouped under its name and cannot be restored', async () => {
-  const originalFetch = globalThis.fetch;
-  globalThis.fetch = Object.assign(async () => new Response(JSON.stringify({
-    archives: [{ spaceId: 'a1b2c3d4e5f6', name: 'Fix login', directory: '/data/spaces/archive/a1b2c3d4e5f6' }],
-  }), { status: 200 }), originalFetch);
+test('archive rows hide unregistered destinations while preserving raw archived records', async () => {
+  useGlobalSessionsStore.setState({ archivedSessions: [
+    session('kept-archive', 'Kept archive'),
+    { ...session('blocked-archive', 'Blocked archive'), directory: '/unregistered' },
+  ] });
+  await act(async () => root.render(<I18nProvider><ArchiveView /></I18nProvider>));
+  expect(document.body.textContent).toContain('Kept archive');
+  expect(document.body.textContent).not.toContain('Blocked archive');
+  expect(useGlobalSessionsStore.getState().archivedSessions).toHaveLength(2);
+});
+
+test('archive identity changes remove the Global exception without deleting the record', async () => {
+  const record = { ...session('ses_identity', 'Global identity'), projectID: 'global', directory: '/unregistered' };
+  useGlobalSessionsStore.getState().applySnapshot([], [record], 'ready');
+  await act(async () => root.render(<I18nProvider><ArchiveView /></I18nProvider>));
+  expect(document.body.textContent).toContain('Global identity');
+  await act(async () => useGlobalSessionsStore.getState().upsertSession({ ...record, projectID: 'ordinary' }));
+  expect(document.body.textContent).not.toContain('Global identity');
+  expect(useGlobalSessionsStore.getState().archivedSessions).toHaveLength(1);
+});
+
+test('the hosted mobile archive includes unregistered Global rows and opens their returned directory', async () => {
+  useGlobalSessionsStore.getState().applySnapshot([], [{
+    ...session('ses_phone_global', 'Phone Global'), projectID: 'global', directory: '/returned/phone-global',
+  }], 'ready');
+  let left = 0;
+  await act(async () => root.render(<I18nProvider><ArchiveSessionsView layout="mobile" onLeave={() => { left += 1; }} /></I18nProvider>));
+  const row = [...document.querySelectorAll<HTMLButtonElement>('button')].find((button) => button.textContent?.startsWith('Phone Global'));
+  if (!row) throw new Error('Global mobile archive row missing');
+  await act(async () => row.click());
+  expect(left).toBe(1);
+  expect(useSessionUIStore.getState().currentSessionId).toBe('ses_phone_global');
+  expect(useSessionUIStore.getState().currentSessionDirectory).toBe('/returned/phone-global');
+});
+
+test('Capacitor retains project and managed Chat archives without the hosted Global exception', async () => {
+  const previous = Object.getOwnPropertyDescriptor(window, 'Capacitor');
+  Object.defineProperty(window, 'Capacitor', { configurable: true, value: { isNativePlatform: () => true } });
   try {
-    useGlobalSessionsStore.setState({
-      archivedSessions: [
-        { ...session('ses_space1', 'Agent chat'), directory: '/data/spaces/archive/a1b2c3d4e5f6' },
-        session('ses_mine1', 'My chat'),
-      ],
-      activeSessions: [],
-    });
-    await act(async () => root.render(<I18nProvider><ArchiveView /></I18nProvider>));
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 0)); });
-    const groups = [...document.querySelectorAll('.group\\/dir button[title]')].map((button) => button.textContent);
-    expect(groups.some((label) => label?.startsWith('Fix login'))).toBe(true);
-    expect(document.querySelector('[aria-label="Restore Agent chat"]')).toBeNull();
-    expect(document.querySelector('[aria-label="Restore My chat"]')).not.toBeNull();
-    expect(document.querySelector('[aria-label="Delete Agent chat"]')).not.toBeNull();
+    useGlobalSessionsStore.getState().applySnapshot([], [
+      { ...session('ses_native_global', 'Native unregistered Global'), projectID: 'global', directory: '/outside' },
+      { ...session('ses_native_chat', 'Native managed Chat'), projectID: 'global', directory: `${HOME_INFO.chatsRoot}/day/native` },
+      session('ses_native_project', 'Native project'),
+    ], 'ready');
+    expect(isChatDirectoryPath(`${HOME_INFO.chatsRoot}/day/native`)).toBe(true);
+    await act(async () => root.render(<I18nProvider><ArchiveSessionsView layout="mobile" onLeave={() => undefined} /></I18nProvider>));
+    expect(document.body.textContent).not.toContain('Native unregistered Global');
+    expect(document.body.textContent).toContain('Native managed Chat');
+    expect(document.body.textContent).toContain('Native project');
+    expect(useGlobalSessionsStore.getState().archivedSessions).toHaveLength(3);
   } finally {
-    globalThis.fetch = originalFetch;
+    if (previous) Object.defineProperty(window, 'Capacitor', previous);
+    else Reflect.deleteProperty(window, 'Capacitor');
   }
+});
+
+test('the chats of a deleted space are grouped under its name and cannot be restored', async () => {
+  spaceArchives = [{ spaceId: 'a1b2c3d4e5f6', name: 'Fix login', directory: '/data/spaces/archive/a1b2c3d4e5f6' }];
+  useGlobalSessionsStore.setState({
+    archivedSessions: [
+      { ...session('ses_space1', 'Agent chat'), directory: '/data/spaces/archive/a1b2c3d4e5f6' },
+      session('ses_mine1', 'My chat'),
+    ],
+    activeSessions: [],
+  });
+  await act(async () => root.render(<I18nProvider><ArchiveView /></I18nProvider>));
+  await act(async () => {
+    await refreshSpaceArchives();
+    await updateDesktopSettings({});
+  });
+  const groups = [...document.querySelectorAll('.group\\/dir button[title]')].map((button) => button.textContent);
+  expect(groups.some((label) => label?.startsWith('Fix login'))).toBe(true);
+  expect(document.querySelector('[aria-label="Restore Agent chat"]')).toBeNull();
+  expect(document.querySelector('[aria-label="Restore My chat"]')).not.toBeNull();
+  expect(document.querySelector('[aria-label="Delete Agent chat"]')).not.toBeNull();
+});
+
+test('right-clicking an archived row offers to copy its session ID', async () => {
+  useGlobalSessionsStore.setState({
+    archivedSessions: [session('ses_copy1', 'Copy me')],
+    activeSessions: [],
+  });
+  await act(async () => root.render(<I18nProvider><ArchiveView /></I18nProvider>));
+  const row = [...document.querySelectorAll('[role="button"]')].find((element) => element.textContent?.startsWith('Copy me'));
+  if (!row) throw new Error('Archived session row missing');
+  await act(async () => {
+    row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, button: 2 }));
+  });
+  const items = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')];
+  expect(items.map((item) => item.textContent)).toEqual(['Copy session ID', 'Restore', 'Delete']);
+  await act(async () => { items[0]?.click(); });
+  expect(await browser.navigator.clipboard.readText()).toBe('ses_copy1');
+  // Copying keeps the archive open; only a plain click opens the session.
+  expect(useUIStore.getState().isArchivePageOpen).toBe(true);
 });
 
 test('the mobile layout names each row\'s project, offers Restore without Delete, and leaves when a session opens', async () => {
@@ -230,6 +324,35 @@ test('the page opens with the query the sidebar handed over, and a plain open st
   await act(async () => { useUIStore.getState().setArchivePageOpen(true); });
   expect(browser.document.querySelector('input')?.value).toBe('');
   expect(titles()).toHaveLength(2);
+});
+
+test('a subsession archived while its parent stays active is listed under the parent\'s title', async () => {
+  const boss = session('ses_boss', 'Boss', 0);
+  const archivedParent = session('ses_old', 'Old run', 5);
+  const sub = (id: string, title: string, parentID: string, archived: number): Session => ({ ...session(id, title, archived), parentID });
+  useGlobalSessionsStore.getState().applySnapshot(
+    [boss],
+    [
+      session('ses_plain', 'Plain chat', 3),
+      sub('ses_fix', 'Fix capture', 'ses_boss', 4),
+      sub('ses_review', 'Review fix', 'ses_boss', 1),
+      archivedParent,
+      sub('ses_old_child', 'Old child', 'ses_old', 5),
+    ],
+    'ready',
+  );
+  await act(async () => root.render(<I18nProvider><ArchiveView /></I18nProvider>));
+  // The search sits in a column of the same width, so match the list itself.
+  const list = document.querySelector('.max-w-3xl.space-y-0\\.5');
+  if (!list) throw new Error('Archive list missing');
+  const lines = [...list.children].map((element) => (element.tagName === 'P'
+    ? `# ${element.textContent}`
+    : element.querySelector('span')?.textContent));
+  // Both subsessions of the active parent sit together under its title, at the
+  // place of the newer one; a subsession of an archived parent stays hidden.
+  expect(lines).toEqual(['Old run', '# Boss', 'Fix capture', 'Review fix', 'Plain chat']);
+  expect(document.querySelector('[aria-label="Restore Fix capture"]')).not.toBeNull();
+  expect(document.querySelector('[aria-label="Restore Old child"]')).toBeNull();
 });
 
 test('an empty archive is not reported before the session list has loaded, or after it failed to load', async () => {

@@ -1,5 +1,9 @@
 # Gitea integration plan
 
+## Record status
+
+This is an archived implementation and validation record for the fork-only Gitea integration. The application uses the upstream source-control provider described in [Gitea module](../packages/web/server/lib/gitea/DOCUMENTATION.md). Users reconnect through the provider card. There is no saved-connection migration or access to the old credential file.
+
 ## Implementation status
 
 The internetisalie fork and Gitea MVP are ported onto upstream OpenChamber `v2.0.1` in a separate worktree. Milestones 1 and 2 cover connection management, Git remote matching, and issue/PR context from the chat attachment menu. Selecting an item in a new session draft adds it to the first message. A local Gitea 1.24 instance verified token connection, private issue and PR reads, comments, diff retrieval, and pagination on the earlier release. The v2 port has server contract tests; it still needs an isolated live Electron check.

@@ -1,7 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 
-import { hasGuestPage, requestedGuestCapabilities, resolveAttachEntry, resolveAttachMode, resolvePageEntry, resolveStatusSectionEntry, toPublicService, toPublicIntegration, hostMeetsOpenChamberEngine, openChamberEngineMinimum } from '@openchamber/sdk';
+import { hasGuestPage, requestedGuestCapabilities, resolveAttachEntry, resolveAttachMode, resolvePageEntry, resolveStatusSectionEntry, resolveStatusSectionSource, toPublicNotifications, toPublicService, toPublicSessionEvents, toPublicSourceControl, toPublicIntegration, hostMeetsOpenChamberEngine, openChamberEngineMinimum } from '@openchamber/sdk';
 import { parseManifestJson } from '@openchamber/sdk/schemas';
 
 import { listRelativeGuestScriptHrefs, resolveGuestHtmlRelativePath } from './html-tokens.js';
@@ -250,7 +250,8 @@ export const inspectGuestPackage = async (packageRoot, { openchamberVersion, ski
     if (page !== true && page?.title) guest.pageTitle = page.title;
   }
   // The Work Status section is checked like any other entry, and may be the
-  // package's only frame.
+  // package's only frame. A source section has no frame: the host reads it
+  // from the service.
   const statusEntry = resolveStatusSectionEntry(parsed.manifest.contributes);
   if (statusEntry) {
     if (!await resolveGuestAssetPath(packageRoot, statusEntry)) {
@@ -260,6 +261,10 @@ export const inspectGuestPackage = async (packageRoot, { openchamberVersion, ski
       return { ok: false, code: 'missing-build' };
     }
     guest.statusEntry = statusEntry;
+  }
+  const statusSource = resolveStatusSectionSource(parsed.manifest.contributes);
+  if (statusSource) guest.statusSource = statusSource;
+  if (statusEntry || statusSource) {
     const section = parsed.manifest.contributes.statusSection;
     if (section !== true && section?.title) guest.statusTitle = section.title;
     if (section !== true && section?.height !== undefined) guest.statusHeight = section.height;
@@ -311,6 +316,18 @@ export const inspectGuestPackage = async (packageRoot, { openchamberVersion, ski
       return { ok: false, code: 'missing-build' };
     }
     guest.service = parsed.manifest.contributes.service;
+  }
+  // The Git host a `source-control` service provides; the parse requires it exactly then.
+  if (parsed.manifest.contributes.sourceControl) {
+    guest.sourceControl = parsed.manifest.contributes.sourceControl;
+  }
+  // The session events the service subscribed to; the parse requires a service with it.
+  if (parsed.manifest.contributes.sessionEvents) {
+    guest.sessionEvents = parsed.manifest.contributes.sessionEvents;
+  }
+  // The notification channel a `notifications` service provides; the parse requires it exactly then.
+  if (parsed.manifest.contributes.notifications) {
+    guest.notifications = parsed.manifest.contributes.notifications;
   }
   return { ok: true, guest };
 };
@@ -373,6 +390,7 @@ export const toPublicGuest = (guest) => {
   if (guest.pageEntry) row.pageEntry = guest.pageEntry;
   if (guest.pageTitle) row.pageTitle = guest.pageTitle;
   if (guest.statusEntry) row.statusEntry = guest.statusEntry;
+  if (guest.statusSource) row.statusSource = { path: guest.statusSource.path, interval: guest.statusSource.interval };
   if (guest.statusTitle) row.statusTitle = guest.statusTitle;
   if (Number.isInteger(guest.statusHeight)) row.statusHeight = guest.statusHeight;
   if (guest.statusDefaultExpanded !== undefined) row.statusDefaultExpanded = guest.statusDefaultExpanded;
@@ -427,6 +445,18 @@ export const toPublicGuest = (guest) => {
   );
   if (service) {
     row.service = service;
+  }
+  // What the approval dialog names: the Git host's label and the instances it reaches.
+  if (guest.sourceControl) {
+    row.sourceControl = toPublicSourceControl(guest.sourceControl);
+  }
+  // What the approval dialog names: the events the service is told about, and whether with their text.
+  if (guest.sessionEvents) {
+    row.sessionEvents = toPublicSessionEvents(guest.sessionEvents);
+  }
+  // What the approval dialog and the Integrations card name: the channel and where its account lives.
+  if (guest.notifications) {
+    row.notifications = toPublicNotifications(guest.notifications);
   }
   return row;
 };

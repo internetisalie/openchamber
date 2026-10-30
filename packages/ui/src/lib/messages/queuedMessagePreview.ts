@@ -16,14 +16,17 @@ function contextPreview(payload: ContextPartPayload): string {
             return payload.text.trim() || payload.label.trim() || payload.output;
         case 'terminal':
             return payload.output.trim() || payload.terminalLabel;
-        case 'gitea-issue':
-        case 'gitea-pr':
         case 'repository-issue':
+        case 'repository-discussion':
         case 'change-request':
-        case 'linear-issue':
+        case 'tracker-item':
         case 'guest-issue':
         case 'guest-pr':
             return payload.title.trim() || payload.url;
+        case 'session':
+            return payload.title;
+        case 'session-message':
+            return payload.excerpt;
     }
 }
 

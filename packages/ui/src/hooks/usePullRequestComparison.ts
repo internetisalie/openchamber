@@ -1,6 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import type { GiteaItem, GiteaRepository } from '@/lib/api/types';
-import { getRemotes } from '@/lib/gitApi';
 import type { PullRequestSource } from '@/lib/diff/pullRequestDiff';
 import type { ChangeRequest, SourceControlReadContext } from '@/lib/source-control/types';
 import { getRuntimeKey } from '@/lib/runtime-switch';
@@ -8,6 +6,7 @@ import { mergeIncompleteSourceControlPage, sourceControlReadContextParts } from 
 import type { PageResult } from '@/lib/source-control/types';
 import { useI18n } from '@/lib/i18n';
 import { changeRequestCopy } from '@/lib/source-control/changeRequestCopy';
+import { useChangeRequestDiffServing, useChangeRequestTerm, useSourceControlProviderServing } from '@/lib/source-control/providers/registry';
 import { useRepositoryHost } from '@/components/references/referenceSources';
 import { useGitStore } from '@/stores/useGitStore';
 import { usePullRequestSelectionStore } from '@/stores/usePullRequestSelectionStore';
@@ -19,6 +18,7 @@ import {
 } from '@/stores/useGitHubPrStatusStore';
 import { useRuntimeAPIs } from './useRuntimeAPIs';
 import { useDebouncedValue } from './useDebouncedValue';
+import { joinProjectPath } from '@/lib/source-control/projectPath';
 
 type PullRequestList =
   | { key: string; status: 'loading' }
@@ -33,7 +33,6 @@ type PullRequestList =
     incompleteProjectIds: string[];
   }
   | { key: string; status: 'error'; message: string };
-const NO_GITEA_REPOSITORIES: GiteaRepository[] = [];
 const NO_PULL_REQUESTS: ChangeRequest[] = [];
 const NO_PROJECT_IDS: string[] = [];
 
@@ -57,7 +56,7 @@ const sourceOf = (pr: ChangeRequest): PullRequestSource => ({
   kind: 'pr', number: pr.number, sourceRepo: { owner: pr.project.owner, repo: pr.project.name },
 });
 
-const pullRequestKey = (pr: ChangeRequest) => `${pr.project.owner}/${pr.project.name}#${pr.number}`;
+const pullRequestKey = (pr: ChangeRequest) => `${joinProjectPath(pr.project.owner, pr.project.name)}#${pr.number}`;
 
 /**
  * Folds one page of pull requests into what the picker already shows. A
@@ -87,11 +86,18 @@ export function usePullRequestComparison(
   enabled: boolean,
   preferredSource?: PullRequestSource,
 ) {
-  const { sourceControl, gitea } = useRuntimeAPIs();
+  const { sourceControl } = useRuntimeAPIs();
   const { t } = useI18n();
   const runtimeKey = useGitStore((state) => state.runtimeKey);
-  // GitHub and GitLab use bound reads; Gitea resolves saved instance/remotes separately.
-  const latestContext = readContext?.provider === 'github' || readContext?.provider === 'gitlab' ? readContext : null;
+  // The server publishes change request diffs for the providers it serves.
+  // Until its provider list is held that is unknown: the picker waits as if
+  // loading instead of reading the host as not connected.
+  const serving = useSourceControlProviderServing(readContext?.provider);
+  const providersUnknown = readContext !== null && serving === 'unknown';
+  // A served host may list its change requests and still not serve their diff.
+  const diffServing = useChangeRequestDiffServing(readContext?.provider);
+  const diffUnavailable = serving === 'served' && diffServing === 'not-served';
+  const latestContext = serving === 'served' ? readContext : null;
   const contextKey = latestContext ? JSON.stringify(sourceControlReadContextParts(latestContext)) : '';
   // Callers may hand over a fresh object each render; effects and callbacks key
   // on `contextKey` and read the object through this ref.
@@ -101,6 +107,7 @@ export function usePullRequestComparison(
   // Known even with no working account, so the messages name the right host.
   const hostProvider = useRepositoryHost(directory)?.provider;
   const provider = context?.provider ?? hostProvider ?? null;
+  const changeRequestTerm = useChangeRequestTerm(provider);
   // A rebind to another repository must not carry a selection across.
   const selectionKey = JSON.stringify([runtimeKey, directory, branch, context?.repositoryId ?? null]);
   const selection = usePullRequestSelectionStore((state) => state.selections.get(selectionKey) ?? null);
@@ -116,78 +123,9 @@ export function usePullRequestComparison(
   const listRef = useRef(list);
   listRef.current = list;
   const [loadingMore, setLoadingMore] = useState(false);
-  const [giteaRepositories, setGiteaRepositories] = useState<{ key: string; values: GiteaRepository[] } | null>(null);
-  const [giteaList, setGiteaList] = useState<{ key: string; items: Array<{ item: GiteaItem;
-    repo: GiteaRepository }>; page: number; hasMore: boolean; error: string | null } | null>(null);
-  const [giteaLoading, setGiteaLoading] = useState(false);
-  const [giteaDiscovery, setGiteaDiscovery] = useState<{ key: string; error: string | null } | null>(null);
-  const [giteaDiscoveryRevision, setGiteaDiscoveryRevision] = useState(0);
-  const giteaRequestId = useRef(0);
   const requestId = useRef(0);
   const owner = useRef({ key, enabled });
   owner.current = { key, enabled };
-  const repoKey = JSON.stringify([runtimeKey, directory]);
-  const currentGiteaRepositories = giteaRepositories?.key === repoKey ? giteaRepositories.values : NO_GITEA_REPOSITORIES;
-  const giteaKey = JSON.stringify([repoKey, search, currentGiteaRepositories.map((repo) => [
-    repo.instanceUrl, repo.owner, repo.name, repo.remote])]);
-  const giteaOwner = useRef({ key: giteaKey, enabled });
-  giteaOwner.current = { key: giteaKey, enabled };
-
-  useEffect(() => {
-    if (!enabled || !directory || !gitea) return;
-    let active = true;
-    void getRemotes(directory).then(async (remotes) => {
-      const results = await Promise.allSettled(remotes.map((remote) => gitea.repository(directory, remote.name)));
-      if (!active || runtimeKey !== getRuntimeKey()) return;
-      const failedRemotes = new Set(results.flatMap((result, index) => result.status === 'rejected' ? [remotes[index].name] : []));
-      const values = results.flatMap((result) => result.status === 'fulfilled' && result.value ? [result.value] : []);
-      setGiteaRepositories((previous) => ({ key: repoKey, values: [
-        ...values,
-        ...(previous?.key === repoKey ? previous.values.filter((repo) => failedRemotes.has(repo.remote)) : []),
-      ] }));
-      const failure = results.find((result) => result.status === 'rejected');
-      setGiteaDiscovery({ key: repoKey, error: failure?.status === 'rejected'
-        ? failure.reason instanceof Error ? failure.reason.message : String(failure.reason) : null });
-    }).catch((error) => {
-      if (active && runtimeKey === getRuntimeKey()) setGiteaDiscovery({ key: repoKey,
-        error: error instanceof Error ? error.message : String(error) });
-    });
-    return () => { active = false; };
-  }, [directory, enabled, gitea, repoKey, runtimeKey, giteaDiscoveryRevision]);
-
-  const refreshGitea = useCallback(async (page = 1) => {
-    if (!enabled || !directory || !gitea || currentGiteaRepositories.length === 0) return;
-    const id = ++giteaRequestId.current;
-    setGiteaLoading(true);
-    const previous = giteaList?.key === giteaKey ? giteaList.items : [];
-    const isCurrent = () => id === giteaRequestId.current && runtimeKey === getRuntimeKey()
-      && giteaOwner.current.key === giteaKey && giteaOwner.current.enabled;
-    try {
-      const results = await Promise.allSettled(currentGiteaRepositories.map((repo) =>
-        gitea.items(directory, 'pr', { page, remote: repo.remote, query: search || undefined })));
-      if (!isCurrent()) return;
-      const errors = results.flatMap((result) => result.status === 'rejected' ? [result.reason] : []);
-      const items = results.flatMap((result) => result.status === 'fulfilled'
-        ? result.value.items.map((item) => ({ item, repo: result.value.repo })) : []);
-      const failedRemotes = new Set(results.flatMap((result, index) => result.status === 'rejected'
-        ? [currentGiteaRepositories[index].remote] : []));
-      const retained = page > 1 ? previous : previous.filter((entry) => failedRemotes.has(entry.repo.remote));
-      const merged = new Map([...retained, ...items].map((entry) => [JSON.stringify([
-        entry.repo.instanceUrl, entry.repo.owner, entry.repo.name, entry.repo.remote, entry.item.number]), entry]));
-      setGiteaList({ key: giteaKey, items: [...merged.values()], page,
-        hasMore: results.some((result) => result.status === 'fulfilled' && result.value.hasMore),
-        error: errors.length ? String(errors[0] instanceof Error ? errors[0].message : errors[0]) : null });
-    } catch (error) {
-      if (isCurrent()) setGiteaList({ key: giteaKey, items: previous, page: Math.max(1, page - 1),
-        hasMore: true, error: error instanceof Error ? error.message : String(error) });
-    } finally { if (isCurrent()) setGiteaLoading(false); }
-  }, [enabled, directory, gitea, currentGiteaRepositories, giteaList, giteaKey, search, runtimeKey]);
-
-  useEffect(() => {
-    if (!enabled || currentGiteaRepositories.length === 0 || giteaList?.key === giteaKey) return;
-    void refreshGitea();
-    return () => { giteaRequestId.current += 1; };
-  }, [enabled, giteaKey, currentGiteaRepositories.length, giteaList?.key, refreshGitea]);
   const authEntry = useSourceControlAuthStore((state) => context ? state.entries[getSourceControlAuthKey(context)] : undefined);
   const auth = context ? getSourceControlReadContextAuthState(authEntry, context) : { authChecked: false, connected: false };
   const ensurePrStatusEntry = useGitHubPrStatusStore((state) => state.ensureEntry);
@@ -230,7 +168,7 @@ export function usePullRequestComparison(
   }, [acceptHandoff, preferredSource, selectionKey]);
 
   const refresh = useCallback(async (previous?: ReadyList) => {
-    if (!directory || !enabled || owner.current.key !== key || !owner.current.enabled) return;
+    if (!directory || !enabled || providersUnknown || owner.current.key !== key || !owner.current.enabled) return;
     const id = ++requestId.current;
     const runtime = getRuntimeKey();
     const shownList = listRef.current;
@@ -244,8 +182,8 @@ export function usePullRequestComparison(
     }
     try {
       const context = contextRef.current;
-      if (!sourceControl) throw new Error(t(changeRequestCopy('session.githubPrPicker.error.runtimeUnavailable', provider)));
-      if (!context || !auth.connected) throw new Error(t(changeRequestCopy('session.githubPrPicker.empty.notConnected', provider)));
+      if (!sourceControl) throw new Error(t(changeRequestCopy('session.githubPrPicker.error.runtimeUnavailable', changeRequestTerm)));
+      if (!context || !auth.connected) throw new Error(t(changeRequestCopy('session.githubPrPicker.empty.notConnected', changeRequestTerm)));
       const page = previous ? previous.page + 1 : 1;
       const result = await sourceControl.changeRequestsList(context, { page, query: search || undefined });
       if (requestId.current !== id || getRuntimeKey() !== runtime || owner.current.key !== key || !owner.current.enabled) return;
@@ -255,13 +193,13 @@ export function usePullRequestComparison(
       setList(ready);
     } catch (error) {
       if (requestId.current === id && getRuntimeKey() === runtime && owner.current.key === key && owner.current.enabled) {
-        const message = error instanceof Error ? error.message : t(changeRequestCopy('session.githubPrPicker.toast.loadMoreFailed', provider));
+        const message = error instanceof Error ? error.message : t(changeRequestCopy('session.githubPrPicker.toast.loadMoreFailed', changeRequestTerm));
         setList(previous ? { ...previous, error: message } : { key, status: 'error', message });
       }
     } finally {
       if (requestId.current === id) setLoadingMore(false);
     }
-  }, [auth.connected, directory, enabled, key, provider, search, sourceControl, t]);
+  }, [auth.connected, changeRequestTerm, directory, enabled, key, providersUnknown, search, sourceControl, t]);
 
   // Shows a list another surface read, and reads again only what is stale.
   const revalidate = useCallback(() => {
@@ -281,36 +219,23 @@ export function usePullRequestComparison(
     readContext: context,
     /** The host the change requests come from, for wording and numbering. */
     provider,
-    selectedSource: pendingPreference ?? selectedSource,
+    /** The host lists its change requests but does not serve their diff: nothing to compare or walk through. */
+    diffUnavailable,
+    // A chosen pull request waits too: nothing can read it before its provider is known to be served.
+    selectedSource: providersUnknown ? null : pendingPreference ?? selectedSource,
     prs: current?.status === 'ready' ? current.prs : NO_PULL_REQUESTS,
-    giteaPrs: giteaList?.key === giteaKey ? giteaList.items : [],
-    giteaLoading,
-    giteaError: (giteaList?.key === giteaKey ? giteaList.error : null)
-      ?? (giteaDiscovery?.key === repoKey ? giteaDiscovery.error : null),
-    giteaHasMore: giteaList?.key === giteaKey && giteaList.hasMore,
     query, setQuery,
-    loading: enabled && (!current || current.status === 'loading' || search !== query.trim()),
+    loading: enabled && (providersUnknown || !current || current.status === 'loading' || search !== query.trim()),
     loadingMore,
     hasMore: current?.status === 'ready' && current.hasMore,
     /** Projects whose pull requests failed to load; non-empty means the list is partial. */
     incompleteProjectIds: current?.status === 'ready' ? current.incompleteProjectIds : NO_PROJECT_IDS,
     error: current?.status === 'error' ? current.message : current?.status === 'ready' ? current.error : null,
-    refresh: () => {
-      setGiteaDiscoveryRevision((value) => value + 1);
-      return Promise.all([refresh(), refreshGitea()]);
-    },
-    loadMore: () => Promise.all([
-      current?.status === 'ready' && current.hasMore && !loadingMore ? refresh(current) : Promise.resolve(),
-      giteaList?.key === giteaKey && giteaList.hasMore && !giteaLoading
-        ? refreshGitea(giteaList.page + 1) : Promise.resolve(),
-    ]),
-    selectGitea: (entry: { item: GiteaItem; repo: GiteaRepository }) => {
-      saveSelection(selectionKey, { kind: 'pr', number: entry.item.number,
-        gitea: { instanceUrl: entry.repo.instanceUrl, owner: entry.repo.owner,
-          repo: entry.repo.name, remote: entry.repo.remote } });
-    },
+    /** Reads the list again now: retry and refresh buttons. */
+    refresh: () => refresh(),
     /** Opening the picker: shows what is known and reads again only when stale. */
     revalidate,
+    loadMore: () => current?.status === 'ready' && current.hasMore && !loadingMore ? refresh(current) : Promise.resolve(),
     select: (pr: ChangeRequest) => saveSelection(selectionKey, sourceOf(pr)),
   };
 }

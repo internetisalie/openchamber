@@ -9,6 +9,7 @@ import { setActionRefs } from '@/sync/session-actions';
 import { useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useSpacesStore } from '@/lib/spaces/spaces-store';
+import { useProjectsStore } from '@/stores/useProjectsStore';
 const { useAuthoritativeSessionCleanup } = await import('./useAuthoritativeSessionCleanup');
 
 // SAFETY: the cleanup identity path reads only `id` and `directory`; the rest
@@ -25,6 +26,7 @@ const CleanupProbe: React.FC<{ sessions: Session[]; revision: number }> = ({ ses
 };
 
 describe('authoritative session cleanup reconciles the deletion', () => {
+  const initialProjects = useProjectsStore.getState();
   let root: Root;
   let dom: ReturnType<typeof installHookTestDom>;
   let childStores: ChildStoreManager;
@@ -37,7 +39,9 @@ describe('authoritative session cleanup reconciles the deletion', () => {
     const store = childStores.ensureChild('/repo', { bootstrap: false });
     store.setState({ session: [session('deleted'), session('retained')] });
     useGlobalSessionsStore.getState().applySnapshot([session('deleted'), session('retained')], [], 'ready');
+    useProjectsStore.setState({ projects: [{ id: 'project', path: '/repo' }] });
     useSessionUIStore.getState().setCurrentSession('deleted', '/repo');
+    expect(useSessionUIStore.getState().currentSessionId).toBe('deleted');
     useSpacesStore.getState().resetForRuntimeSwitch();
   });
 
@@ -47,6 +51,7 @@ describe('authoritative session cleanup reconciles the deletion', () => {
     childStores.disposeAll();
     useGlobalSessionsStore.getState().resetForRuntimeSwitch();
     useSessionUIStore.getState().setCurrentSession(null);
+    useProjectsStore.setState(initialProjects, true);
   });
 
   test('a session omitted from a later complete snapshot leaves every live store and the active chat', () => {

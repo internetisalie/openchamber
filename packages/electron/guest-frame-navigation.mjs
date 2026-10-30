@@ -10,7 +10,9 @@
 // origin alone cannot tell it from an extension.
 
 const LOCAL_SCHEMES = new Set(['about:', 'data:', 'blob:']);
-const GUEST_PATH_PREFIX = '/api/guests/';
+// Extension pages load by grant (`/api/guest-files/`), or by the older
+// query-token path from a server that predates grants.
+const GUEST_PATH_PREFIXES = ['/api/guest-files/', '/api/guests/'];
 const FILE_PREVIEW_ROUTE = '/api/fs/preview/';
 
 /**
@@ -66,10 +68,11 @@ export const shouldBlockGuestFrameNavigation = ({ isMainFrame, frameOrigin, fram
   // No network request: the document is built from what the frame already has.
   if (LOCAL_SCHEMES.has(target.protocol)) return false;
   // Another page of an extension on this app's server, which the same CSP governs.
-  if (isAppOrigin(url) && target.pathname.startsWith(GUEST_PATH_PREFIX)) return false;
+  const isGuestPath = GUEST_PATH_PREFIXES.some((prefix) => target.pathname.startsWith(prefix));
+  if (isAppOrigin(url) && isGuestPath) return false;
   // Bundled UI can use an external backend without starting a local server.
   // Trust its extension pages only; this does not grant desktop IPC privileges.
-  if (target.pathname.startsWith(GUEST_PATH_PREFIX) && !target.username && !target.password) {
+  if (isGuestPath && !target.username && !target.password) {
     try {
       const api = new URL(apiBaseUrl);
       if ((api.protocol === 'http:' || api.protocol === 'https:') && target.origin === api.origin) return false;

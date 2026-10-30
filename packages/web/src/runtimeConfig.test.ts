@@ -11,11 +11,16 @@ vi.mock('@openchamber/ui/lib/runtime-auth', () => ({
   setRuntimeExtraHeaders: vi.fn(),
 }));
 vi.mock('@openchamber/ui/lib/runtime-fetch', () => ({ installRuntimeFetchBridge: vi.fn() }));
+const runtimeChangeSubscribers: Array<(detail: { runtimeKey: string }) => void> = [];
 vi.mock('@openchamber/ui/lib/runtime-switch', () => ({
   getRuntimeApiBaseUrl: vi.fn(() => ''),
   getRuntimeKey: vi.fn(() => 'local'),
   initializeRuntimeEndpoint: vi.fn(),
   switchRuntimeEndpoint: vi.fn(),
+  subscribeRuntimeEndpointChanged: vi.fn((callback: (detail: { runtimeKey: string }) => void) => {
+    runtimeChangeSubscribers.push(callback);
+    return () => {};
+  }),
 }));
 vi.mock('@openchamber/ui/lib/desktopRuntimeRestore', () => ({ restoreDesktopRuntime: vi.fn(() => Promise.resolve()) }));
 vi.mock('@openchamber/ui/lib/runtime-url', () => ({ configureRuntimeUrlResolver: vi.fn(() => ({})) }));
@@ -24,6 +29,7 @@ vi.mock('./api', () => ({ createWebAPIs: vi.fn() }));
 
 import { initializeRuntimeEndpoint } from '@openchamber/ui/lib/runtime-switch';
 import { restoreDesktopRuntime } from '@openchamber/ui/lib/desktopRuntimeRestore';
+import { importWithChunkRecovery } from '@openchamber/ui/lib/chunkLoadRecovery';
 import { createConfiguredWebAPIs, getDesktopRuntimeRestoreReady, readRuntimeBootstrapConfig } from './runtimeConfig';
 
 const originalWindow = globalThis.window;
@@ -46,6 +52,7 @@ const makeWindow = (search = ''): Record<string, unknown> => {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  runtimeChangeSubscribers.length = 0;
   installWindow(makeWindow());
 });
 
@@ -128,10 +135,12 @@ describe('createConfiguredWebAPIs', () => {
     try {
       const running: Promise<void> = runInNewContext(`${sequence}; start();`, {
         window, hostedSurface: 'desktop', createConfiguredWebAPIs, getDesktopRuntimeRestoreReady,
+        importWithChunkRecovery,
         watchHostedSurfaceViewport: vi.fn(), mountDesktop, mountMobile,
       });
       await vi.advanceTimersByTimeAsync(0);
       expect(mountDesktop).not.toHaveBeenCalled();
+      expect(mountMobile).not.toHaveBeenCalled();
       finishRestore();
       await running;
       expect(mountDesktop).toHaveBeenCalledOnce();
@@ -207,5 +216,31 @@ describe('createConfiguredWebAPIs', () => {
     createConfiguredWebAPIs();
 
     expect(restoreDesktopRuntime).not.toHaveBeenCalled();
+  });
+
+  test('reports the runtime key to the desktop shell at boot and on switch', async () => {
+    const invoke = vi.fn(() => Promise.resolve());
+    const current = makeWindow();
+    current.__OPENCHAMBER_API_BASE_URL__ = 'http://127.0.0.1:3901';
+    current.__OPENCHAMBER_LOCAL_ORIGIN__ = 'http://127.0.0.1:3902';
+    current.__OPENCHAMBER_DESKTOP__ = { invoke };
+    installWindow(current);
+
+    createConfiguredWebAPIs();
+
+    expect(invoke).toHaveBeenCalledWith('desktop_set_window_runtime_key', { runtimeKey: 'local' });
+    runtimeChangeSubscribers.at(-1)?.({ runtimeKey: 'host:abc123' });
+    await vi.waitFor(() => {
+      expect(invoke).toHaveBeenCalledWith('desktop_set_window_runtime_key', { runtimeKey: 'host:abc123' });
+    });
+  });
+
+  test('skips the runtime key report when the desktop bridge is absent', () => {
+    const current = makeWindow();
+    current.__OPENCHAMBER_API_BASE_URL__ = 'http://127.0.0.1:3901';
+    current.__OPENCHAMBER_LOCAL_ORIGIN__ = 'http://127.0.0.1:3902';
+    installWindow(current);
+
+    expect(() => createConfiguredWebAPIs()).not.toThrow();
   });
 });

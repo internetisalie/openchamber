@@ -65,15 +65,17 @@ const readJson = async <T>(response: Response): Promise<T> => {
 
 const isPullRequestTarget = (
   target: WalkthroughTarget,
-): target is Extract<WalkthroughTarget, { context: Readonly<SourceControlReadContext> }> => 'context' in target;
+): target is Extract<WalkthroughTarget, { source: { kind: 'pr' } }> => target.source.kind === 'pr';
 
 const hasMatchingContext = (
   result: WalkthroughResult,
-  target: Extract<WalkthroughTarget, { context: Readonly<SourceControlReadContext> }>,
+  target: Extract<WalkthroughTarget, { source: { kind: 'pr' } }>,
 ): boolean => {
   const context = result.source?.kind === 'pr' ? result.readContext : undefined;
   return result.source?.kind === 'pr'
     && result.source.number === target.source.number
+    // A server that ignored the revision answered for the current one.
+    && (result.source.revision ?? null) === (target.source.revision?.toLowerCase() ?? null)
     && context !== undefined
     && hasSameSourceControlReadContext(context, target.context);
 };
@@ -85,15 +87,6 @@ const readWalkthroughResult = async (
   const result = await readJson<WalkthroughResult>(response);
   if (isPullRequestTarget(target) && !hasMatchingContext(result, target)) {
     throw new WalkthroughError('The server returned a walkthrough for a different source-control context');
-  }
-  if (target.source.kind === 'pr' && target.source.gitea) {
-    const expected = target.source.gitea;
-    const actual = result.source?.kind === 'pr' ? result.source.gitea : undefined;
-    if (result.source?.kind !== 'pr' || result.source.number !== target.source.number
-      || !actual || actual.instanceUrl !== expected.instanceUrl || actual.owner !== expected.owner
-      || actual.repo !== expected.repo || actual.remote !== expected.remote) {
-      throw new WalkthroughError('The server returned a walkthrough for a different Gitea repository');
-    }
   }
   return result;
 };

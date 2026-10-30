@@ -313,10 +313,12 @@ export function DesktopHostSwitcherDialog({
     void runtimeEndpointEpoch;
     return resolveCurrentDesktopHost(allHosts);
   }, [allHosts, runtimeEndpointEpoch]);
+  // Null when the default is not in the list, such as Local without a local
+  // server: naming it would point at an entry nobody can pick.
   const currentDefaultLabel = React.useMemo(() => {
     const id = defaultHostId || LOCAL_HOST_ID;
-    return allHosts.find((h) => h.id === id)?.label || current.label;
-  }, [allHosts, defaultHostId, current.label]);
+    return allHosts.find((h) => h.id === id)?.label ?? null;
+  }, [allHosts, defaultHostId]);
 
   const persist = React.useCallback(async (nextHosts: DesktopHost[], nextDefaultHostId: string | null) => {
     if (!isDesktopShell()) return;
@@ -477,7 +479,7 @@ export function DesktopHostSwitcherDialog({
     const sshForwarded = host.sshForwarded === true || (
       sshStatusesById[host.id]?.phase === 'ready' && sshStatusesById[host.id]?.localUrl === apiOrigin
     );
-    const relayOnly = Boolean(host.relay) && !host.apiUrl && host.id !== LOCAL_HOST_ID;
+    const relayOnly = Boolean(host.relay) && !origin && host.id !== LOCAL_HOST_ID;
     if (!origin && !relayOnly) {
       setSwitchingHostId(null);
       return;
@@ -544,7 +546,11 @@ export function DesktopHostSwitcherDialog({
       let finalStatus: HostStatus = { status: 'unreachable', latencyMs: 0 };
       let transport: 'direct' | 'relay' | null = null;
       if (apiOrigin) {
-        const probe = await desktopHostProbe(apiOrigin, { clientToken: clientToken || null, requestHeaders: host.requestHeaders || null }).catch((): HostProbeResult => ({ status: 'unreachable', latencyMs: 0 }));
+        const probe = await desktopHostProbe(apiOrigin, {
+          clientToken: clientToken || null,
+          requestHeaders: host.requestHeaders || null,
+          expectedServerId: host.relay?.serverId ?? null,
+        }).catch((): HostProbeResult => ({ status: 'unreachable', latencyMs: 0 }));
         finalStatus = { status: probe.status, latencyMs: probe.latencyMs };
         if (!isBlockedHostStatus(probe.status)) transport = 'direct';
       }
@@ -856,9 +862,13 @@ export function DesktopHostSwitcherDialog({
             <div className="min-w-0 flex items-baseline gap-1.5 typography-ui-label">
               <span className="font-medium text-foreground">{t('desktopHostSwitcher.header.current')}</span>
               <span className="max-w-[9rem] truncate text-muted-foreground">{redactSensitiveUrl(current.label)}</span>
-              <span className="text-muted-foreground/50">•</span>
-              <span className="font-medium text-foreground">{t('desktopHostSwitcher.header.default')}</span>
-              <span className="max-w-[9rem] truncate text-muted-foreground">{redactSensitiveUrl(currentDefaultLabel)}</span>
+              {currentDefaultLabel !== null && (
+                <>
+                  <span className="text-muted-foreground/50">•</span>
+                  <span className="font-medium text-foreground">{t('desktopHostSwitcher.header.default')}</span>
+                  <span className="max-w-[9rem] truncate text-muted-foreground">{redactSensitiveUrl(currentDefaultLabel)}</span>
+                </>
+              )}
             </div>
             <button
               type="button"
@@ -892,8 +902,12 @@ export function DesktopHostSwitcherDialog({
           <div className="flex items-center gap-2 min-w-0">
             <span className="typography-meta text-muted-foreground">{t('desktopHostSwitcher.header.currentColon')}</span>
             <span className="typography-ui-label text-foreground truncate">{redactSensitiveUrl(current.label)}</span>
-            <span className="typography-meta text-muted-foreground">{t('desktopHostSwitcher.header.currentDefaultColon')}</span>
-            <span className="typography-ui-label text-foreground truncate">{redactSensitiveUrl(currentDefaultLabel)}</span>
+            {currentDefaultLabel !== null && (
+              <>
+                <span className="typography-meta text-muted-foreground">{t('desktopHostSwitcher.header.currentDefaultColon')}</span>
+                <span className="typography-ui-label text-foreground truncate">{redactSensitiveUrl(currentDefaultLabel)}</span>
+              </>
+            )}
           </div>
           <div className="flex items-center gap-1">
             <Button
@@ -911,7 +925,7 @@ export function DesktopHostSwitcherDialog({
       )}
 
         {!desktopAvailable && (
-          <div className="flex-shrink-0 rounded-lg border border-border/50 bg-muted/20 p-3">
+          <div className="flex-shrink-0 rounded-lg border border-edge bg-muted/20 p-3">
             <div className="typography-meta text-muted-foreground">
               {t('desktopHostSwitcher.state.limitedOnPage')}
             </div>
@@ -983,7 +997,7 @@ export function DesktopHostSwitcherDialog({
                             {displayLabel}
                           </span>
                           {isActive && (
-                            <span className="typography-micro flex-shrink-0 text-muted-foreground bg-muted px-1 rounded leading-none pb-px border border-border/50">
+                            <span className="typography-micro flex-shrink-0 text-muted-foreground bg-muted px-1 rounded leading-none pb-px border border-edge">
                               {t('desktopHostSwitcher.header.current')}
                             </span>
                           )}
@@ -1000,7 +1014,7 @@ export function DesktopHostSwitcherDialog({
                             : ''}
                           {!isSsh && status?.via === 'relay' ? ` · ${t('settings.remoteInstances.clientAuth.state.viaRelay')}` : ''}
                         </div>
-                        <div className="typography-micro text-muted-foreground/70 truncate font-mono">
+                        <div className="typography-micro text-muted-foreground truncate font-mono">
                           {displayUrl}
                         </div>
                       </div>
@@ -1039,7 +1053,7 @@ export function DesktopHostSwitcherDialog({
                               'h-8 w-8 rounded-md inline-flex items-center justify-center hover:bg-interactive-hover transition-colors',
                               isDefault
                                 ? 'text-primary hover:text-primary/80'
-                                : 'text-muted-foreground/60 hover:text-primary/80',
+                                : 'text-muted-foreground hover:text-primary/80',
                             )}
                             onClick={() => void setDefault(host.id)}
                             aria-label={isDefault ? t('desktopHostSwitcher.actions.defaultInstanceAria') : t('desktopHostSwitcher.actions.setAsDefaultAria')}
@@ -1061,7 +1075,7 @@ export function DesktopHostSwitcherDialog({
                                 'h-8 w-8 rounded-md inline-flex items-center justify-center hover:bg-interactive-hover transition-colors',
                                 isBlockedDisplayStatus(statusKind)
                                   ? 'text-muted-foreground/30 cursor-not-allowed'
-                                  : 'text-muted-foreground/60 hover:text-foreground',
+                                  : 'text-muted-foreground hover:text-foreground',
                               )}
                             onClick={(e) => {
                               e.stopPropagation();
@@ -1088,7 +1102,7 @@ export function DesktopHostSwitcherDialog({
         </div>
 
         {desktopAvailable && editingId && editingId !== LOCAL_HOST_ID && (
-          <div className="flex-shrink-0 rounded-lg border border-border/50 bg-muted/20 p-3">
+          <div className="flex-shrink-0 rounded-lg border border-edge bg-muted/20 p-3">
             <div className="flex items-center justify-between gap-2">
               <div className="typography-ui-label font-medium text-foreground">{t('desktopHostSwitcher.edit.title')}</div>
               <div className="flex items-center gap-2">

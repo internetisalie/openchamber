@@ -14,28 +14,28 @@ export type WalkthroughSource =
   | { kind: 'working-tree'; scope: WalkthroughWorkingTreeScope }
   | { kind: 'branch'; baseRef: string; headRef: string }
   | { kind: 'commit'; hash: string }
-  | { kind: 'pr'; number: number; sourceRepo?: { owner: string; repo: string };
-    gitea?: { instanceUrl: string; owner: string; repo: string; remote: string } };
+  /**
+   * `revision`: a full commit SHA naming an earlier revision (a patchset) on
+   * a host that keeps them; absent, the change request's current one.
+   */
+  | { kind: 'pr'; number: number; sourceRepo?: { owner: string; repo: string }; revision?: string };
 
 type WalkthroughLocalSource = Exclude<WalkthroughSource, { kind: 'pr' }>;
 type WalkthroughPullRequestSource = Extract<WalkthroughSource, { kind: 'pr' }>;
 
 export type WalkthroughTarget =
   | { source: WalkthroughLocalSource }
-  | { source: WalkthroughPullRequestSource & { gitea: NonNullable<WalkthroughPullRequestSource['gitea']> } }
   | { source: WalkthroughPullRequestSource; context: Readonly<SourceControlReadContext> };
-
-/** Gitea reads use the saved instance/remote; GitHub and GitLab require a bound context. */
-export const pullRequestWalkthroughTarget = (
-  source: WalkthroughPullRequestSource,
-  context: Readonly<SourceControlReadContext> | null,
-): WalkthroughTarget | null => {
-  if (source.gitea) return { source: { ...source, gitea: source.gitea } };
-  return context ? { source, context } : null;
-};
 
 export type WalkthroughChapterIcon = 'bug' | 'wrench' | 'path' | 'flask' | 'doc' | 'gear';
 export type WalkthroughStopImportance = 'critical' | 'normal' | 'context';
+export type WalkthroughObservationKind = 'decision' | 'cost' | 'limitation' | 'asymmetry' | 'unproven';
+
+/** A fact the reader agrees to by accepting the change; never a finding. */
+export interface WalkthroughObservation {
+  kind: WalkthroughObservationKind;
+  note: string;
+}
 
 export interface WalkthroughStop {
   id: string;
@@ -43,6 +43,8 @@ export interface WalkthroughStop {
   hunkIds: string[];
   importance: WalkthroughStopImportance;
   prose: string;
+  /** Absent on entries written before observations existed. */
+  observations?: WalkthroughObservation[];
 }
 
 export interface WalkthroughChapter {
@@ -53,10 +55,18 @@ export interface WalkthroughChapter {
   stops: WalkthroughStop[];
 }
 
+/** One line on a file the stops left out, shown where the reader meets it. */
+export interface WalkthroughRoutineNote {
+  path: string;
+  note: string;
+}
+
 export interface Walkthrough {
   title: string;
   focus: string;
   chapters: WalkthroughChapter[];
+  /** Absent on entries written before routine notes existed. */
+  routine?: WalkthroughRoutineNote[];
 }
 
 export interface WalkthroughHunk {

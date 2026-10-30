@@ -124,6 +124,8 @@ const requiredKeys = [
   'settings.extensions.toast.updateFailed',
   'settings.extensions.toast.notGit',
   'settings.extensions.toast.swapFailed',
+  'settings.extensions.browse.label',
+  'settings.extensions.browse.hint',
 ] as const;
 
 const allowEnglishLoanword = new Set([

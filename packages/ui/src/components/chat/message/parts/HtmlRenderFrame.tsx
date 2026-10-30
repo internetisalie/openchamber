@@ -1,23 +1,23 @@
 import React from 'react';
 
-import { isCapacitorMobileApp } from '@/apps/mobileNativeChrome';
-import { Icon } from '@/components/icon/Icon';
 import { toast } from '@/components/ui';
-import { Button } from '@/components/ui/button';
+import { ToolbarTooltipButton } from '@/components/ui/action-toolbar';
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
-import { useThemeSystem } from '@/contexts/useThemeSystem';
+import { useFrameAnnotation } from '@/components/browser/useFrameAnnotation';
 import { useWaitingBlink } from '@/hooks/useDurationTicker';
+import { useEffectiveDirectory } from '@/hooks/useEffectiveDirectory';
+import type { BrowserAnnotationPayload } from '@/lib/browser/contract';
 import { isVSCodeRuntime } from '@/lib/desktop';
 import { useI18n } from '@/lib/i18n';
 import { cn } from '@/lib/utils';
 import { useUIStore } from '@/stores/useUIStore';
-import { shareFileFromNativeApp } from '@/lib/nativeFileShare';
 import type { ToolPart } from '@/lib/opencode/model';
 import { renderedPage, type RenderedPageAsk } from '@/lib/opencode/tools';
 import { answerRenderedPage } from '@/lib/renderPageAnswer';
 import { openExternalUrl } from '@/lib/url';
 import type { ChatQuoteAnchor } from '@/lib/chatQuoteAnchor';
 import { useConfigStore } from '@/stores/useConfigStore';
+import { dispatchFrameScroll, dispatchPageWaiting } from '@/components/chat/lib/scroll/timelineScrollIntent';
 import { useChatSurfaceMode } from '@/components/chat/useChatSurfaceMode';
 import { dispatchFrameSelection, frameRectInApp } from '../frameSelection';
 import {
@@ -37,37 +37,18 @@ import {
     htmlRenderClearSelectionMessage,
     htmlRenderFileName,
     htmlRenderMarksMessage,
+    htmlRenderPointerMessage,
     htmlRenderRevealMessage,
     htmlRenderSubmitReply,
-    htmlRenderTheme,
     htmlRenderThemeMessage,
     readHtmlRenderFrameMessage,
     type HtmlRenderAnswerState,
     type HtmlRenderKeyChord,
     type HtmlRenderSubmission,
-    type HtmlRenderTheme,
 } from './htmlRender';
 import { useRenderPageHtml } from './renderPageImages';
-
-const DEFAULT_SANS = '-apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif';
-const DEFAULT_MONO = 'ui-monospace, "SFMono-Regular", Menlo, monospace';
-
-/** The app theme as the page's variables, following theme and interface size switches live. */
-function useHtmlRenderTheme(): HtmlRenderTheme {
-    const { currentTheme } = useThemeSystem();
-    // The interface size setting scales the root font, and the app's
-    // controls with it; read again whenever it changes.
-    const interfaceSize = useUIStore((state) => state.fontSize);
-    return React.useMemo(() => {
-        // The user's font settings land on the root as these variables.
-        const style = getComputedStyle(document.documentElement);
-        return htmlRenderTheme(currentTheme, {
-            rem: Number.parseFloat(style.fontSize) || 16,
-            sans: style.getPropertyValue('--font-sans').trim() || DEFAULT_SANS,
-            mono: style.getPropertyValue('--font-mono').trim() || DEFAULT_MONO,
-        });
-    }, [currentTheme, interfaceSize]);
-}
+import { saveFile } from './saveFile';
+import { useHtmlRenderTheme } from './useHtmlRenderTheme';
 
 // A timeline row unmounts when it scrolls away and mounts again when it comes
 // back. The page's last height is kept per call, so it comes back at its size
@@ -111,6 +92,8 @@ interface HtmlRenderDocumentProps {
     /** Delivers what the page sent with `openchamber.submit`; rejects with the reason it was not delivered. */
     onSubmit?: (submission: HtmlRenderSubmission) => Promise<void>;
     onContentHeight?: (height: number) => void;
+    /** Receives the frame, for a caller that drives the page from outside (annotation). */
+    frameRef?: React.RefObject<HTMLIFrameElement | null>;
 }
 
 /**
@@ -120,7 +103,7 @@ interface HtmlRenderDocumentProps {
  * state its script holds survives. The page's selections, quote marks and
  * reveals pass through here to the chat (see pageQuoteBridge.ts).
  */
-function HtmlRenderDocument({ partId, html, title, className, style, contained = false, answerState = NO_ANSWER, onSubmit, onContentHeight }: HtmlRenderDocumentProps) {
+function HtmlRenderDocument({ partId, html, title, className, style, contained = false, answerState = NO_ANSWER, onSubmit, onContentHeight, frameRef: outerFrameRef }: HtmlRenderDocumentProps) {
     const theme = useHtmlRenderTheme();
     const [initialTheme] = React.useState(theme);
     const [initialAnswerState] = React.useState(answerState);
@@ -129,6 +112,10 @@ function HtmlRenderDocument({ partId, html, title, className, style, contained =
         [contained, html, initialAnswerState, initialTheme],
     );
     const frameRef = React.useRef<HTMLIFrameElement>(null);
+    const setFrame = React.useCallback((node: HTMLIFrameElement | null) => {
+        frameRef.current = node;
+        if (outerFrameRef) outerFrameRef.current = node;
+    }, [outerFrameRef]);
     const handleRef = React.useRef<PageFrameHandle | null>(null);
     // A reveal that arrives before the page has loaded waits for it.
     const loadedRef = React.useRef(false);
@@ -156,14 +143,36 @@ function HtmlRenderDocument({ partId, html, title, className, style, contained =
         return subscribePageMarks(partId, postMarks);
     }, [partId, postMarks]);
 
+    // The page shows its horizontal scrollbar only while the pointer is over
+    // it; a page loaded under the pointer learns that on load.
+    const pointerOverRef = React.useRef(false);
+    const postPointer = React.useCallback((over: boolean) => {
+        pointerOverRef.current = over;
+        frameRef.current?.contentWindow?.postMessage(htmlRenderPointerMessage(over), '*');
+    }, []);
+
+    // A page flashed white for a moment each time the timeline mounted it
+    // again while scrolling: what a new frame paints before the page's own
+    // document (an empty document, a frame process without its first frame)
+    // is not the page, and under the app's dark theme it came out white. The
+    // frame stays hidden until the page has drawn itself: its first size
+    // report (sent once it is laid out, before slow images finish) or its
+    // load, whichever comes first. Its space is already held at the page's
+    // remembered height. A later load swaps documents without an empty one
+    // in between, so the frame stays shown. Hidden by opacity: Chromium may
+    // throttle the rendering of a cross-origin frame under visibility:hidden,
+    // and the size report would then wait for the load.
+    const [shown, setShown] = React.useState(false);
     const handleLoad = React.useCallback(() => {
+        setShown(true);
         loadedRef.current = true;
         postState();
         postMarks();
+        if (pointerOverRef.current) postPointer(true);
         const pending = pendingRevealRef.current;
         pendingRevealRef.current = null;
         if (pending) frameRef.current?.contentWindow?.postMessage(htmlRenderRevealMessage(pending), '*');
-    }, [postMarks, postState]);
+    }, [postMarks, postPointer, postState]);
 
     React.useEffect(() => {
         const frame = frameRef.current;
@@ -198,9 +207,13 @@ function HtmlRenderDocument({ partId, html, title, className, style, contained =
             const frame = frameRef.current;
             if (!frame || event.source !== frame.contentWindow) return;
             const message = readHtmlRenderFrameMessage(event);
-            if (message?.kind === 'size') onContentHeight?.(message.height);
+            if (message?.kind === 'size') {
+                setShown(true);
+                onContentHeight?.(message.height);
+            }
             if (message?.kind === 'open-link') void openExternalUrl(message.url);
             if (message?.kind === 'key') replayKeyChord(frame, message.chord);
+            if (message?.kind === 'scroll') dispatchFrameScroll(frame, message.direction);
             if (message?.kind === 'submit') {
                 const reply = (error?: string) => frame.contentWindow?.postMessage(htmlRenderSubmitReply(message.id, error), '*');
                 const { answerState: current, onSubmit: deliver } = submitRef.current;
@@ -246,15 +259,17 @@ function HtmlRenderDocument({ partId, html, title, className, style, contained =
 
     return (
         <iframe
-            ref={frameRef}
+            ref={setFrame}
             title={title}
             srcDoc={srcDoc}
             sandbox="allow-scripts allow-forms"
             onLoad={handleLoad}
+            onPointerEnter={() => postPointer(true)}
+            onPointerLeave={() => postPointer(false)}
             className={className}
             // A frame whose color scheme differs from the page's own paints an
             // opaque canvas; matching it keeps the page on the chat background.
-            style={{ ...style, colorScheme: theme.appearance }}
+            style={{ ...style, colorScheme: theme.appearance, opacity: shown ? undefined : 0 }}
         />
     );
 }
@@ -332,8 +347,9 @@ function PageSelectionScope({
 export function ShownPage({ part }: { part: ToolPart }) {
     // Kept while the call's state is the same object, so the page is not sent
     // its answer state again on every render.
+    const { t } = useI18n();
     const page = React.useMemo(() => renderedPage(part.tool, part.state), [part.tool, part.state]);
-    return page ? <HtmlRenderFrame part={part} html={page.html} title={page.title} ask={page.ask} /> : null;
+    return page ? <HtmlRenderFrame part={part} html={page.html} title={page.title || t('chat.htmlRender.untitled')} ask={page.ask} /> : null;
 }
 
 interface HtmlRenderFrameProps {
@@ -347,7 +363,7 @@ interface HtmlRenderFrameProps {
 /**
  * A page an agent showed with `openchamber_render`, inline in the reply. The
  * frame takes the height the page reports, so the page scrolls with the chat;
- * full screen and download sit in the corner.
+ * annotation, full screen and download sit in a row above it.
  */
 // Its own component: the blink re-renders this dot once a second, not the page around it.
 function WaitingDot() {
@@ -367,6 +383,24 @@ function HtmlRenderFrame({ part, html, title, ask }: HtmlRenderFrameProps) {
     const [height, setHeight] = React.useState(() => rememberedHeights.get(partId) ?? HTML_RENDER_MIN_HEIGHT);
     const [fullscreen, setFullscreen] = React.useState(false);
 
+    // The browser panel's annotation, on the page in its message: the agent
+    // learns which element or area the user means, with a screenshot on the
+    // desktop. Like the panel, a pointer tool: phones and VS Code do not get it.
+    const frameRef = React.useRef<HTMLIFrameElement>(null);
+    const directory = useEffectiveDirectory() ?? '';
+    const describePage = React.useCallback((payload: BrowserAnnotationPayload): BrowserAnnotationPayload => (
+        // The frame's own address is about:srcdoc; the page's title is what names it in the chat.
+        { ...payload, pageUrl: '', pageTitle: title }
+    ), [title]);
+    const annotation = useFrameAnnotation({
+        frameRef,
+        directory,
+        pageKey: partId,
+        intro: t('chat.htmlRender.annotate.intro'),
+        describePage,
+    });
+    const canAnnotate = !isVSCodeRuntime() && loadedHtml !== null;
+
     const handleContentHeight = React.useCallback((contentHeight: number) => {
         const next = clampHtmlRenderHeight(contentHeight);
         rememberHeight(partId, next);
@@ -384,18 +418,7 @@ function HtmlRenderFrame({ part, html, title, ask }: HtmlRenderFrameProps) {
         // same way outside the app.
         const file = new File([buildHtmlRenderDocument(pageHtml, theme)], fileName, { type: 'text/html' });
         try {
-            if (isCapacitorMobileApp()) {
-                await shareFileFromNativeApp(file);
-                return;
-            }
-            const url = URL.createObjectURL(file);
-            const link = document.createElement('a');
-            link.download = fileName;
-            link.href = url;
-            document.body.appendChild(link);
-            link.click();
-            document.body.removeChild(link);
-            URL.revokeObjectURL(url);
+            await saveFile(file);
         } catch {
             toast.error(t('chat.htmlRender.downloadFailed'));
         }
@@ -426,12 +449,44 @@ function HtmlRenderFrame({ part, html, title, ask }: HtmlRenderFrameProps) {
             ? t('chat.htmlRender.waiting')
             : ask.kind === 'answered-in-chat'
                 ? t('chat.htmlRender.answeredInChat')
-                : ask.kind === 'unanswered' ? t('chat.htmlRender.unanswered') : null;
+                : ask.kind === 'chat-sent-earlier'
+                    ? t('chat.htmlRender.chatSentEarlier')
+                    : ask.kind === 'unanswered' ? t('chat.htmlRender.unanswered') : null;
     const waiting = ask.kind === 'waiting' && answeredSummary === undefined;
+    // The chat brings a page that waits for an answer into view, and again
+    // as its height arrives: an off-screen frame reports its size only once
+    // it is scrolled into view.
+    const blockRef = React.useRef<HTMLDivElement>(null);
+    React.useEffect(() => {
+        if (waiting) dispatchPageWaiting(blockRef.current);
+    }, [height, waiting]);
 
     return (
-        <div className="my-2">
-        <PageSelectionScope messageId={messageId} partId={partId} className="group/html-render relative" style={{ height }}>
+        <div ref={blockRef} className="group/html-render my-2" data-waiting-page={waiting ? partId : undefined}>
+        {isMobile ? null : (
+            // A row of its own above the page: over the page the buttons
+            // covered its own controls in the top corner. The row keeps its
+            // height while the buttons fade in, so hovering moves nothing.
+            <div className={cn(
+                'flex h-6 items-center justify-end gap-0.5 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/html-render:opacity-100 pointer-coarse:opacity-100',
+                // The way out of annotation stays in view while it runs.
+                annotation.isAnnotating && 'opacity-100',
+            )}>
+                {canAnnotate ? (
+                    <ToolbarTooltipButton
+                        label={t('contextPanel.browser.annotate.toggle')}
+                        icon="markup"
+                        pressed={annotation.isAnnotating}
+                        onClick={annotation.toggle}
+                    />
+                ) : null}
+                <ToolbarTooltipButton label={t('chat.htmlRender.fullscreen')} icon="fullscreen" onClick={() => setFullscreen(true)} />
+                {canDownload ? (
+                    <ToolbarTooltipButton label={t('chat.htmlRender.download')} icon="download" onClick={() => { void handleDownload(); }} />
+                ) : null}
+            </div>
+        )}
+        <PageSelectionScope messageId={messageId} partId={partId} className="relative" style={{ height }}>
             {loadedHtml === null ? null : (
                 <HtmlRenderDocument
                     partId={partId}
@@ -441,32 +496,11 @@ function HtmlRenderFrame({ part, html, title, ask }: HtmlRenderFrameProps) {
                     answerState={answerState}
                     onSubmit={handleSubmit}
                     onContentHeight={handleContentHeight}
+                    frameRef={frameRef}
                 />
             )}
             {isMobile ? null : (
                 <>
-                    <div className="absolute end-1 top-1 flex gap-1 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/html-render:opacity-100 pointer-coarse:opacity-100">
-                        <Button
-                            variant="outline"
-                            size="icon"
-                            aria-label={t('chat.htmlRender.fullscreen')}
-                            title={t('chat.htmlRender.fullscreen')}
-                            onClick={() => setFullscreen(true)}
-                        >
-                            <Icon name="fullscreen" />
-                        </Button>
-                        {canDownload ? (
-                            <Button
-                                variant="outline"
-                                size="icon"
-                                aria-label={t('chat.htmlRender.download')}
-                                title={t('chat.htmlRender.download')}
-                                onClick={() => { void handleDownload(); }}
-                            >
-                                <Icon name="download" />
-                            </Button>
-                        ) : null}
-                    </div>
                     <Dialog open={fullscreen} onOpenChange={setFullscreen}>
                         <DialogContent className="max-w-[min(72rem,100%)] gap-0 overflow-hidden bg-background p-0">
                             <DialogTitle className="truncate px-5 py-4 pe-12">{title}</DialogTitle>

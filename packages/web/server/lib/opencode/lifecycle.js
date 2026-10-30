@@ -881,13 +881,23 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
     throw lastError;
   };
 
-  const restartOpenCode = async (reason = 'managed-restart') => {
+  // `whileStopped` runs after the managed process has exited and before the
+  // new one starts. Its failure is reported after the restart, so the server
+  // comes back either way.
+  const restartOpenCode = async (reason = 'managed-restart', { whileStopped } = {}) => {
     if (state.isShuttingDown) return;
+    if (whileStopped && state.isExternalOpenCode) throw new Error('An external OpenCode server cannot be stopped by OpenChamber.');
     if (state.currentRestartPromise) {
-      await state.currentRestartPromise;
-      return;
+      if (!whileStopped) {
+        await state.currentRestartPromise;
+        return;
+      }
+      // A restart already in flight never ran this task; restart once more for it.
+      await state.currentRestartPromise.catch(() => {});
+      if (state.isShuttingDown) return;
     }
 
+    let whileStoppedError = null;
     state.currentRestartPromise = (async () => {
       managedPreflight = null;
       state.isRestartingOpenCode = true;
@@ -941,6 +951,14 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
       killProcessOnPort(portToKill);
       if (!(await waitForPortRelease(portToKill, 5000))) {
         console.warn(`Timed out waiting for OpenCode port ${portToKill} to be released`);
+      }
+
+      if (whileStopped) {
+        try {
+          await whileStopped();
+        } catch (error) {
+          whileStoppedError = error;
+        }
       }
 
       if (env.ENV_CONFIGURED_OPENCODE_PORT) {
@@ -998,6 +1016,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
       state.currentRestartPromise = null;
       state.isRestartingOpenCode = false;
     }
+    if (whileStoppedError) throw whileStoppedError;
   };
 
   const waitForOpenCodeReady = async (timeoutMs = 20000, intervalMs = 400) => {
@@ -1540,6 +1559,17 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
     getManagedOpenCodeProcessEnv: () => (state.isExternalOpenCode ? null : managedProcessEnv),
     /** The directory to scope a server-side OpenCode read that has none, or null once none is usable. */
     getDefaultOpenCodeDirectory: () => getValidatedDefaultDirectory(),
+    /**
+     * The UI saved the directory it now works in. That directory is running
+     * already, so reads without a directory of their own go there: the one
+     * used last at startup may be a chat the user has left, and the UI stops
+     * a left chat's OpenCode location, which such a read would start again.
+     */
+    noteCurrentDirectory: (directory) => {
+      if (!isUsableDirectory(directory)) return;
+      defaultOpenCodeDirectory = directory;
+      warmedOpenCodeDirectories = [directory, ...warmedOpenCodeDirectories.filter((entry) => entry !== directory)];
+    },
     getManagedOpenCodePreflight: async () => {
       const preflight = managedPreflight;
       if (!preflight || state.isExternalOpenCode || state.isShuttingDown) return false;

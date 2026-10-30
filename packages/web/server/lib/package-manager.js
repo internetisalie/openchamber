@@ -14,8 +14,7 @@ export async function checkForUpdates() {
   return { ...release, currentVersion, available: isNewerForkVersion(release.version, currentVersion) };
 }
 
-// Keep the refusal at the command boundary too. Callers must never obtain an
-// upstream package-manager command, even when they bypass the HTTP route.
+// Refuse at the command boundary, including callers outside the HTTP route.
 export function getUpdateCommand() {
   throw new Error(FORK_UPDATE_ERROR);
 }

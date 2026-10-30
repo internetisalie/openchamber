@@ -1,6 +1,24 @@
 # syntax=docker/dockerfile:1
-FROM oven/bun:1.4.3 AS base
+ARG OPENCODE_SOURCE=opencode-release
+FROM oven/bun:1.4.4 AS base
 WORKDIR /app
+
+FROM base AS opencode-pin
+ENV OPENCODE_VERSION=2.2.3-internetisalie.1 \
+    OPENCODE_SHA256=07b76069e32ecd28063d302c074e4b70a774930b68c97bf0061c27a44f83be5a
+
+FROM opencode-pin AS opencode-release
+ADD --checksum=sha256:${OPENCODE_SHA256} --chmod=755 https://github.com/internetisalie/opencode/releases/download/v${OPENCODE_VERSION}/opencode-linux-x64-baseline /opencode
+
+# Select a named local context with OPENCODE_SOURCE; its root must contain opencode.
+FROM ${OPENCODE_SOURCE} AS opencode-artifact
+
+FROM opencode-pin AS opencode-verified
+WORKDIR /backend
+COPY --from=opencode-artifact --chmod=755 /opencode ./opencode
+RUN printf '%s  opencode\n' "$OPENCODE_SHA256" | sha256sum --check --strict - \
+    && actual_version="$(./opencode --version)" \
+    && test "$actual_version" = "opencode v$OPENCODE_VERSION"
 
 FROM base AS deps
 WORKDIR /app
@@ -23,12 +41,11 @@ COPY . .
 RUN bun run --cwd packages/sdk build
 RUN bun run build:web
 
-FROM oven/bun:1.4.3 AS runtime
+FROM oven/bun:1.4.4 AS runtime
 WORKDIR /home/openchamber
 
-# The released fork binary is the same glibc artifact bundled by Linux Electron.
-ADD --checksum=sha256:3b95cdddd549dbb4f351cfafc74ec89d2028205d0eefbec149f8a2ba4ed03d57 --chmod=755 https://github.com/internetisalie/opencode/releases/download/v2.0.32-internetisalie.1/opencode-linux-x64-baseline /usr/local/bin/opencode
-RUN opencode --version
+# Both sources use the pinned GNU binary and the same verified runtime recipe.
+COPY --from=opencode-verified --chmod=755 /backend/opencode /usr/local/bin/opencode
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
   bash \

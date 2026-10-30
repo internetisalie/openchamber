@@ -16,9 +16,11 @@ describe('fork-only update state', () => {
     expect(() => parseUpdateCheckResponse({ available: null })).toThrow();
   });
   test('cached downloaded state cannot trigger installation or restart', async () => {
-    useUpdateStore.setState({ downloaded: true, available: true, runtimeType: 'desktop' });
-    await expect(useUpdateStore.getState().downloadUpdate()).rejects.toThrow('disabled');
-    await expect(useUpdateStore.getState().restartToUpdate()).rejects.toThrow('disabled');
+    for (const runtimeType of ['desktop', 'web', 'vscode', 'mobile'] as const) {
+      useUpdateStore.setState({ downloaded: true, available: true, runtimeType });
+      await expect(useUpdateStore.getState().downloadUpdate()).rejects.toThrow('disabled');
+      await expect(useUpdateStore.getState().restartToUpdate()).rejects.toThrow('disabled');
+    }
     useUpdateStore.getState().reset();
   });
   test('failed checks preserve the last known fork release and expose the error', async () => {
@@ -30,5 +32,11 @@ describe('fork-only update state', () => {
     expect(useUpdateStore.getState().available).toBe(true);
     expect(useUpdateStore.getState().error).not.toBeNull();
     expect(useUpdateStore.getState().checking).toBe(false);
+  });
+  test('dismiss discards obsolete install state without invoking an installer', () => {
+    const info = parseUpdateCheckResponse({ available: true, version: '2.4.0-internetisalie.4' });
+    useUpdateStore.setState({ available: true, downloaded: true, installing: true, info, progress: { downloaded: 10, total: 20 } });
+    useUpdateStore.getState().dismiss();
+    expect(useUpdateStore.getState()).toMatchObject({ available: false, downloaded: false, installing: false, info: null, progress: null });
   });
 });

@@ -2,7 +2,8 @@ import React from 'react';
 import { toast } from 'sonner';
 
 import { ContextMenu, ContextMenuTrigger, ContextMenuContent, ContextMenuItem } from '@/components/ui/context-menu';
-import { copyTextToClipboard } from '@/lib/clipboard';
+import type { ClipboardAPI } from '@/lib/api/types';
+import { copyTextToClipboard, readClipboardText } from '@/lib/clipboard';
 import { cn } from '@/lib/utils';
 import { loadMonoFont } from '@/lib/fontLoader';
 import type { MonoFontOption } from '@/lib/fontOptions';
@@ -94,6 +95,8 @@ export type TerminalController = {
   focus: () => void;
   fit: () => void;
   getSelection: () => { text: string; startLine: number; endLine: number } | null;
+  /** Reads the clipboard and sends it to the shell as a paste. Call it from the click itself. */
+  pasteClipboard: () => Promise<void>;
 };
 
 type Props = {
@@ -117,13 +120,15 @@ type Props = {
   autoFocus?: boolean;
   isVisible?: boolean;
   readOnly?: boolean;
+  /** Native clipboard buffers the browser cannot reach; Linux desktop only. */
+  clipboard?: ClipboardAPI;
   /** Surface construction, injectable for tests. */
   createSurface?: TerminalSurfaceFactory;
 };
 
 const TerminalViewport = React.forwardRef<TerminalController, Props>(({
   sessionKey, chunks, onInput, onResize, onProvisionalSize, theme, monoFont, fontFamily, fontSize, className,
-  enableTouchScroll = false, autoFocus = true, isVisible = true, createSurface = createGhosttySurface,
+  enableTouchScroll = false, autoFocus = true, isVisible = true, clipboard, createSurface = createGhosttySurface,
   readOnly = false,
 }, ref) => {
   const { t } = useI18n();
@@ -142,15 +147,69 @@ const TerminalViewport = React.forwardRef<TerminalController, Props>(({
   const restoreMenuFocusRef = React.useRef(false);
   const [menuOpen, setMenuOpen] = React.useState(false);
   const [menuSelection, setMenuSelection] = React.useState('');
+  const clipboardRef = React.useRef(clipboard);
+  const pasteFailedMessageRef = React.useRef('');
+  const pendingSelectionClipboardRef = React.useRef<string | null>(null);
+  const selectionClipboardWriteRef = React.useRef<Promise<void> | null>(null);
   inputRef.current = onInput;
   resizeRef.current = onResize;
   provisionalSizeCallbackRef.current = onProvisionalSize;
   visibleRef.current = isVisible;
   readOnlyRef.current = readOnly;
+  clipboardRef.current = clipboard;
+  pasteFailedMessageRef.current = t('terminalView.toast.pasteFailed');
   labelsRef.current = {
     input: t('terminalView.viewport.inputAria'),
     scrollbar: t('terminalView.viewport.scrollbarAria'),
   };
+
+  const writeLatestSelectionClipboard = React.useCallback(() => {
+    const selectionClipboard = clipboardRef.current?.selection;
+    if (!selectionClipboard) return;
+    const selection = surfaceRef.current?.getSelection() ?? '';
+    // A click clears the terminal selection; it is not a request to erase
+    // PRIMARY, which still holds whatever the user selected before. A pending
+    // selection still writes after that click.
+    if (selection.length === 0) return;
+    pendingSelectionClipboardRef.current = selection;
+    if (selectionClipboardWriteRef.current) return;
+
+    selectionClipboardWriteRef.current = (async () => {
+      while (pendingSelectionClipboardRef.current !== null) {
+        const text = pendingSelectionClipboardRef.current;
+        pendingSelectionClipboardRef.current = null;
+        await selectionClipboard.writeText(text).catch(() => undefined);
+      }
+      selectionClipboardWriteRef.current = null;
+    })();
+  }, []);
+
+  const pasteClipboard = React.useCallback(async (
+    failedMessage: string,
+    readText: () => Promise<string> = readClipboardText,
+  ) => {
+    const surface = surfaceRef.current;
+    if (!surface || !visibleRef.current || readOnlyRef.current) return;
+    const lifetime = clipboardLifetimeRef.current;
+    const isCurrent = () => surfaceRef.current === surface
+      && visibleRef.current && !readOnlyRef.current && clipboardLifetimeRef.current === lifetime;
+    try {
+      await surface.pasteFromClipboard(readText, isCurrent);
+    } catch {
+      if (isCurrent()) toast.error(failedMessage);
+    }
+  }, []);
+
+  const pasteSelectionClipboard = React.useCallback(() => {
+    const selectionClipboard = clipboardRef.current?.selection;
+    // Let a selection write already in flight finish before reading.
+    if (!selectionClipboard) return;
+    const readText = async () => {
+      await selectionClipboardWriteRef.current;
+      return selectionClipboard.readText();
+    };
+    void pasteClipboard(pasteFailedMessageRef.current, readText);
+  }, [pasteClipboard]);
 
   React.useLayoutEffect(() => {
     const container = containerRef.current;
@@ -186,6 +245,8 @@ const TerminalViewport = React.forwardRef<TerminalController, Props>(({
           handleTouchPointer: ownsTouch,
           onData: (data) => { if (!readOnlyRef.current) inputRef.current(data); },
           onResize: (cols, rows) => resizeRef.current(cols, rows),
+          onSelectionChange: clipboard?.selection ? writeLatestSelectionClipboard : undefined,
+          onMiddleClickPaste: clipboard?.selection ? pasteSelectionClipboard : undefined,
           onLinkActivate: (text) => {
             void openExternalUrl(text);
           },
@@ -262,19 +323,6 @@ const TerminalViewport = React.forwardRef<TerminalController, Props>(({
       if (!result.ok) toast.error(t('terminalView.toast.copyFailed'));
     } catch {
       toast.error(t('terminalView.toast.copyFailed'));
-    }
-  };
-
-  const pasteClipboard = async () => {
-    const surface = surfaceRef.current;
-    if (!surface || !visibleRef.current) return;
-    const lifetime = clipboardLifetimeRef.current;
-    const isCurrent = () => surfaceRef.current === surface
-      && visibleRef.current && clipboardLifetimeRef.current === lifetime;
-    try {
-      await surface.pasteFromClipboard(() => navigator.clipboard.readText(), isCurrent);
-    } catch {
-      if (isCurrent()) toast.error(t('terminalView.toast.pasteFailed'));
     }
   };
 
@@ -412,7 +460,9 @@ const TerminalViewport = React.forwardRef<TerminalController, Props>(({
       if (!range || !text.trim()) return null;
       return { text, startLine: range.start.y + 1, endLine: range.end.y + 1 };
     },
-  }), []);
+    // Touch hosts have no paste shortcut to fall back on, so their failure names none.
+    pasteClipboard: () => pasteClipboard(t('terminalView.toast.pasteFailedTouch')),
+  }), [pasteClipboard, t]);
 
   return (
     <ContextMenu
@@ -443,7 +493,7 @@ const TerminalViewport = React.forwardRef<TerminalController, Props>(({
         <ContextMenuItem disabled={!menuSelection} onClick={() => { void copySelection(); }}>
           {t('terminalView.actions.copy')}
         </ContextMenuItem>
-        <ContextMenuItem onClick={() => { void pasteClipboard(); }}>
+        <ContextMenuItem onClick={() => { void pasteClipboard(t('terminalView.toast.pasteFailed')); }}>
           {t('terminalView.actions.paste')}
         </ContextMenuItem>
       </ContextMenuContent>

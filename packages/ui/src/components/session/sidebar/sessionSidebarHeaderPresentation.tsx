@@ -3,14 +3,7 @@ import { Icon } from '@/components/icon/Icon';
 import { cn } from '@/lib/utils';
 import { useI18n } from '@/lib/i18n';
 import type { SessionSidebarActivityKey } from './sessionSidebarRowModel';
-
-const ACTIVITY_ICON = { pinned: 'pushpin', work: 'eye', chats: 'chat-4', global: 'global' } as const;
-const ACTIVITY_TITLE_KEY = {
-  pinned: 'sessions.sidebar.activity.pinnedTitle',
-  work: 'sessions.sidebar.work.title',
-  chats: 'sessions.sidebar.activity.chatsTitle',
-  global: 'sessions.sidebar.activity.globalTitle',
-} as const;
+import { ACTIVITY_TITLE_KEY } from './sessionSidebarActivityLabels';
 
 export const SessionSidebarActivityHeader: React.FC<{
   activityKey: SessionSidebarActivityKey;
@@ -22,25 +15,31 @@ export const SessionSidebarActivityHeader: React.FC<{
 }> = ({ activityKey, collapsed, forceExpanded, alwaysShowActions, onToggle, onNewChat }) => {
   const { t } = useI18n();
   const chats = activityKey === 'chats';
-  // One header in both views, so zones line up with the project headers.
+  // One header for every zone, so zones line up with the project headers.
   return <div className="relative group/chats -ms-2.5 -me-2">
     <button
       type="button"
       onClick={forceExpanded ? undefined : onToggle}
       disabled={forceExpanded}
-      className={cn('group flex w-full items-center gap-1.5 py-1 ps-4 text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50', chats ? 'pe-10' : 'pe-3.5')}
+      className={cn('group flex w-full items-center gap-1 py-1 ps-4 text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50', chats ? 'pe-10' : 'pe-3.5')}
       aria-expanded={!collapsed}
     >
-      <span className="inline-flex h-3.5 w-3.5 items-center justify-center">
-        <Icon name={ACTIVITY_ICON[activityKey]} className={cn('h-3.5 w-3.5 text-muted-foreground/80', !forceExpanded && 'group-hover:hidden')} />
-        {!forceExpanded ? <span className="hidden h-3.5 w-3.5 items-center justify-center text-muted-foreground group-hover:inline-flex">
-          <Icon name={collapsed ? 'arrow-right-s' : 'arrow-down-s'} className="h-3.5 w-3.5" />
-        </span> : null}
-      </span>
-      {/* The size of project headers: zones and projects are sections of equal weight. */}
-      <span className="typography-ui-header font-semibold text-foreground">
+      {/* A zone's label is a bare muted word with room above it, so it reads
+          as the caption of what follows; the icons belong to projects and
+          rows. The chevron follows the word: always while the zone is closed,
+          on hover while it is open. */}
+      <span className="typography-ui-label font-medium text-muted-foreground">
         {t(ACTIVITY_TITLE_KEY[activityKey])}
       </span>
+      {!forceExpanded ? (
+        <Icon
+          name={collapsed ? 'arrow-right-s' : 'arrow-down-s'}
+          className={cn(
+            'h-3.5 w-3.5 text-muted-foreground',
+            collapsed || alwaysShowActions ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100',
+          )}
+        />
+      ) : null}
     </button>
     {chats ? <button
       type="button"
@@ -50,5 +49,37 @@ export const SessionSidebarActivityHeader: React.FC<{
     >
       <Icon name="add" className="h-4 w-4" />
     </button> : null}
+  </div>;
+};
+
+/** The caption over the projects: a zone's label that folds every project away. */
+export const SessionSidebarCaption: React.FC<{
+  collapsed: boolean;
+  forceExpanded: boolean;
+  alwaysShowActions: boolean;
+  onToggle: () => void;
+}> = ({ collapsed, forceExpanded, alwaysShowActions, onToggle }) => {
+  const { t } = useI18n();
+  return <div className="relative -ms-2.5 -me-2">
+    <button
+      type="button"
+      onClick={forceExpanded ? undefined : onToggle}
+      disabled={forceExpanded}
+      className="group flex w-full items-center gap-1 py-1 ps-4 pe-3.5 text-start focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50"
+      aria-expanded={!collapsed}
+    >
+      <span className="typography-ui-label font-medium text-muted-foreground">
+        {t('sessions.sidebar.activity.projectsTitle')}
+      </span>
+      {!forceExpanded ? (
+        <Icon
+          name={collapsed ? 'arrow-right-s' : 'arrow-down-s'}
+          className={cn(
+            'h-3.5 w-3.5 text-muted-foreground',
+            collapsed || alwaysShowActions ? 'opacity-100' : 'opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100',
+          )}
+        />
+      ) : null}
+    </button>
   </div>;
 };

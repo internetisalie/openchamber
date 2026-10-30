@@ -1,4 +1,7 @@
 import React from 'react';
+import { TooltipLabelWithShortcut } from '@/components/ui/action-toolbar';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { formatShortcutForDisplay, getEffectiveShortcutCombo, getEffectiveShortcutPrefix, UNASSIGNED_SHORTCUT } from '@/lib/shortcuts';
 import { useSessionTurnActivity } from '@/sync/global-session-status';
 import { SessionActivityIndicator } from '@/components/session/SessionActivityIndicator';
 import {
@@ -33,11 +36,15 @@ import { dropdownMenuItemClass, dropdownMenuPopupClass, dropdownMenuSeparatorCla
 import { Icon } from '@/components/icon/Icon';
 import { cn } from '@/lib/utils';
 import { isRightToLeft, useI18n } from '@/lib/i18n';
-import { useSessionTabsStore } from '@/stores/useSessionTabsStore';
+import { GLOBAL_SESSION_TAB_SCOPE, useSessionTabsStore } from '@/stores/useSessionTabsStore';
+import { useProjectsStore } from '@/stores/useProjectsStore';
+import { useUIStore } from '@/stores/useUIStore';
+import { getRuntimeKey } from '@/lib/runtime-switch';
+import { sessionTabChatsScope, sessionTabScopeFor, sessionTabSeedFor } from '@/lib/sessionTabScope';
 import { closeSessionTabAndActivateNeighbour } from '@/lib/sessionTabs';
 import { useGlobalSessionsStore, resolveGlobalSessionDirectory } from '@/stores/useGlobalSessionsStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
-import { useSessionUnseenCount } from '@/sync/notification-store';
+import { useSessionUnread } from '@/sync/session-unread';
 import { useIsSessionAiRenamePending } from '@/sync/use-session-ai-rename';
 import { useMultiRunMemberIds } from '@/lib/multirun/useMultiRuns';
 import { SessionProjectIcon } from './SessionProjectIcon';
@@ -109,6 +116,7 @@ const contextComponents: SessionTabMenuComponents = {
  */
 const SessionTabItem: React.FC<{
   tab: SessionTab;
+  tabNumber: number;
   isActive: boolean;
   /** The replaceable preview tab: italic title, pinned by double-click. */
   isPreview: boolean;
@@ -120,8 +128,13 @@ const SessionTabItem: React.FC<{
   closeOtherTabs: (id: string) => void;
   onMenuOpenChangeComplete?: (open: boolean) => void;
   children?: React.ReactNode;
-}> = ({ tab, isActive, isPreview, suppressControls, onSelect, onPin, onClose, renderMenu, closeOtherTabs, onMenuOpenChangeComplete, children }) => {
+}> = ({ tab, tabNumber, isActive, isPreview, suppressControls, onSelect, onPin, onClose, renderMenu, closeOtherTabs, onMenuOpenChangeComplete, children }) => {
   const { t } = useI18n();
+  const shortcutOverrides = useUIStore((state) => state.shortcutOverrides);
+  const tabPrefix = getEffectiveShortcutPrefix('switch_session_tab', shortcutOverrides);
+  const tabShortcut = tabPrefix && tabPrefix !== UNASSIGNED_SHORTCUT && tabNumber <= 9
+    ? formatShortcutForDisplay(`${tabPrefix}+${tabNumber}`)
+    : undefined;
   const [menuOpen, setMenuOpen] = React.useState(false);
   // Keeps the overlay (the dropdown's anchor) mounted through the close animation.
   const [menuVisible, setMenuVisible] = React.useState(false);
@@ -135,8 +148,8 @@ const SessionTabItem: React.FC<{
   const isAiRenaming = useIsSessionAiRenamePending(tab.id, resolveGlobalSessionDirectory(tab.session));
   const turnActivity = useSessionTurnActivity(tab.id);
   const isStreaming = turnActivity !== null;
-  const unseenCount = useSessionUnseenCount(tab.id);
-  const showUnread = unseenCount > 0 && !isActive && !isStreaming;
+  const isUnread = useSessionUnread(tab.id);
+  const showUnread = isUnread && !isActive && !isStreaming;
   const showDot = isStreaming || showUnread;
 
   const menuArgsFor = (components: SessionTabMenuComponents): SessionTabMenuArgs => ({
@@ -163,6 +176,8 @@ const SessionTabItem: React.FC<{
         onOpenChange={setContextMenuOpen}
         onOpenChangeComplete={(open) => onMenuOpenChangeComplete?.(open)}
       >
+        <Tooltip>
+        <TooltipTrigger asChild>
         <ContextMenu.Trigger
               render={(triggerProps) => (
                 <div
@@ -222,7 +237,7 @@ const SessionTabItem: React.FC<{
                           its content. */}
                       {isActive ? children : (
                         <div className="flex min-w-0 flex-col justify-center">
-                          <span dir="auto" className="block max-w-full overflow-hidden whitespace-nowrap oc-ui-start-align text-[13px] font-medium leading-4">{title}</span>
+                          <span dir="auto" className="block max-w-full overflow-hidden whitespace-nowrap oc-ui-start-align text-[0.8125rem] font-medium leading-4">{title}</span>
                         </div>
                       )}
                     </div>
@@ -270,6 +285,8 @@ const SessionTabItem: React.FC<{
                           {renderMenu(menuArgsFor(dropdownComponents))}
                         </DropdownMenuContent>
                       </DropdownMenu>
+                      <Tooltip>
+                      <TooltipTrigger asChild>
                       <button
                         type="button"
                         aria-label={t('header.sessionTabs.closeTab')}
@@ -278,11 +295,17 @@ const SessionTabItem: React.FC<{
                       >
                         <Icon name="close" className="size-4" />
                       </button>
+                      </TooltipTrigger>
+                      <TooltipContent side="bottom" sideOffset={6}><TooltipLabelWithShortcut label={t('header.sessionTabs.closeTab')} shortcut={isActive ? formatShortcutForDisplay(getEffectiveShortcutCombo('close_session_tab', shortcutOverrides), '') : undefined} /></TooltipContent>
+                      </Tooltip>
                     </div>
                   ) : null}
                 </div>
               )}
         />
+        </TooltipTrigger>
+        <TooltipContent side="bottom" sideOffset={6}><TooltipLabelWithShortcut label={title} shortcut={tabShortcut} /></TooltipContent>
+        </Tooltip>
         <ContextMenu.Portal>
           <ContextMenu.Positioner className="app-region-no-drag z-50">
             <ContextMenu.Popup
@@ -332,13 +355,45 @@ export const SessionTabsStrip: React.FC<{
   const setCurrentSession = useSessionUIStore((state) => state.setCurrentSession);
   const activeSessions = useGlobalSessionsStore((state) => state.activeSessions);
 
+  // With separate tabs per workspace the strip shows the working set of the
+  // place the user is: the open session's folder, else the open draft's.
+  const perWorkspace = useUIStore((state) => state.sessionTabsPerWorkspace);
+  const enterScope = useSessionTabsStore((state) => state.enterScope);
+  const sessionsLoaded = useGlobalSessionsStore((state) => state.hasLoaded);
+  const currentSessionDirectory = useSessionUIStore((state) => state.currentSessionDirectory);
+  const draftOpen = useSessionUIStore((state) => state.newSessionDraft.open);
+  const draftIsChat = useSessionUIStore((state) => state.newSessionDraft.target === 'chat');
+  const draftDirectory = useSessionUIStore((state) => state.newSessionDraft.directoryOverride);
+  const draftProjectId = useSessionUIStore((state) => state.newSessionDraft.selectedProjectId ?? null);
+  const draftProjectPath = useProjectsStore((state) => {
+    const projectId = draftProjectId ?? state.activeProjectId;
+    return state.projects.find((project) => project.id === projectId)?.path ?? null;
+  });
+
   // Opening a session anywhere (sidebar, palette, deep link) shows it in the
   // preview tab. The lanes of one multi-run share a tab: opening another lane
   // reuses it.
   const currentRunMemberIds = useMultiRunMemberIds(currentSessionId);
   React.useEffect(() => {
+    if (!perWorkspace) {
+      enterScope(GLOBAL_SESSION_TAB_SCOPE, () => []);
+    } else {
+      // A first visit seeds a worktree's or space's tabs from its sessions,
+      // which need the complete session list; until then nothing moves.
+      if (!sessionsLoaded) return;
+      const runtimeKey = getRuntimeKey();
+      const chatDraft = !currentSessionId && draftOpen && draftIsChat;
+      const directory = currentSessionId ? currentSessionDirectory : draftOpen && !draftIsChat ? draftDirectory ?? draftProjectPath : null;
+      const scope = chatDraft ? sessionTabChatsScope(runtimeKey) : sessionTabScopeFor(runtimeKey, directory);
+      if (!scope) return;
+      enterScope(scope, () => sessionTabSeedFor(
+        directory,
+        useGlobalSessionsStore.getState().activeSessions,
+        useProjectsStore.getState().projects.map((project) => project.path),
+      ));
+    }
     if (currentSessionId) ensureTab(currentSessionId, currentRunMemberIds);
-  }, [currentSessionId, currentRunMemberIds, ensureTab]);
+  }, [currentRunMemberIds, currentSessionDirectory, currentSessionId, draftDirectory, draftIsChat, draftOpen, draftProjectPath, ensureTab, enterScope, perWorkspace, sessionsLoaded]);
 
   const sessionsById = React.useMemo(() => {
     const map = new Map<string, Session>();
@@ -450,8 +505,9 @@ export const SessionTabsStrip: React.FC<{
           onDragEnd={handleDragEnd}
         >
           <SortableContext items={tabIdsInOrder} strategy={isRtl ? rectSortingStrategy : horizontalListSortingStrategy}>
-            {tabs.map((tab) => (
+            {tabs.map((tab, index) => (
               <SessionTabItem
+                tabNumber={index + 1}
                 key={tab.id}
                 tab={tab}
                 isActive={tab.id === currentSessionId}

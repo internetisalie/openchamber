@@ -14,6 +14,7 @@
  */
 
 import type { OpenCodeEvent } from "@opencode/client"
+import type { WorkflowRun } from "@/lib/workflows/model"
 import {
   compact,
   partIds,
@@ -77,7 +78,7 @@ export type ToolTransition =
   | { kind: "called"; input: Record<string, JsonValue>; executed: boolean; start: number }
   | { kind: "progress"; metadata: Metadata }
   | { kind: "success"; output: string; attachments?: FilePart[]; metadata?: Metadata; executed: boolean; end: number }
-  | { kind: "failed"; error: string; output?: string; metadata?: Metadata; executed: boolean; end: number }
+  | { kind: "failed"; error: string; errorType?: string; output?: string; metadata?: Metadata; executed: boolean; end: number }
 
 /**
  * What OpenCode rebuilt. v2 watches its own config files and announces the
@@ -96,6 +97,23 @@ export type CatalogKind =
   | "project"
   /** Web search providers or the default choice changed (`websearch.updated`). */
   | "websearch"
+
+/**
+ * When a running turn began, on this device's clock. `host` is the OpenChamber
+ * host's own record, the same for every client; `live` is this device seeing
+ * the turn begin, for hosts that keep no record.
+ */
+export type SessionTurnStart = { at: number; source: "host" | "live" }
+
+/**
+ * A start the host reported on its own clock, moved onto this device's: the
+ * time that has passed by the host's clock, counted back from now here. A
+ * phone whose clock is off still shows the host's elapsed time.
+ */
+export const hostTurnStart = (startedAt: number, hostNow: number): SessionTurnStart => ({
+  at: Date.now() - Math.max(0, hostNow - startedAt),
+  source: "host",
+})
 
 export type SyncEvent =
   | { type: "server.connected"; properties: Record<never, never> }
@@ -120,7 +138,11 @@ export type SyncEvent =
    * store still holds.
    */
   | { type: "session.revert.committed"; properties: { sessionID: string; to: string } }
-  | { type: "session.status"; properties: { sessionID: string; status: SessionStatus } }
+  /**
+   * `turnStart` is set when the event knows when the running turn began: the
+   * host's record, or this device seeing the turn begin.
+   */
+  | { type: "session.status"; properties: { sessionID: string; status: SessionStatus; turnStart?: SessionTurnStart } }
   /**
    * `outcome` is set when the event ends a turn (`session.execution.*`) and
    * absent for a bare status change. Only `interrupted` is an explicit stop.
@@ -139,12 +161,22 @@ export type SyncEvent =
   | { type: "permission.asked"; properties: PermissionRequest }
   | { type: "permission.replied"; properties: { sessionID: string; requestID: string } }
   | { type: "form.created"; properties: { form: FormRequest } }
-  | { type: "form.settled"; properties: { sessionID: string; formID: string } }
+  | {
+    type: "form.settled"
+    properties: {
+      sessionID: string
+      formID: string
+      /** Replies veto recovery; cancellations need tool-specific evidence. */
+      disposition?: "replied" | "cancelled"
+    }
+  }
   /** A session's shell command started; commands that belong to no session are not reported. */
   | { type: "shell.started"; properties: { shell: RunningShell } }
   /** A shell command exited or was removed. */
   | { type: "shell.ended"; properties: { shellID: string; end: ShellEnd; endedAt: number } }
   | { type: "vcs.branch.updated"; properties: { branch?: string } }
+  /** A file someone asked OpenCode to watch (`lib/watchedFiles`) changed or was removed; `file` is absolute. */
+  | { type: "filesystem.changed"; properties: { file: string } }
   | { type: "mcp.status.changed"; properties: { server: string } }
   | { type: "catalog.updated"; properties: { kind: CatalogKind } }
   /**
@@ -163,6 +195,11 @@ export type SyncEvent =
   | { type: "openchamber.page-waiting"; properties: { sessionID: string; directory: string | null; page: { id: string; title: string } } }
   /** That page stopped waiting: answered, answered in the chat, or its turn ended. */
   | { type: "openchamber.page-settled"; properties: { sessionID: string; pageID: string } }
+  /** The server started or stopped waiting to write a session's recap and suggestion. */
+  | { type: "openchamber.session-assist"; properties: { sessionID: string; directory: string | null; pending: boolean } }
+  /** A workflow run changed: proposed, approved, an agent moved on, or it ended. */
+  | { type: "openchamber.workflow-run"; properties: { run: WorkflowRun } }
+  | { type: "openchamber.workflow-run-removed"; properties: { runId: string; parentSessionId: string } }
 
 /** Agent-completion / restart notices the OpenChamber server publishes for non-web runtimes. */
 export type OpenchamberNotification = {
@@ -328,7 +365,14 @@ export function translateWireEvent(event: OpenCodeEvent): SyncEvent[] {
     case "session.permissions":
       return [sessionEvent(event.data.sessionID, { permissions: event.data.permissions })]
     case "session.viewed":
-      return [sessionEvent(event.data.sessionID, { time: { viewed: event.created } })]
+      // The watermark is the idle transition the viewer saw, not when the view
+      // was recorded: a turn that ended after it stays unread.
+      return [sessionEvent(event.data.sessionID, { time: { viewed: event.data.idle } })]
+    // OpenCode stamps the archive time and the update time with the event.
+    case "session.archived":
+      return [sessionEvent(event.data.sessionID, { time: { archived: event.created, updated: event.created } })]
+    case "session.unarchived":
+      return [sessionEvent(event.data.sessionID, { time: { archived: null, updated: event.created } })]
     case "session.revert.staged":
       return [sessionEvent(event.data.sessionID, { revert: event.data.revert })]
     case "session.revert.cleared":
@@ -347,8 +391,13 @@ export function translateWireEvent(event: OpenCodeEvent): SyncEvent[] {
       return [{ type: "session.status", properties: { sessionID: event.data.sessionID, status: event.data.status } }]
     case "session.idle":
       return [{ type: "session.idle", properties: { sessionID: event.data.sessionID } }]
+    // The one event that marks where a turn begins. Stamped on arrival: the
+    // event's own time is OpenCode's clock, not this device's.
     case "session.execution.started":
-      return [{ type: "session.status", properties: { sessionID: event.data.sessionID, status: { type: "busy" } } }]
+      return [{
+        type: "session.status",
+        properties: { sessionID: event.data.sessionID, status: { type: "busy" }, turnStart: { at: Date.now(), source: "live" } },
+      }]
     case "session.execution.succeeded":
       return [
         sessionEvent(event.data.sessionID, { outcome: "succeeded", time: { idle: event.created, updated: event.created } }),
@@ -442,6 +491,9 @@ export function translateWireEvent(event: OpenCodeEvent): SyncEvent[] {
               time: { created: event.created },
               text: event.data.text,
               description: `Instructions updated: ${Object.keys(event.data.delta ?? {}).join(", ")}`,
+              // The metadata OpenCode stores with the message, so a live update
+              // reads the same as one loaded from history.
+              metadata: { notice: "instructions", instructionSources: Object.keys(event.data.delta ?? {}) },
             },
           },
         },
@@ -651,6 +703,7 @@ export function translateWireEvent(event: OpenCodeEvent): SyncEvent[] {
           compact({
             kind: "failed",
             error: structuredErrorText(event.data.error),
+            errorType: event.data.error.type,
             output: toolOutputText(event.data.content) || undefined,
             metadata: event.data.metadata,
             executed: event.data.executed,
@@ -765,8 +818,9 @@ export function translateWireEvent(event: OpenCodeEvent): SyncEvent[] {
     case "form.created":
       return [{ type: "form.created", properties: { form: event.data.form } }]
     case "form.replied":
+      return [{ type: "form.settled", properties: { sessionID: event.data.sessionID, formID: event.data.id, disposition: "replied" } }]
     case "form.cancelled":
-      return [{ type: "form.settled", properties: { sessionID: event.data.sessionID, formID: event.data.id } }]
+      return [{ type: "form.settled", properties: { sessionID: event.data.sessionID, formID: event.data.id, disposition: "cancelled" } }]
 
     // --- location-level notices ------------------------------------------------
 
@@ -826,10 +880,10 @@ export function translateWireEvent(event: OpenCodeEvent): SyncEvent[] {
     // (`mcp.status.changed`).
     case "mcp.resources.changed":
       return []
-    // 2.x watches only the repository HEAD here, not the project's files. File
-    // browsers refresh from tool and step results instead (`lib/fileTreeChanges`).
+    // Only files a client asked to watch (`lib/watchedFiles`) report here; file
+    // listings still refresh from tool and step results (`lib/fileTreeChanges`).
     case "filesystem.changed":
-      return []
+      return [{ type: "filesystem.changed", properties: { file: event.data.file } }]
     // Worktrees go through OpenChamber's own git API, not OpenCode's.
     case "worktree.updated":
     case "worktree.resolved":

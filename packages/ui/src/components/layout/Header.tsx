@@ -1,4 +1,6 @@
 import React, { useEffect } from 'react';
+import { formatShortcutForDisplay, getEffectiveShortcutCombo } from '@/lib/shortcuts';
+import { TooltipLabelWithShortcut } from '@/components/ui/action-toolbar';
 import { useGuestsStore } from '@/lib/guests/store';
 import {
   Tooltip,
@@ -26,7 +28,7 @@ import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useQuotaAutoRefresh, useQuotaStore } from '@/stores/useQuotaStore';
 import { useGitBranchLabel } from '@/stores/useGitStore';
 import { useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
-import { archiveUndoToastOptions, collectSessionSubtreeIds } from '@/components/session/sidebar/sessions/sessionSubtreeActions';
+import { archiveUndoToastOptions, collectSessionMoveDescendants, collectSessionSubtreeIds } from '@/components/session/sidebar/sessions/sessionSubtreeActions';
 import { streamPerfCount } from '@/stores/utils/streamDebug';
 
 import { useDesktopWindowControlsLayout } from '@/hooks/useDesktopWindowControlsLayout';
@@ -39,8 +41,6 @@ import {
 
 import {
 } from '@/components/ui/collapsible';
-import { SpaceAccessButton } from '@/components/session/spaces/SpaceAccessButton';
-import { SpaceApplyButton } from '@/components/session/spaces/SpaceApplyButton';
 import { useDraftSpaceTarget } from '@/lib/spaces/useDraftSpaceTarget';
 import { panelContentDirectory } from '@/lib/spaces/space-creation-requests';
 import { SessionSwitcherDropdown } from '@/components/session/SessionSwitcherDropdown';
@@ -203,6 +203,8 @@ export const Header: React.FC = () => {
   // and the branch — three paces away in the same window. The meta row under
   // the title yields to it rather than saying the same thing twice, and
   // returns the moment the panel is switched off or squeezed out.
+  const shortcutOverrides = useUIStore((state) => state.shortcutOverrides);
+  const renameShortcut = formatShortcutForDisplay(getEffectiveShortcutCombo('rename_current_session', shortcutOverrides), '');
   const workStatusPanelVisible = useUIStore((state) => state.workStatusPanelVisible);
   const workStatusPanelEnabled = useUIStore((state) => state.workStatusPanelEnabled);
   const setWorkStatusPanelEnabled = useUIStore((state) => state.setWorkStatusPanelEnabled);
@@ -533,21 +535,10 @@ export const Header: React.FC = () => {
     const root = sessions.find((session) => session.id === currentSessionId);
     if (!root) return;
 
-    const descendants: typeof sessions = [];
-    const pendingParentIds = [currentSessionId];
-    for (let index = 0; index < pendingParentIds.length; index += 1) {
-      const parentId = pendingParentIds[index];
-      for (const session of sessions) {
-        if (session.parentID !== parentId) continue;
-        descendants.push(session);
-        pendingParentIds.push(session.id);
-      }
-    }
-
     requestSessionTreeMove({
       kind: 'quick',
       root,
-      descendants,
+      descendants: collectSessionMoveDescendants(root, []),
       sourceDirectory: sessionDirectory,
       messages: buildSessionTreeMoveMessages(t, {
         success: 'sessions.sidebar.session.moveToWorktree.success',
@@ -563,19 +554,10 @@ export const Header: React.FC = () => {
     const sessions = useGlobalSessionsStore.getState().activeSessions;
     const root = sessions.find((session) => session.id === currentSessionId);
     if (!root) return;
-    const descendants: typeof sessions = [];
-    const pendingParentIds = [currentSessionId];
-    for (let index = 0; index < pendingParentIds.length; index += 1) {
-      for (const session of sessions) {
-        if (session.parentID !== pendingParentIds[index]) continue;
-        descendants.push(session);
-        pendingParentIds.push(session.id);
-      }
-    }
     requestSessionTreeMove({
       kind: 'project',
       root,
-      descendants,
+      descendants: collectSessionMoveDescendants(root, []),
       sourceDirectory: sessionDirectory,
       projectDirectory,
       messages: buildSessionTreeMoveMessages(t, {
@@ -619,6 +601,7 @@ export const Header: React.FC = () => {
   const isIntegrationsCatalogSurfaceOpen = useUIStore((state) => state.isIntegrationsCatalogOpen);
   const isUsageStatsSurfaceOpen = useUIStore((state) => state.isUsageStatsPageOpen);
   const isSourceBoardSurfaceOpen = useUIStore((state) => state.isSourceBoardOpen);
+  const isOverviewSurfaceOpen = useUIStore((state) => state.isOverviewOpen);
   const worktreesSurfaceProjectId = useUIStore((state) => state.worktreesPageProjectId);
   const spacesSurfaceProjectId = useUIStore((state) => (state.isolatedSpacesEnabled ? state.spacesPageProjectId : null));
   const runOverviewKey = useUIStore((state) => state.runOverviewKey);
@@ -646,6 +629,9 @@ export const Header: React.FC = () => {
     if (isSourceBoardSurfaceOpen) {
       return { title: t('sourceBoard.title'), subtitle: null };
     }
+    if (isOverviewSurfaceOpen) {
+      return { title: t('overview.title'), subtitle: null };
+    }
     if (worktreesSurfaceProjectId) {
       return {
         title: t('sessions.worktreesPage.title', { project: surfaceProjectLabel ?? '' }),
@@ -659,7 +645,7 @@ export const Header: React.FC = () => {
       return { title: overviewRunTitle ?? t('multirun.overview.headerTitle'), subtitle: t('multirun.overview.headerTitle') };
     }
     return null;
-  }, [guestPage, isArchiveSurfaceOpen, isIntegrationsCatalogSurfaceOpen, overviewRunTitle, runOverviewKey, isScheduledSurfaceOpen, isSourceBoardSurfaceOpen, isUsageStatsSurfaceOpen, spacesSurfaceProjectId, surfaceProjectLabel, t, worktreesSurfaceProjectId]);
+  }, [guestPage, isArchiveSurfaceOpen, isIntegrationsCatalogSurfaceOpen, overviewRunTitle, runOverviewKey, isScheduledSurfaceOpen, isSourceBoardSurfaceOpen, isOverviewSurfaceOpen, isUsageStatsSurfaceOpen, spacesSurfaceProjectId, surfaceProjectLabel, t, worktreesSurfaceProjectId]);
 
 
   const currentSessionOpenDirectory = sessionDirectory || normalize(selectedSessionDirectory || '') || worktreeDirectory;
@@ -944,13 +930,6 @@ export const Header: React.FC = () => {
     },
   });
 
-  const desktopSidebarActions = (
-    <>
-      <SpaceApplyButton directory={openDirectory} className={cn(DESKTOP_HEADER_ICON_BUTTON_CLASS, 'text-muted-foreground hover:text-foreground')} iconClassName="h-4 w-4" />
-      <SpaceAccessButton directory={openDirectory} className={cn(DESKTOP_HEADER_ICON_BUTTON_CLASS, 'text-muted-foreground hover:text-foreground')} iconClassName="h-4 w-4" />
-    </>
-  );
-
 
   const renderSessionTabMenu = React.useCallback(({ session, open, isActive, select, closeOtherTabs, components }: SessionTabMenuArgs) => {
     const { Item, Separator } = components;
@@ -961,6 +940,7 @@ export const Header: React.FC = () => {
         <SessionMenuItemHint hint={t('sessions.sidebar.session.menuHint.rename')}>
           <Item onClick={() => { if (!isActive) select(); pendingHeaderRenameRef.current = session.id; }}>
             <Icon name="pencil-ai" className="me-1 size-4" />{t('sessions.sidebar.session.menu.rename')}
+            {isActive && renameShortcut ? <span className="ms-auto ps-3 typography-meta text-muted-foreground">{renameShortcut}</span> : null}
           </Item>
         </SessionMenuItemHint>
         <SessionAiRenameMenuItem sessionID={session.id} directory={session.directory} open={open} Item={Item} />
@@ -1036,7 +1016,7 @@ export const Header: React.FC = () => {
         </SessionMenuItemHint>
       </>
     );
-  }, [copySessionIdFor, currentSession, currentSessionOpenDirectory, exportCurrentSession, hasElectronDesktopIPC, hasProjects, isChatContext, isCurrentSessionActive, isCurrentSessionMovingToWorktree, isVSCode, moveCurrentSessionToWorktree, openSessionInMiniChat, renderGuestSessionActionItems, sessionDirectory, t]);
+  }, [copySessionIdFor, currentSession, currentSessionOpenDirectory, exportCurrentSession, hasElectronDesktopIPC, hasProjects, isChatContext, isCurrentSessionActive, isCurrentSessionMovingToWorktree, isVSCode, moveCurrentSessionToWorktree, openSessionInMiniChat, renderGuestSessionActionItems, renameShortcut, sessionDirectory, t]);
 
   const renderDesktop = () => (
     <div
@@ -1089,11 +1069,11 @@ export const Header: React.FC = () => {
             <TooltipContent side="bottom">{t('header.mainSurface.backToChat')}</TooltipContent>
           </Tooltip>
           <div className="me-3 flex min-w-0 flex-col items-start px-1 py-0.5 -my-0.5 text-start">
-            <span className="truncate typography-ui-label text-[14px] font-normal leading-tight text-foreground max-w-full">
+            <span className="truncate typography-ui-label text-[0.875rem] font-normal leading-tight text-foreground max-w-full">
               {activeSurfaceHeader.title}
             </span>
             {activeSurfaceHeader.subtitle ? (
-              <span className="truncate typography-micro text-[10.5px] font-normal leading-tight text-muted-foreground/75 max-w-full">
+              <span className="truncate typography-micro text-[0.65625rem] font-normal leading-tight text-muted-foreground max-w-full">
                 {activeSurfaceHeader.subtitle}
               </span>
             ) : null}
@@ -1103,7 +1083,9 @@ export const Header: React.FC = () => {
           <div className="app-region-no-drag me-3 flex min-w-0 max-w-full items-center gap-0.5 py-0.5 -my-0.5 text-start">
             {isCurrentSessionAiRenaming ? <Icon name="loader-4" className="me-1 size-3 shrink-0 animate-spin text-primary" aria-label={t('sessions.aiRename.generating')} /> : null}
             {!isSidebarOpen ? (
+              <Tooltip>
               <SessionSwitcherDropdown align="start">
+                <TooltipTrigger asChild>
                 <button
                   type="button"
                   className={desktopHeaderIconButtonClass}
@@ -1111,7 +1093,10 @@ export const Header: React.FC = () => {
                 >
                   <Icon name="history" className="h-4 w-4" />
                 </button>
+                </TooltipTrigger>
               </SessionSwitcherDropdown>
+              <TooltipContent side="bottom"><TooltipLabelWithShortcut label={t('sessions.switcher.openAria')} shortcut={formatShortcutForDisplay(getEffectiveShortcutCombo('open_session_list', shortcutOverrides), '')} /></TooltipContent>
+              </Tooltip>
             ) : null}
             <div className="flex min-w-0 flex-col justify-center px-1">
               {isRenamingHeaderSession ? (
@@ -1130,7 +1115,7 @@ export const Header: React.FC = () => {
                     onChange={(event) => setHeaderSessionTitleDraft(event.target.value)}
                     onKeyDown={(event) => handleSessionRenameKeyDown(event, () => setIsRenamingHeaderSession(false))}
                     placeholder={t('sessions.sidebar.session.menu.rename')}
-                    className="min-w-0 flex-1 bg-transparent typography-ui-label text-[14px] font-normal leading-tight outline-none placeholder:text-muted-foreground"
+                    className="min-w-0 flex-1 bg-transparent typography-ui-label text-[0.875rem] font-normal leading-tight outline-none placeholder:text-muted-foreground"
                   />
                   <button
                     type="submit"
@@ -1151,7 +1136,7 @@ export const Header: React.FC = () => {
                   </button>
                 </form>
               ) : isNewSessionDraftOpen ? null : (
-                <span dir="auto" className="oc-ui-start-align truncate typography-ui-label text-[14px] font-normal leading-tight text-foreground max-w-full">
+                <span dir="auto" className="oc-ui-start-align truncate typography-ui-label text-[0.875rem] font-normal leading-tight text-foreground max-w-full">
                   {currentSessionTitle}
                 </span>
               )}
@@ -1161,20 +1146,20 @@ export const Header: React.FC = () => {
                 <span className={cn(
                   'flex min-w-0 max-w-full items-center gap-1.5 truncate font-normal leading-tight',
                   isNewSessionDraftOpen
-                    ? 'typography-ui-label text-[14px] text-foreground'
-                    : 'typography-micro text-[10.5px] text-muted-foreground/75',
+                    ? 'typography-ui-label text-[0.875rem] text-foreground'
+                    : 'typography-micro text-[0.65625rem] text-muted-foreground',
                 )}>
                   {activeProjectLabel ? <span className="truncate">{activeProjectLabel}</span> : null}
                   {currentBranchLabel ? (
                     <span className="inline-flex min-w-0 items-center gap-0.5">
-                      <Icon name="git-branch" className={cn('flex-shrink-0 text-muted-foreground/70', isNewSessionDraftOpen ? 'h-3.5 w-3.5' : 'h-3 w-3')} />
+                      <Icon name="git-branch" className={cn('flex-shrink-0 text-muted-foreground', isNewSessionDraftOpen ? 'h-3.5 w-3.5' : 'h-3 w-3')} />
                       <span className={cn('truncate', isNewSessionDraftOpen && 'text-muted-foreground')}>{currentBranchLabel}</span>
                     </span>
                   ) : null}
                   {!isNewSessionDraftOpen && worktreeBadgeKind ? (
                     <span className={cn(
                       "inline-flex min-w-0 items-center gap-0.5",
-                      worktreeBadgeKind === 'attention' || worktreeBadgeKind === 'invalid' || worktreeBadgeKind === 'missing' ? 'text-status-warning' : 'text-muted-foreground/60'
+                      worktreeBadgeKind === 'attention' || worktreeBadgeKind === 'invalid' || worktreeBadgeKind === 'missing' ? 'text-status-warning' : 'text-muted-foreground'
                     )}>
                       <Icon name="alert" className="h-3 w-3 flex-shrink-0" />
                       <span className="truncate">{worktreeBadge}</span>
@@ -1184,7 +1169,7 @@ export const Header: React.FC = () => {
               ) : null}
             </div>
             <div className={cn(
-              'flex h-[18px] shrink-0 items-center justify-center',
+              'flex h-[1.125rem] shrink-0 items-center justify-center',
               // Top-aligned only when the title has a metadata line under it;
               // alone, the title is centred and the button must follow.
               showHeaderMetaRow ? 'self-start' : 'self-center',
@@ -1201,12 +1186,12 @@ export const Header: React.FC = () => {
                   }}
                 >
                   <DropdownMenuTrigger asChild>
-                    <Button variant="ghost" size="xs" className="h-[18px] w-6 px-0 text-muted-foreground hover:bg-transparent hover:text-foreground" aria-label={t('header.sessionActions.openAria')}>
+                    <Button variant="ghost" size="xs" className="h-[1.125rem] w-6 px-0 text-muted-foreground hover:bg-transparent hover:text-foreground" aria-label={t('header.sessionActions.openAria')}>
                       <Icon name="more" className="size-4" />
                     </Button>
                   </DropdownMenuTrigger>
                   <DropdownMenuContent align="end" className="min-w-[190px]">
-                    <SessionMenuItemHint hint={t('sessions.sidebar.session.menuHint.rename')}><DropdownMenuItem onClick={() => { pendingHeaderRenameRef.current = currentSessionId; }}><Icon name="pencil-ai" className="me-1 size-4" />{t('sessions.sidebar.session.menu.rename')}</DropdownMenuItem></SessionMenuItemHint>
+                    <SessionMenuItemHint hint={t('sessions.sidebar.session.menuHint.rename')}><DropdownMenuItem onClick={() => { pendingHeaderRenameRef.current = currentSessionId; }}><Icon name="pencil-ai" className="me-1 size-4" />{t('sessions.sidebar.session.menu.rename')}{renameShortcut ? <span className="ms-auto ps-3 typography-meta text-muted-foreground">{renameShortcut}</span> : null}</DropdownMenuItem></SessionMenuItemHint>
                     <SessionAiRenameMenuItem sessionID={currentSessionId} directory={sessionDirectory} open={isHeaderSessionMenuOpen} Item={DropdownMenuItem} />
                     <SessionMenuItemHint hint={t('sessions.sidebar.session.menuHint.copyId')}><DropdownMenuItem onClick={() => currentSessionId && copySessionIdFor(currentSessionId)}><Icon name="file-copy" className="me-1 size-4" />{t('sessions.sidebar.session.menu.copyId')}</DropdownMenuItem></SessionMenuItemHint>
                     <DropdownMenuSeparator />
@@ -1231,6 +1216,22 @@ export const Header: React.FC = () => {
                           >
                             <Icon name="folder-shared" className="me-1 size-4" />
                             {t('sessions.sidebar.session.menu.moveToWorktree')}
+                          </DropdownMenuItem>
+                        </span>
+                      </SessionMenuItemHint>
+                    ) : null}
+                    {!isVSCode && isChatContext && currentSession && !currentSession.parentId && hasProjects ? (
+                      <SessionMenuItemHint hint={isCurrentSessionActive
+                        ? t('sessions.sidebar.session.moveToWorktree.tooltipBusy')
+                        : t('sessions.moveChatToProject.hint')}>
+                        <span className="block">
+                          <DropdownMenuItem
+                            disabled={!sessionDirectory || isCurrentSessionActive || isCurrentSessionMovingToWorktree}
+                            onClick={() => setMoveChatDialogOpen(true)}
+                            className="w-full"
+                          >
+                            <Icon name="folder-shared" className="me-1 size-4" />
+                            {t('sessions.moveChatToProject.menu')}
                           </DropdownMenuItem>
                         </span>
                       </SessionMenuItemHint>
@@ -1278,7 +1279,7 @@ export const Header: React.FC = () => {
                     onChange={(event) => setHeaderSessionTitleDraft(event.target.value)}
                     onKeyDown={(event) => handleSessionRenameKeyDown(event, () => setIsRenamingHeaderSession(false))}
                     placeholder={t('sessions.sidebar.session.menu.rename')}
-                    className="min-w-0 flex-1 bg-transparent text-[13px] font-medium leading-4 outline-none placeholder:text-muted-foreground"
+                    className="min-w-0 flex-1 bg-transparent text-[0.8125rem] font-medium leading-4 outline-none placeholder:text-muted-foreground"
                   />
                   <button
                     type="submit"
@@ -1299,7 +1300,7 @@ export const Header: React.FC = () => {
                   </button>
                 </form>
               ) : (
-                <span dir="auto" className="block overflow-hidden whitespace-nowrap oc-ui-start-align text-[13px] font-medium leading-4 text-foreground max-w-full">
+                <span dir="auto" className="block overflow-hidden whitespace-nowrap oc-ui-start-align text-[0.8125rem] font-medium leading-4 text-foreground max-w-full">
                   {isNewSessionDraftOpen ? t('sessions.switcher.draftTitle') : currentSessionTitle}
                 </span>
               )}
@@ -1326,7 +1327,7 @@ export const Header: React.FC = () => {
                 </button>
               </TooltipTrigger>
               <TooltipContent side="bottom">
-                {isNewSessionDraftOpen ? t('header.actions.newMiniChat') : t('header.actions.openSessionMiniChat')}
+                <TooltipLabelWithShortcut label={isNewSessionDraftOpen ? t('header.actions.newMiniChat') : t('header.actions.openSessionMiniChat')} shortcut={isNewSessionDraftOpen ? formatShortcutForDisplay(getEffectiveShortcutCombo('new_mini_chat', shortcutOverrides), '') : undefined} />
               </TooltipContent>
             </Tooltip>
           ) : null}
@@ -1360,7 +1361,6 @@ export const Header: React.FC = () => {
             </Tooltip>
           ) : null}
 
-          {desktopSidebarActions}
           <WindowsWindowControls visible={endEdgeOwnedByInWindowControls} position={windowControlsSide} />
         </div>
       </div>

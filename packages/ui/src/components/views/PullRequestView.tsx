@@ -9,22 +9,25 @@ import { useSessionWorktreeStore } from '@/sync/session-worktree-store';
 import { useGitStatus, useGitBranches, useGitStore, useIsGitRepo } from '@/stores/useGitStore';
 import { useShallow } from 'zustand/react/shallow';
 import { getRootBranch } from '@/lib/worktrees/worktreeStatus';
-import { getRuntimeKey } from '@/lib/runtime-switch';
-import type { GiteaRepository, GitRemote } from '@/lib/api/types';
 import { findWorktreeHoldingDirectory } from '@/lib/worktrees/worktreePaths';
 import { useI18n } from '@/lib/i18n';
 import { changeRequestCopy } from '@/lib/source-control/changeRequestCopy';
+import { useChangeRequestTerm } from '@/lib/source-control/providers/registry';
 import { useRepositoryHost } from '@/components/references/referenceSources';
 import { normalizePath } from '@/lib/pathNormalization';
 import { ScrollShadow } from '@/components/ui/ScrollShadow';
 import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import { PullRequestSection } from './git/PullRequestSection';
-import { GiteaPullRequestSection } from './git/gitea-pull-request-section';
 import { NestedRepoResolutionStates } from './git/NestedRepoResolutionStates';
 import { NestedRepoPicker } from './git/NestedRepoPicker';
 import { deriveBaseBranch } from './git/baseBranch';
 import { useRepositoryBinding } from '@/lib/source-control/repository-binding';
+import { useBranchPullRequestBase } from '@/hooks/useBranchComparisonBase';
 
+// Remotes rarely change; remembering the last fetched list per directory lets
+// a remount pick the same PR-status key immediately instead of flashing
+// through the remote-less "checking status" state while remotes reload.
+// Runtime-scoped so a backend switch never serves another runtime's remotes.
 /**
  * Standalone pull-request surface: resolves the same repository context
  * GitView does (branch, base branch, remotes) from the shared git stores and
@@ -32,29 +35,14 @@ import { useRepositoryBinding } from '@/lib/source-control/repository-binding';
  */
 export const PullRequestView: React.FC = () => {
   const { t } = useI18n();
-  const { git, gitea, sourceControl } = useRuntimeAPIs();
+  const { git, sourceControl } = useRuntimeAPIs();
   const currentDirectory = useEffectiveDirectory();
-  // When the root is not itself a repository, the pull-request workflow
-  // operates on the resolved nested repository instead.
-  const { rootIsGitRepo, gitDirectory, nestedRepos } = useNestedGitDirectory(currentDirectory ?? null);
+  // The pull-request workflow operates on the picked repository, or the root
+  // when nothing is picked.
+  const { rootIsGitRepo, gitDirectory, nestedRepos, repositoryOptions } = useNestedGitDirectory(currentDirectory ?? null, { recheckOnOpen: true });
   const status = useGitStatus(gitDirectory ?? null);
   const branches = useGitBranches(gitDirectory ?? null);
   const isGitRepo = useIsGitRepo(gitDirectory ?? null);
-  const repoDirectory = gitDirectory ?? currentDirectory ?? '';
-  const [giteaState, setGiteaState] = React.useState<{
-    runtimeKey: string; directory: string; repository: GiteaRepository | null; remotes: GitRemote[]; error: string | null;
-  } | null>(null);
-  React.useEffect(() => {
-    if (!gitea || !git || !repoDirectory) return;
-    const runtimeKey = getRuntimeKey();
-    let cancelled = false;
-    void Promise.all([gitea.repository(repoDirectory), git.getRemotes(repoDirectory)]).then(([repository, remotes]) => {
-      if (!cancelled && runtimeKey === getRuntimeKey()) setGiteaState({ runtimeKey, directory: repoDirectory, repository, remotes, error: null });
-    }).catch((error: Error) => {
-      if (!cancelled && runtimeKey === getRuntimeKey()) setGiteaState({ runtimeKey, directory: repoDirectory, repository: null, remotes: [], error: error.message });
-    });
-    return () => { cancelled = true; };
-  }, [git, gitea, repoDirectory]);
   // The binding follows the repository actually in view.
   const binding = useRepositoryBinding(gitDirectory, sourceControl);
   const { ensureAll, ensureNestedRepos, selectNestedRepo } = useGitStore(useShallow((state) => ({
@@ -157,7 +145,7 @@ export const PullRequestView: React.FC = () => {
     return primaryRemote ? branches?.defaultBranches?.[primaryRemote] : undefined;
   }, [binding.contexts, branches]);
 
-  const baseBranch = React.useMemo(() => deriveBaseBranch({
+  const derivedBaseBranch = React.useMemo(() => deriveBaseBranch({
     remoteNames: new Set(binding.contexts[0]?.primaryRemote ? [binding.contexts[0].primaryRemote] : []),
     knownRemoteNames: new Set(binding.read?.repository.remotes.map((remote) => remote.name) ?? []),
     localBranches,
@@ -175,16 +163,19 @@ export const PullRequestView: React.FC = () => {
     rootBranchHint,
     worktreeMetadata?.createdFromBranch,
   ]);
+  // The branch's own parent (a chosen base, its pull request's target, the
+  // layer below it in a stack) wins over the worktree's guess.
+  const baseBranch = useBranchPullRequestBase(gitDirectory ?? null, currentBranch, true, binding, branches, derivedBaseBranch);
 
   // Empty states name the host's own kind of change request.
-  const repositoryProvider = useRepositoryHost(currentDirectory ?? null)?.provider;
+  const changeRequestTerm = useChangeRequestTerm(useRepositoryHost(currentDirectory ?? null)?.provider);
 
   if (!currentDirectory) {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
         <Icon name="git-pull-request" className="h-12 w-12 text-muted-foreground/50" />
-        <div className="typography-ui-header text-foreground">{t(changeRequestCopy('gitView.pullRequest.title', repositoryProvider))}</div>
-        <div className="max-w-sm typography-micro text-muted-foreground">{t(changeRequestCopy('gitView.pullRequest.createHint', repositoryProvider))}</div>
+        <div className="typography-ui-header text-foreground">{t(changeRequestCopy('gitView.pullRequest.title', changeRequestTerm))}</div>
+        <div className="max-w-sm typography-micro text-muted-foreground">{t(changeRequestCopy('gitView.pullRequest.createHint', changeRequestTerm))}</div>
       </div>
     );
   }
@@ -210,23 +201,19 @@ export const PullRequestView: React.FC = () => {
     return (
       <div className="flex h-full flex-col items-center justify-center gap-3 p-6 text-center">
         <Icon name="git-pull-request" className="h-12 w-12 text-muted-foreground/50" />
-        <div className="typography-ui-header text-foreground">{t(changeRequestCopy('gitView.pullRequest.title', repositoryProvider))}</div>
-        <div className="max-w-sm typography-micro text-muted-foreground">{t(changeRequestCopy('gitView.pullRequest.createHint', repositoryProvider))}</div>
+        <div className="typography-ui-header text-foreground">{t(changeRequestCopy('gitView.pullRequest.title', changeRequestTerm))}</div>
+        <div className="max-w-sm typography-micro text-muted-foreground">{t(changeRequestCopy('gitView.pullRequest.createHint', changeRequestTerm))}</div>
       </div>
     );
   }
 
-  // Repository switcher for non-repo roots with discovered nested
-  // repositories; the pick is shared per root across git surfaces.
-  const showRepositoryPicker =
-    rootIsGitRepo === false && Array.isArray(nestedRepos) && nestedRepos.length > 0;
-
+  // Repository switcher; the pick is shared per root across git surfaces.
   return (
     <div className="flex h-full min-h-0 flex-col">
-      {showRepositoryPicker ? (
-        <div className="flex shrink-0 items-center border-b border-border/60 px-4 py-2">
+      {repositoryOptions ? (
+        <div className="flex shrink-0 items-center border-b border-edge px-4 py-2">
           <NestedRepoPicker
-            repositories={nestedRepos}
+            repositories={repositoryOptions}
             selectedRepository={gitDirectory ?? null}
             onSelectRepository={(repository) => {
               if (currentDirectory) selectNestedRepo(currentDirectory, repository);
@@ -243,25 +230,14 @@ export const PullRequestView: React.FC = () => {
         disableHorizontal
         preventOverscroll
       >
-        {gitea && repoDirectory && (giteaState?.directory !== repoDirectory || giteaState.runtimeKey !== getRuntimeKey()) ? (
-          <div className="flex justify-center py-8"><Icon name="loader-4" className="size-4 animate-spin text-muted-foreground" /></div>
-        ) : gitea && giteaState?.error ? (
-          <p role="alert" className="py-3 typography-micro text-status-error">{giteaState.error}</p>
-        ) : gitea && giteaState?.repository ? (
-          <GiteaPullRequestSection key={`${repoDirectory}:${currentBranch}:${giteaState.repository.instanceUrl}:${giteaState.repository.owner}/${giteaState.repository.name}:${giteaState.repository.remote}`}
-            directory={repoDirectory} branch={currentBranch} baseBranch={baseBranch}
-            trackingBranch={status?.tracking ?? undefined} remotes={giteaState.remotes}
-            remoteBranches={remoteBranches} repository={giteaState.repository} />
-        ) : (
-          <PullRequestSection
-            directory={repoDirectory}
-            branch={currentBranch}
-            baseBranch={baseBranch}
-            trackingBranch={status?.tracking ?? undefined}
-            ahead={status?.ahead ?? 0}
-            remoteBranches={remoteBranches}
-          />
-        )}
+        <PullRequestSection
+          directory={gitDirectory ?? currentDirectory}
+          branch={currentBranch}
+          baseBranch={baseBranch}
+          trackingBranch={status?.tracking ?? undefined}
+          ahead={status?.ahead ?? 0}
+          remoteBranches={remoteBranches}
+        />
       </ScrollableOverlay>
     </div>
   );

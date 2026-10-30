@@ -12,8 +12,13 @@ import { buildWorktreeByPathIndex, findPrefixWorktreeEntry } from '../worktreeIn
 import { compareSessionsByLifecycleOrder, useSessionOrderingStore } from '@/sync/session-ordering';
 import { useSessionUIStore } from '@/sync/session-ui-store';
 import { isVSCodeRuntime } from '@/lib/desktop';
-import { isChatDirectoryPath } from '@/lib/chatDirectories';
+import { isVSCodeWithoutWorkspace } from '@/lib/vscodeBootstrap';
 import { isSessionArchived } from '@/lib/sessionArchive';
+import { spaceProjectDirectoryIn, useSpacesStore } from '@/lib/spaces/spaces-store';
+import { getSessionAdmissionDirectories, getSessionAdmissionScope, isSessionChatDirectory, isSessionTargetAdmitted } from '@/sync/session-admission-rule';
+import { useGlobalSyncStore } from '@/sync/global-sync-store';
+import { useChatsRoot } from '@/hooks/useChatsRoot';
+import { useSpaceArchivesStore } from '@/lib/spaces/space-archives';
 
 export type SwitcherItem = {
   node: SessionNode;
@@ -112,6 +117,15 @@ export const useSwitcherItems = (enabled: boolean, options: SwitcherItemsOptions
   const branchesByDirectory = useGitAllBranches();
   const availableWorktreesByProject = useSessionUIStore((state) => state.availableWorktreesByProject);
   const isVSCode = React.useMemo(() => isVSCodeRuntime(), []);
+  const admissionScope = getSessionAdmissionScope();
+  const chatsRoot = useChatsRoot();
+  const spaceArchives = useSpaceArchivesStore((state) => state.byDirectory);
+  const classification = React.useMemo(() => ({ chatsRoot, spaceArchives }), [chatsRoot, spaceArchives]);
+  const openCodeProjects = useGlobalSyncStore((state) => state.projects);
+  const knownDirectories = React.useMemo(
+    () => getSessionAdmissionDirectories(projects, availableWorktreesByProject, admissionScope, openCodeProjects),
+    [admissionScope, availableWorktreesByProject, openCodeProjects, projects],
+  );
 
   // Worktree sessions live OUTSIDE their project's path, so prefix matching
   // can't resolve their project — and their branch is known from worktree
@@ -130,8 +144,12 @@ export const useSwitcherItems = (enabled: boolean, options: SwitcherItemsOptions
     [availableWorktreesByProject, normalizedProjects],
   );
 
+  const spaceMarks = useSpacesStore((state) => state.spaces);
+  const spacesJourney = useSpacesStore((state) => state.journey);
   const findProjectForDirectory = React.useCallback(
-    (directory: string | null) => {
+    (sessionDirectory: string | null) => {
+      // A space's session belongs to the project the space was made from.
+      const directory = spaceProjectDirectoryIn({ spaces: spaceMarks, journey: spacesJourney }, sessionDirectory) ?? sessionDirectory;
       if (!directory) return null;
       // Known worktree → its project, regardless of where the worktree lives.
       const worktreeHit = findPrefixWorktreeEntry(normalizePath(directory) ?? directory, worktreeByPath);
@@ -141,14 +159,18 @@ export const useSwitcherItems = (enabled: boolean, options: SwitcherItemsOptions
         .sort((a, b) => (b.normalizedPath?.length ?? 0) - (a.normalizedPath?.length ?? 0));
       return matches[0] ?? null;
     },
-    [normalizedProjects, worktreeByPath],
+    [normalizedProjects, spaceMarks, spacesJourney, worktreeByPath],
   );
 
   const items = React.useMemo<SwitcherItem[]>(() => {
     if (!enabled) return [];
+    const isExcluded = (session: Session) => isBtwSession(session)
+      || (isVSCode && !isVSCodeWithoutWorkspace() && isSessionChatDirectory(resolveGlobalSessionDirectory(session), classification))
+      || !isSessionTargetAdmitted({ directory: resolveGlobalSessionDirectory(session), session }, projects, availableWorktreesByProject, admissionScope, knownDirectories, classification);
 
     const childrenByParent = new Map<string, Session[]>();
     for (const session of activeSessions) {
+      if (isExcluded(session)) continue;
       const parentId = (session as Session & { parentID?: string | null }).parentID;
       if (!parentId) continue;
       if (isSessionArchived(session)) continue;
@@ -171,8 +193,7 @@ export const useSwitcherItems = (enabled: boolean, options: SwitcherItemsOptions
       currentSessionId,
       (session) => findProjectForDirectory(resolveGlobalSessionDirectory(session))?.id ?? null,
       maxParents,
-      // btw forks stay hidden until promoted to a full session
-      (session) => isBtwSession(session) || (isVSCode && isChatDirectoryPath(resolveGlobalSessionDirectory(session))),
+      isExcluded,
     );
 
     const buildNode = (session: Session): SessionNode => {
@@ -203,7 +224,7 @@ export const useSwitcherItems = (enabled: boolean, options: SwitcherItemsOptions
         },
       };
     });
-  }, [activeSessions, branchesByDirectory, currentSessionId, enabled, findProjectForDirectory, isVSCode, maxParents, pinnedSessionIds, scopeProjectId, sessionOrderRanks, worktreeByPath]);
+  }, [activeSessions, admissionScope, availableWorktreesByProject, branchesByDirectory, classification, currentSessionId, enabled, findProjectForDirectory, isVSCode, knownDirectories, maxParents, pinnedSessionIds, projects, scopeProjectId, sessionOrderRanks, worktreeByPath]);
 
   return items;
 };

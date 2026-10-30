@@ -1,4 +1,5 @@
 import type { SessionSidebarRow } from './sessionSidebarRowModel';
+import { isGroupWork } from './works/sidebarWorks';
 
 const INITIAL_ROW_LIMIT = 24;
 
@@ -23,21 +24,25 @@ export const findFirstVisibleSessionSidebarRowIndex = (
   scrollOffset: number,
 ): number => items.find((item) => item.end > scrollOffset)?.index ?? 0;
 
-const SECTION_SPACING_ESTIMATE = { 'pb-2': 8, 'pb-1.5': 6 } as const;
+const SECTION_SPACING_ESTIMATE = { 'pb-5': 20, 'pb-3': 12, 'pb-1.5': 6, 'pb-0.5': 2 } as const;
 
 type SectionSpacing = keyof typeof SECTION_SPACING_ESTIMATE;
 
 /**
- * Rows that share a kind and surface context render at the same height apart
- * from their trailing section gap, so one measured row tells the size of every
- * unmeasured one, with whatever gap it ends up having. The virtualizer
+ * Fixed-height rows share measurements by kind and context. Detailed sessions
+ * and drafts can omit their empty second line and keep their own measurement.
+ * The virtualizer
  * compensates the scroll position whenever a row above the viewport measures
  * differently from its estimate, and that write lands in the middle of the
  * user's scroll gesture.
  */
-export const sessionSidebarRowSizeKey = (row: SessionSidebarRow): string => (
-  `${row.kind}:${'renderContext' in row ? row.renderContext : ''}`
-);
+export const sessionSidebarRowSizeKey = (row: SessionSidebarRow): string => {
+  const context = 'renderContext' in row ? row.renderContext : '';
+  const detailed = 'detailed' in row && row.detailed;
+  const variableHeight = (row.kind === 'session' && (detailed || context === 'timeline-mixed'))
+    || (row.kind === 'draft' && detailed);
+  return `${row.kind}:${context}${detailed ? ':detailed' : ''}${variableHeight ? `:${row.key}` : ''}`;
+};
 
 /**
  * The virtualizer's key for a row: its own key plus its trailing section gap.
@@ -65,11 +70,24 @@ export const estimateSessionSidebarRowSize = (
   return (measured.height ?? row.estimateSize) + gap;
 };
 
+/** The classes of a row's wrapper: its trailing gap. */
+export const sectionWrapperClass = (row: SessionSidebarRow, nextRow: SessionSidebarRow | undefined): string => (
+  sectionSpacingAfter(row, nextRow) ?? ''
+);
+
 export const sectionSpacingAfter = (row: SessionSidebarRow, nextRow: SessionSidebarRow | undefined): SectionSpacing | undefined => {
-  // Zones (Chats, In work, Recent) and projects are sections of equal weight,
-  // so each opens with the same gap. A worktree header opens a smaller one
-  // inside its project, so its sessions read as a group of their own.
-  const startsSection = nextRow?.kind === 'activity-header' || nextRow?.kind === 'project-header';
-  if (startsSection) return 'pb-2';
-  return nextRow?.kind === 'group-header' && row.kind !== 'project-header' ? 'pb-1.5' : undefined;
+  // Projects are set apart by space alone, with no line between them. A
+  // project after rows (an open project, a zone) opens with the widest gap;
+  // one right after a collapsed project keeps a narrow one, so a run of
+  // collapsed projects reads as a list. A zone opens with the widest gap, so its
+  // bare label reads as a caption of what follows. A
+  // space or archive header opens a smaller one inside its project, so its
+  // sessions read as a group of their own. A worktree is a work row among
+  // session rows and opens none.
+  if (nextRow?.kind === 'project-header') {
+    if (row.kind === 'caption') return undefined;
+    return row.kind === 'project-header' ? 'pb-0.5' : 'pb-3';
+  }
+  if (nextRow?.kind === 'activity-header' || nextRow?.kind === 'caption') return 'pb-5';
+  return nextRow?.kind === 'group-header' && !isGroupWork(nextRow.group) && row.kind !== 'project-header' ? 'pb-1.5' : undefined;
 };

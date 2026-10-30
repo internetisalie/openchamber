@@ -9,9 +9,13 @@ import {
 import { useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
 import { useSessionPinnedStore } from '@/stores/useSessionPinnedStore';
 import { resolveGlobalSessionDirectory } from '@/stores/useGlobalSessionsStore';
-import { normalizePath } from '../utils';
-import { isChatDirectoryPath } from '@/lib/chatDirectories';
+import { isVSCodeWithoutWorkspace } from '@/lib/vscodeBootstrap';
+import { getSessionAdmissionScope, isGlobalSessionTarget, isSessionChatDirectory, isSessionTargetAdmitted, type SessionAdmissionClassification, type SessionAdmissionScope } from '@/sync/session-admission-rule';
+import { useChatsRoot } from '@/hooks/useChatsRoot';
+import { useSpaceArchivesStore } from '@/lib/spaces/space-archives';
+import type { WorktreeMetadata } from '@/types/worktree';
 import { isBtwSession } from '@/lib/sessionBtwMetadata';
+import { resolveSessionNestingParentId } from '@/lib/sessionWorkLineage';
 import type { GlobalSessionStructure } from '@/stores/globalSessionStructure';
 import { countSyncPerformance } from '@/sync/performance-diagnostics';
 import type { SessionNode } from '../types';
@@ -22,6 +26,8 @@ type ProjectSidebarActiveSessionsArgs = {
   liveSessions: Session[];
   knownDirectories: Set<string>;
   isVSCode: boolean;
+  admissionScope?: SessionAdmissionScope;
+  classification?: SessionAdmissionClassification;
 };
 
 type SidebarSessionPartitions = {
@@ -30,10 +36,11 @@ type SidebarSessionPartitions = {
   globalSessions: Session[];
 };
 
-const parentIdOf = (session: Session): string | null => {
-  // SAFETY: OpenCode session payloads expose parentID although the SDK base Session omits it.
-  return (session as Session & { parentID?: string | null }).parentID ?? null;
-};
+// A row nests under its subagent parent or under the session it grew out of
+// (an auto-review, a `/btw` side conversation), see `lib/sessionWorkLineage`.
+const nestingParentResolver = (sessionById: ReadonlyMap<string, Session>) => (
+  (session: Session): string | null => resolveSessionNestingParentId(session, (id) => sessionById.get(id))
+);
 
 // This boundary owns session visibility before Recent or projects take
 // ownership. Temporary /btw forks never leak into any sidebar projection.
@@ -41,18 +48,21 @@ export const partitionSidebarSessions = (
   sessions: readonly Session[],
   isVSCode: boolean,
   classifyGlobalSessions = false,
+  admissionScope: SessionAdmissionScope = isVSCode ? 'vscode' : getSessionAdmissionScope(),
+  classification?: SessionAdmissionClassification,
 ): SidebarSessionPartitions => {
   const projectSessions: Session[] = [];
   const chatSessions: Session[] = [];
   const globalSessions: Session[] = [];
+  const excludeChats = isVSCode && !isVSCodeWithoutWorkspace();
   for (const session of sessions) {
     if (isBtwSession(session)) continue;
-    if (isChatDirectoryPath(session.directory)) {
-      if (isVSCode) continue;
+    if (isSessionChatDirectory(session.directory, classification)) {
+      if (excludeChats) continue;
       chatSessions.push(session);
       continue;
     }
-    if (classifyGlobalSessions && session.projectID === 'global') {
+    if (!isVSCode && classifyGlobalSessions && isGlobalSessionTarget({ directory: resolveGlobalSessionDirectory(session), session }, admissionScope, classification)) {
       globalSessions.push(session);
       continue;
     }
@@ -62,20 +72,17 @@ export const partitionSidebarSessions = (
 };
 
 
-const isKnownActiveSessionDirectory = (
+const EMPTY_WORKTREES = new Map<string, WorktreeMetadata[]>();
+
+const isVisibleSession = (
   session: Session,
   knownDirectories: Set<string>,
   isVSCode: boolean,
+  scope: SessionAdmissionScope,
+  classification?: SessionAdmissionClassification,
 ): boolean => {
-  // The full app's global cache is authoritative for active-session retention.
-  // A deleted worktree is not a deletion event, so its record must reach the
-  // ownership resolver even when no current topology directory matches it.
-  if (!isVSCode) return true;
-  if (session.time?.archived) return true;
-  const directory = normalizePath(resolveGlobalSessionDirectory(session))?.toLowerCase();
-  if (!directory) return false;
-  if (knownDirectories.size === 0) return false;
-  return knownDirectories.has(directory);
+  if (isVSCode && !isVSCodeWithoutWorkspace() && isSessionChatDirectory(session.directory, classification)) return false;
+  return isSessionTargetAdmitted({ directory: resolveGlobalSessionDirectory(session), session }, [], EMPTY_WORKTREES, isVSCode ? 'vscode' : scope, knownDirectories, classification);
 };
 
 // Global sessions provide complete sidebar coverage; initialized directory
@@ -85,18 +92,20 @@ export const projectSidebarActiveSessions = ({
   liveSessions,
   knownDirectories,
   isVSCode,
+  admissionScope = isVSCode ? 'vscode' : getSessionAdmissionScope(),
+  classification,
 }: ProjectSidebarActiveSessionsArgs): Session[] => {
   const sessions = [...globalActiveSessions];
   const knownIds = new Set(globalActiveSessions.map((session) => session.id));
-  const knownDirectoryKeys = new Set([...knownDirectories].map((directory) => directory.toLowerCase()));
+  const knownDirectoryKeys = new Set([...knownDirectories].map((directory) => isVSCode ? directory.toLowerCase() : directory));
 
   for (const session of liveSessions) {
     if (knownIds.has(session.id)) continue;
     sessions.push(session);
   }
 
-  return partitionSidebarSessions(sessions, isVSCode, !isVSCode).projectSessions
-    .filter((session) => isKnownActiveSessionDirectory(session, knownDirectoryKeys, isVSCode));
+  return partitionSidebarSessions(sessions, isVSCode, admissionScope === 'full-app', admissionScope, classification).projectSessions
+    .filter((session) => isVisibleSession(session, knownDirectoryKeys, isVSCode, admissionScope, classification));
 };
 
 export const projectSidebarCollection = (args: ProjectSidebarActiveSessionsArgs): Session[] => {
@@ -176,34 +185,23 @@ const buildSidebarSessionStructure = ({
   knownDirectories,
   isVSCode,
   globalStructure,
+  admissionScope = isVSCode ? 'vscode' : getSessionAdmissionScope(),
+  classification,
 }: SidebarSessionStructureArgs) => {
   countSyncPerformance('sidebarStructureBuilds');
   const indexedGlobalSessions = globalActiveSessions ?? [];
   const visibleSessions = mergeSidebarSessionSources(indexedGlobalSessions, liveSessions);
-  const partition = partitionSidebarSessions(visibleSessions, isVSCode, !isVSCode);
-  const knownDirectoryKeys = new Set([...knownDirectories].map((directory) => directory.toLowerCase()));
-  const projectSessions = partition.projectSessions
-    .filter((session) => isKnownActiveSessionDirectory(session, knownDirectoryKeys, isVSCode));
+  const partition = partitionSidebarSessions(
+    visibleSessions.filter((session) => isVisibleSession(session, knownDirectories, isVSCode, admissionScope, classification)),
+    isVSCode, admissionScope === 'full-app', admissionScope, classification,
+  );
+  const projectSessions = partition.projectSessions;
   const sessions = [...projectSessions, ...partition.chatSessions, ...partition.globalSessions];
-  const sessionById = new Map(sessions.map((session) => [session.id, session]));
-  const projectSessionIds = new Set(projectSessions.map((session) => session.id));
-  const indexedRootIds = globalStructure?.activeRootIds ?? [];
-  const indexedRootIdSet = new Set(indexedRootIds);
-  const rootSessions = [
-    ...indexedRootIds.flatMap((sessionId) => {
-      if (!projectSessionIds.has(sessionId)) return [];
-      const session = sessionById.get(sessionId);
-      return session ? [session] : [];
-    }),
-    ...projectSessions.filter((session) => (
-      !indexedRootIdSet.has(session.id) && !parentIdOf(session)
-    )),
-  ];
+  const sessionById = new Map(visibleSessions.map((session) => [session.id, session]));
   return {
     chatSessionIds: new Set(partition.chatSessions.map((session) => session.id)),
     globalSessionIds: new Set(partition.globalSessions.map((session) => session.id)),
     projectSessions,
-    rootSessions,
     sessionById,
     sessions,
     hierarchy: globalStructure ? {
@@ -225,8 +223,9 @@ const orderSidebarSessionStructure = (
     structure.hierarchy,
   );
   const childrenMap = new Map<string, Session[]>();
+  const nestingParentOf = nestingParentResolver(structure.sessionById);
   for (const session of orderedSessions) {
-    const parentID = parentIdOf(session);
+    const parentID = nestingParentOf(session);
     if (!parentID) continue;
     const siblings = childrenMap.get(parentID) ?? [];
     siblings.push(session);
@@ -253,17 +252,22 @@ export const buildSidebarSessionProjection = ({
   isVSCode,
   pinnedSessionIds,
   sessionOrderRanks,
+  admissionScope,
+  classification,
 }: SidebarSessionProjectionArgs) => {
   const structure = buildSidebarSessionStructure({
     globalActiveSessions,
     liveSessions,
     knownDirectories,
     isVSCode,
+    admissionScope,
+    classification,
   });
   const ordering = orderSidebarSessionStructure(structure, pinnedSessionIds, sessionOrderRanks);
+  const projectSessionIds = new Set(structure.projectSessions.map((session) => session.id));
   return {
     ...ordering,
-    projectSessions: structure.projectSessions,
+    projectSessions: ordering.orderedSessions.filter((session) => projectSessionIds.has(session.id)),
     sessionById: structure.sessionById,
   };
 };
@@ -284,7 +288,17 @@ export const useSessionProjectCollection = ({
 }: UseSessionProjectCollectionArgs) => {
   const globalActiveSessions = useGlobalSessionsStore((state) => state.activeSessions);
   const globalStructure = useGlobalSessionsStore((state) => state.structure);
-  const archivedSessions = useGlobalSessionsStore((state) => state.archivedSessions);
+  const rawArchivedSessions = useGlobalSessionsStore((state) => state.archivedSessions);
+  const admissionScope = isVSCode ? 'vscode' : getSessionAdmissionScope();
+  const chatsRoot = useChatsRoot();
+  const spaceArchives = useSpaceArchivesStore((state) => state.byDirectory);
+  const classification = React.useMemo(() => ({ chatsRoot, spaceArchives }), [chatsRoot, spaceArchives]);
+  const archivedSessions = React.useMemo(() => {
+    const known = new Set([...knownDirectories].map((directory) => isVSCode ? directory.toLowerCase() : directory));
+    return rawArchivedSessions.filter((session) => (
+      isVisibleSession(session, known, isVSCode, admissionScope, classification)
+    ));
+  }, [admissionScope, classification, isVSCode, knownDirectories, rawArchivedSessions]);
   const hasAuthoritativeGlobalSessions = useGlobalSessionsStore((state) => state.status === 'ready');
   const pinnedSessionIds = useSessionPinnedStore((state) => state.ids);
   const sessionOrderRanks = useSessionOrderingStore(React.useCallback(
@@ -305,16 +319,17 @@ export const useSessionProjectCollection = ({
     liveSessions: liveGapSessions,
     knownDirectories,
     isVSCode,
-  }), [globalActiveSessions, globalStructure, isVSCode, knownDirectories, liveGapSessions]);
+    admissionScope,
+    classification,
+  }), [admissionScope, classification, globalActiveSessions, globalStructure, isVSCode, knownDirectories, liveGapSessions]);
   const ordering = React.useMemo(
     () => orderSidebarSessionStructure(structure, pinnedSessionIds, sessionOrderRanks),
     [pinnedSessionIds, sessionOrderRanks, structure],
   );
   const { chatSessions, globalSessions, orderedSessions } = ordering;
-  const sessions = structure.projectSessions;
   const sessionById = React.useMemo(() => new Map(
-    [...structure.sessions, ...archivedSessions].map((session) => [session.id, session]),
-  ), [archivedSessions, structure.sessions]);
+    [...structure.sessionById.values(), ...rawArchivedSessions].map((session) => [session.id, session]),
+  ), [rawArchivedSessions, structure.sessionById]);
   const childrenMap = React.useMemo(() => {
     const children = new Map(ordering.childrenMap);
     for (const session of archivedSessions) {
@@ -328,6 +343,29 @@ export const useSessionProjectCollection = ({
     }
     return children;
   }, [archivedSessions, ordering.childrenMap]);
+  // A missing parent may temporarily leave its child as a root. Once either
+  // the active or archived cache supplies that parent, the child is no longer
+  // a root in its own project bucket.
+  const nestedSessionIds = React.useMemo(() => {
+    const nested = new Set<string>();
+    for (const [parentId, children] of childrenMap) {
+      if (!sessionById.has(parentId)) continue;
+      for (const child of children) nested.add(child.id);
+    }
+    return nested;
+  }, [childrenMap, sessionById]);
+  const projectSessionIds = React.useMemo(
+    () => new Set(structure.projectSessions.map((session) => session.id)),
+    [structure.projectSessions],
+  );
+  const sessions = React.useMemo(
+    () => orderedSessions.filter((session) => projectSessionIds.has(session.id)),
+    [orderedSessions, projectSessionIds],
+  );
+  const rootSessions = React.useMemo(
+    () => sessions.filter((session) => !nestedSessionIds.has(session.id)),
+    [nestedSessionIds, sessions],
+  );
   const getDescendantIdsForAction = React.useCallback(
     (sessionId: string, options: { includeArchived: boolean }) => getDescendantIds(childrenMap, sessionId)
       .filter((id) => {
@@ -344,10 +382,12 @@ export const useSessionProjectCollection = ({
     getDescendantIds: getDescendantIdsForAction,
     globalSessions,
     hasAuthoritativeGlobalSessions,
+    nestedSessionIds,
     orderedSessions,
     pinnedSessionIds,
     sessionOrderRanks,
     sessions,
-    rootSessions: structure.rootSessions,
+    rootSessions,
+    sessionById,
   };
 };

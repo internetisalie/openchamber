@@ -1,5 +1,9 @@
 # Gitea feature parity plan for Electron
 
+## Record status
+
+This is an archived plan and validation record for the fork-only Gitea implementation. The application uses the upstream [Gitea provider](../packages/web/server/lib/gitea/DOCUMENTATION.md). The remaining gaps in that provider are outside this plan's implementation scope.
+
 ## Goal
 
 Give a person using the Electron app the same useful issue and pull request workflows for a connected Gitea repository that they have for GitHub. Match behavior, not the GitHub sign-in mechanism or GitHub's API shapes. A Gitea personal access token remains tied to its saved instance, and Git pushes continue to use the person's Git credentials.

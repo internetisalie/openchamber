@@ -51,6 +51,7 @@ const metadataWrites: Array<{ sessionId: string; metadata: WorktreeMetadata | nu
 const toastSuccesses: string[] = [];
 const toastErrors: Array<{ title: string; description?: string }> = [];
 const toastWarnings: string[] = [];
+const titleWrites: Array<{ directory: string; title: string }> = [];
 const directoryStates = new Map<string, DirectoryState>();
 const storedMetadata = new Map<string, WorktreeMetadata | null>();
 const originalConsoleWarn = console.warn;
@@ -122,6 +123,10 @@ mock.module('@/components/ui', () => ({
 mock.module('@/lib/gitApi', () => ({
   checkIsGitRepository: (directory: string) => isGitRepositoryImplementation(directory),
   getGitStatus: (directory: string) => getGitStatusImplementation(directory),
+  setGitWorktreeTitle: (directory: string, title: string) => {
+    titleWrites.push({ directory, title });
+    return Promise.resolve({ applied: true, title });
+  },
   deleteRemoteBranch: mock(),
   resolveGitRepositoryPrefix: mock((directory: string) => Promise.resolve(projectFoldersByPath.get(directory) ?? projectFolderInRepository)),
   validateWorktreeDirectory: mock(() => Promise.resolve({ valid: directoryInsideCheckout, insideWorktreeRoot: directoryInsideCheckout, resolvedWorktreeRoot: null, resolvedCwd: null })),
@@ -348,6 +353,7 @@ describe('moveSessionTreeToExistingWorktree', () => {
     toastSuccesses.length = 0;
     toastErrors.length = 0;
     toastWarnings.length = 0;
+    titleWrites.length = 0;
     directoryStates.clear();
     storedMetadata.clear();
     sessionUIState.worktreeMetadata = new Map();
@@ -931,6 +937,18 @@ describe('moveSessionTreeToExistingWorktree', () => {
     expect(toastErrors[0]?.description).toContain('worktree kept');
     expect(toastErrors[0]?.description).toContain('could not be fully rolled back');
     expect(removeWorktreeCalls).toEqual([]);
+  });
+
+  test('a named task keeps its name in the new worktree; an unnamed one leaves it unnamed', async () => {
+    setStatuses('/source', { named: 'idle', plain: 'idle' });
+    const named = { ...makeSession('named'), title: 'Login fix', metadata: { openchamber: { workTitle: { title: 'Login fix', by: 'agent' } } } };
+
+    requestSessionTreeMove({ ...makeQuickIntent(), root: named });
+    await waitFor(() => toastSuccesses.length === 1);
+    requestSessionTreeMove({ ...makeQuickIntent(), root: makeSession('plain') });
+    await waitFor(() => toastSuccesses.length === 2);
+
+    expect(titleWrites).toEqual([{ directory: '/created-worktree', title: 'Login fix' }]);
   });
 
   test('reverses an ambiguously completed descendant before removing its new worktree', async () => {

@@ -69,6 +69,7 @@ mock.module('./quotaCredentials', () => ({
 mock.module('./sessionActivityWatcher', () => ({ getSessionActivitySnapshot: mock() }));
 
 const { handleSystemBridgeMessage } = await import('./bridge-system-runtime.ts');
+const { openCodeTrust } = await import('./opencodeTrust.ts');
 
 const deps = {
   resolveUserPath: (value) => value,
@@ -118,6 +119,18 @@ describe('VS Code system bridge api:workspace:addFolder', () => {
   beforeEach(() => {
     updateWorkspaceFolders.mockClear();
     currentWorkspaceFolders = [];
+  });
+
+  test('refuses untrusted OpenCode configuration before changing workspace folders', async () => {
+    const original = openCodeTrust.assess;
+    openCodeTrust.assess = async () => ({ trusted: false });
+    try {
+      const response = await handleSystemBridgeMessage({
+        id: 'untrusted-folder', type: 'api:workspace:addFolder', payload: { path: '/untrusted/project' },
+      }, undefined, deps);
+      expect(response.success).toBe(false);
+      expect(updateWorkspaceFolders).not.toHaveBeenCalled();
+    } finally { openCodeTrust.assess = original; }
   });
 
   test('adds a folder to the workspace and returns the folder list', async () => {
@@ -300,5 +313,17 @@ describe('VS Code v2 migration bridge', () => {
     const refused = await handleSystemBridgeMessage({ id: 'failed', type: 'api:opencode/install-v2' }, { manager }, deps);
     expect(refused.success).toBe(false);
     expect(refused.error).toContain('In-place updates are disabled');
+  });
+});
+
+describe('VS Code system bridge api:sessions/metadata:set', () => {
+  const manager = { getApiUrl: () => 'http://127.0.0.1:9', getOpenCodeAuthHeaders: () => ({}) };
+  const failingWith = (error) => ({ ...deps, sessionState: { setMetadata: async () => { throw error; } } });
+  const message = { id: 'meta', type: 'api:sessions/metadata:set', payload: { sessionId: 'ses_a', patch: { openchamber: { work: { state: 'done' } } } } };
+
+  test('reports a failed write', async () => {
+    const response = await handleSystemBridgeMessage(message, { manager }, failingWith(new Error('OpenCode is down')));
+
+    expect(response).toEqual({ id: 'meta', type: 'api:sessions/metadata:set', success: false, error: 'OpenCode is down' });
   });
 });

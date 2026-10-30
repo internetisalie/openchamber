@@ -32,6 +32,12 @@ const managedChatSession = (id: string): Session => ({
 });
 
 describe('projectSidebarActiveSessions', () => {
+  test('admits project descendants but not sibling prefixes or differently cased host paths', () => {
+    expect(projectSidebarActiveSessions({
+      globalActiveSessions: [session('child', '/Kept/subdir'), session('sibling', '/Kept-other'), session('case', '/kept')],
+      liveSessions: [], knownDirectories: new Set(['/Kept']), isVSCode: false,
+    }).map(entry => entry.id)).toEqual(['child']);
+  });
   test('keeps case-insensitive membership local to projection without rewriting request paths', () => {
     const knownDirectories = new Set(['/Users/Developer/Project']);
     const input = {
@@ -72,7 +78,7 @@ describe('projectSidebarActiveSessions', () => {
     }).map((entry) => entry.id)).toEqual(['known']);
   });
 
-  test('allows missing or unknown directories for web when no directories are known', () => {
+  test('hides missing or unknown directories for web when no projects are registered', () => {
     const sessions = [session('unknown', '/workspace/unknown'), session('empty', null)];
 
     expect(projectSidebarActiveSessions({
@@ -80,10 +86,10 @@ describe('projectSidebarActiveSessions', () => {
       liveSessions: [],
       knownDirectories: new Set(),
       isVSCode: false,
-    }).map((entry) => entry.id)).toEqual(['unknown', 'empty']);
+    }).map((entry) => entry.id)).toEqual([]);
   });
 
-  test('retains unknown active full-app records when topology directories are known', () => {
+  test('hides unknown active full-app records without removing raw input records', () => {
     const restored = { ...session('restored', '/deleted/worktrees/feature'), time: { created: 1, updated: 1 } };
 
     expect(projectSidebarActiveSessions({
@@ -91,10 +97,11 @@ describe('projectSidebarActiveSessions', () => {
       liveSessions: [],
       knownDirectories: new Set(['/workspace/known']),
       isVSCode: false,
-    }).map((entry) => entry.id)).toEqual(['restored']);
+    }).map((entry) => entry.id)).toEqual([]);
+    expect(restored.id).toBe('restored');
   });
 
-  test('keeps archived sessions despite directory filtering', () => {
+  test('hides archived sessions in unregistered directories too', () => {
     const archived = session('archived', '/workspace/unknown');
     archived.time.archived = 1;
 
@@ -103,7 +110,7 @@ describe('projectSidebarActiveSessions', () => {
       liveSessions: [],
       knownDirectories: new Set(['/workspace/known']),
       isVSCode: true,
-    }).map((entry) => entry.id)).toEqual(['archived']);
+    }).map((entry) => entry.id)).toEqual([]);
   });
 
   test('does not replace a filtered global record with a live duplicate', () => {
@@ -151,6 +158,69 @@ describe('projectSidebarActiveSessions', () => {
 });
 
 describe('projectSidebarCollection', () => {
+  test('uses shared Global admission for unregistered directories without admitting ordinary neighbors', () => {
+    const records = [session('global', '/outside', 'global'), session('ordinary', '/outside')];
+    const projection = buildSidebarSessionProjection({
+      globalActiveSessions: records, liveSessions: [], knownDirectories: new Set(), isVSCode: false,
+      admissionScope: 'full-app', pinnedSessionIds: new Set(), sessionOrderRanks: new Map(),
+    });
+    expect(projection.globalSessions.map((entry) => entry.id)).toEqual(['global']);
+    expect(projection.orderedSessions.map((entry) => entry.id)).toEqual(['global']);
+    expect(projection.projectSessions).toEqual([]);
+    expect(projection.sessionById.has('ordinary')).toBe(true);
+    expect(records).toHaveLength(2);
+  });
+
+  test('Capacitor keeps known-root project sessions and Chats without a hosted Global group', () => {
+    const projection = buildSidebarSessionProjection({
+      globalActiveSessions: [session('known-global', '/workspace', 'global'), session('outside-global', '/outside', 'global'), managedChatSession('chat')],
+      liveSessions: [], knownDirectories: new Set(['/workspace']), isVSCode: false,
+      admissionScope: 'capacitor', pinnedSessionIds: new Set(), sessionOrderRanks: new Map(),
+    });
+    expect(projection.globalSessions).toEqual([]);
+    expect(projection.projectSessions.map((entry) => entry.id)).toEqual(['known-global']);
+    expect(projection.chatSessions.map((entry) => entry.id)).toEqual(['chat']);
+    expect(projection.orderedSessions.some((entry) => entry.id === 'outside-global')).toBe(false);
+  });
+
+  test('retains authoritative secondary workspace roots while keeping unregistered siblings hidden', () => {
+    const projection = buildSidebarSessionProjection({
+      globalActiveSessions: [session('secondary', '/secondary/ai'), session('sibling', '/secondary-other')],
+      liveSessions: [], knownDirectories: new Set(['/workspace', '/secondary']), isVSCode: false,
+      pinnedSessionIds: new Set(), sessionOrderRanks: new Map(),
+    });
+    expect(projection.projectSessions.map((entry) => entry.id)).toEqual(['secondary']);
+  });
+
+  test('same-ID authoritative identity changes update Global visibility outside known roots', () => {
+    const input = { liveSessions: [], knownDirectories: new Set<string>(), isVSCode: false,
+      pinnedSessionIds: new Set<string>(), sessionOrderRanks: new Map<string, number>() };
+    const before = buildSidebarSessionProjection({ ...input, globalActiveSessions: [session('same', '/outside', 'global')] });
+    const after = buildSidebarSessionProjection({ ...input, globalActiveSessions: [session('same', '/outside', 'ordinary')] });
+    expect(before.globalSessions.map((entry) => entry.id)).toEqual(['same']);
+    expect(after.globalSessions).toEqual([]);
+    expect(after.orderedSessions).toEqual([]);
+    expect(after.sessionById.get('same')?.projectID).toBe('ordinary');
+  });
+
+  test('an empty VS Code window keeps managed Chats and excludes unregistered Global records', () => {
+    const previous = Object.getOwnPropertyDescriptor(globalThis, 'window');
+    Object.defineProperty(globalThis, 'window', { configurable: true, value: { __VSCODE_CONFIG__: { workspaceFolders: [] } } });
+    try {
+      const projection = buildSidebarSessionProjection({
+        globalActiveSessions: [managedChatSession('empty-chat'), session('global-outside', '/outside', 'global')],
+        liveSessions: [], knownDirectories: new Set(), isVSCode: true,
+        pinnedSessionIds: new Set(), sessionOrderRanks: new Map(),
+      });
+      expect(projection.chatSessions.map((entry) => entry.id)).toEqual(['empty-chat']);
+      expect(projection.globalSessions).toEqual([]);
+      expect(projection.projectSessions).toEqual([]);
+    } finally {
+      if (previous) Object.defineProperty(globalThis, 'window', previous);
+      else Reflect.deleteProperty(globalThis, 'window');
+    }
+  });
+
   test('returns the same structural projection for unchanged inputs without module caching', () => {
     const globalActiveSessions = [session('a', '/workspace/a'), session('b', '/workspace/b')];
     const input = {

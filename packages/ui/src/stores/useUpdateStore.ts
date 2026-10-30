@@ -97,6 +97,6 @@ export const useUpdateStore = create<UpdateStore>()((set) => ({
   // These legacy store actions remain fail-closed for callers with stale state.
   downloadUpdate: async () => { throw new Error('In-place fork updates are disabled.'); },
   restartToUpdate: async () => { throw new Error('In-place fork updates are disabled.'); },
-  dismiss: () => set({ available: false }),
+  dismiss: () => set({ available: false, downloaded: false, installing: false, info: null, progress: null }),
   reset: () => set(initialState),
 }));

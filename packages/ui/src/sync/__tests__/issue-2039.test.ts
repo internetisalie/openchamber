@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, mock, spyOn, test } from "bun:test"
 import { cyclePermissionMode } from "../../components/chat/permissionAutoAccept"
+import type { useGlobalSessionsStore as GlobalSessionsStore } from "@/stores/useGlobalSessionsStore"
 
 const storage = new Map<string, string>()
 const createSessionCalls: Array<{ title?: string; directory: string | null; metadata?: unknown }> = []
@@ -21,6 +22,15 @@ let waitForCheckoutImplementation: (directory: string) => Promise<void> = async 
 // Sync's session→directory index. `createSession` writes it, and directory
 // resolution reads it as the authoritative source, so the mock has to keep one.
 const sessionDirectoryRegistry = new Map<string, string>()
+const globalSessionsState: Pick<ReturnType<typeof GlobalSessionsStore.getState>,
+  "activeSessions" | "archivedSessions" | "entityById" | "mutationRevision" | "mutationRevisionBySessionId"
+> = {
+  activeSessions: [],
+  archivedSessions: [],
+  entityById: new Map(),
+  mutationRevision: 0,
+  mutationRevisionBySessionId: new Map(),
+}
 let createdSessionDirectory: string | undefined
 const projectsState = {
   projects: [] as Array<{
@@ -179,11 +189,7 @@ mock.module("@/stores/useSessionGoalArmStore", () => ({
 
 mock.module("@/stores/useGlobalSessionsStore", () => ({
   useGlobalSessionsStore: {
-    getState: () => ({
-      activeSessions: [],
-      archivedSessions: [],
-      entityById: new Map(),
-    }),
+    getState: () => globalSessionsState,
   },
   resolveGlobalSessionDirectory: () => null,
 }))
@@ -214,6 +220,7 @@ mock.module("@/stores/useSkillsStore", () => ({
     }),
   },
   selectSkillsForDirectory: () => [],
+  selectAvailableSkillsForDirectory: () => [],
 }))
 
 mock.module("@/components/ui", () => ({
@@ -337,11 +344,14 @@ mock.module("../session-actions", () => ({
       sessionDirectoryRegistry.set(session.id, sessionDirectory)
     }
     const { useSessionUIStore: store } = await import("../session-ui-store")
-    store.getState().setCurrentSession(session.id, sessionDirectory, selectionTransition)
+    store.getState().setCurrentSession(session.id, sessionDirectory, { transition: selectionTransition })
     store.getState().markSessionAsOpenChamberCreated(session.id)
     return session
   }),
   forkAfterMessage: mock(async () => undefined),
+  adoptSessionMove: () => undefined,
+  markSessionStatus: () => undefined,
+  openPendingSessionTranscript: () => undefined,
   deleteSession: mock(async () => true),
   deleteSessions: mock(async () => ({ deletedIds: [], failedIds: [] })),
   archiveSession: mock(async () => true),
@@ -364,6 +374,7 @@ mock.module("../session-actions", () => ({
 
 mock.module("@/lib/git/branchNameGenerator", () => ({
   generateBranchName: () => "generated-branch",
+  generatedBranchPrefix: (name: string) => (name === "generated-branch" ? "" : null),
 }))
 
 mock.module("@/lib/openchamberConfig", () => ({
@@ -456,6 +467,8 @@ describe("issue 2039 draft auto-accept", () => {
     applyDefaultModelAgentSelectionCalls.length = 0
     activateDirectoryCalls.length = 0
     sessionDirectoryRegistry.clear()
+    globalSessionsState.mutationRevision = 0
+    globalSessionsState.mutationRevisionBySessionId.clear()
     permissionAutoAcceptCalls.length = 0
     savedVariantCalls.length = 0
     savedAgentModelCalls.length = 0
@@ -799,6 +812,7 @@ describe("issue 2039 draft auto-accept", () => {
   })
 
   test("uses the server-authoritative directory after worktree session creation", async () => {
+    projectsState.projects = [{ id: "canonical", path: "/canonical/worktree" }]
     createdSessionDirectory = "/canonical/worktree"
     useSessionUIStore.getState().openNewSessionDraft({
       directoryOverride: "/requested/worktree",

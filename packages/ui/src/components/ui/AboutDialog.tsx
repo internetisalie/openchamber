@@ -3,7 +3,7 @@ import {
   Dialog,
   DialogContent,
 } from '@/components/ui/dialog';
-import { OpenChamberLogo } from '@/components/ui/OpenChamberLogo';
+import { AboutLogo } from '@/components/ui/AboutLogo';
 import { debugUtils } from '@/lib/debug';
 import { cn } from '@/lib/utils';
 import { toast } from '@/components/ui';
@@ -165,7 +165,7 @@ export const AboutDialog: React.FC<AboutDialogProps> = ({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-xs p-6">
         <div className="flex flex-col items-center text-center space-y-4">
-          <OpenChamberLogo width={64} height={64} />
+          <AboutLogo />
 
           <div className="space-y-1">
             <h2 className="text-lg font-semibold">OpenChamber</h2>
@@ -230,7 +230,7 @@ export const AboutDialog: React.FC<AboutDialogProps> = ({
             </a>
           </div>
 
-          <p className="typography-meta text-muted-foreground/60 pt-2">
+          <p className="typography-meta text-muted-foreground pt-2">
             {t('aboutDialog.footerNote')}
           </p>
         </div>

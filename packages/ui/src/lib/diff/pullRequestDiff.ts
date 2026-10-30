@@ -3,9 +3,12 @@ import { z } from 'zod';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import type { SourceControlReadContext } from '@/lib/source-control/types';
 import { buildTargetQuery } from '@/lib/walkthrough/api';
-import { pullRequestWalkthroughTarget, type WalkthroughSource } from '@/lib/walkthrough/types';
+import type { WalkthroughSource } from '@/lib/walkthrough/types';
 
 export type PullRequestSource = Extract<WalkthroughSource, { kind: 'pr' }>;
+
+/** Names an earlier revision beside the change request's number, so its diff never passes for the current one. */
+export const revisionSuffix = (source: PullRequestSource): string => (source.revision ? ` @${source.revision.slice(0, 7)}` : '');
 
 /** Keep each file's original patch bytes, including binary and metadata-only changes. */
 export function parsePullRequestDiff(patch: string) {
@@ -33,11 +36,9 @@ async function throwPullRequestError(response: Response, fallback: string): Prom
   throw new Error(error.success ? error.data.error : `${fallback} (${response.status})`);
 }
 
-export async function fetchPullRequestDiff(directory: string, source: PullRequestSource, context: Readonly<SourceControlReadContext> | null) {
-  const target = pullRequestWalkthroughTarget(source, context);
-  if (!target) throw new Error('A bound source control context is required');
+export async function fetchPullRequestDiff(directory: string, source: PullRequestSource, context: Readonly<SourceControlReadContext>) {
   const response = await runtimeFetch('/api/walkthrough/pr-diff', {
-    query: buildTargetQuery(directory, target),
+    query: buildTargetQuery(directory, { source, context }),
     signal: AbortSignal.timeout(30_000),
   });
   if (!response.ok) await throwPullRequestError(response, 'Failed to load pull request diff');
@@ -51,14 +52,12 @@ const pullRequestFileSchema = z.object({ original: z.string(), modified: z.strin
 export async function fetchPullRequestFile(
   directory: string,
   source: PullRequestSource,
-  context: Readonly<SourceControlReadContext> | null,
+  context: Readonly<SourceControlReadContext>,
   file: { path: string; previousPath?: string; status: string },
 ) {
-  const target = pullRequestWalkthroughTarget(source, context);
-  if (!target) throw new Error('A bound source control context is required');
   const response = await runtimeFetch('/api/walkthrough/pr-file', {
     query: {
-      ...buildTargetQuery(directory, target),
+      ...buildTargetQuery(directory, { source, context }),
       path: file.path,
       previousPath: file.previousPath ?? '',
       status: file.status,

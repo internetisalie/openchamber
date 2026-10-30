@@ -46,24 +46,43 @@ describe('GitLab namespace owners', () => {
         .toThrow('pr sources require a valid repository');
     }
   });
+});
 
-  it('keeps Gitea instances and remotes distinct without changing GitHub keys', async () => {
-    const source = parseSource({ kind: 'pr', number: 42, gitea: {
-      instanceUrl: 'https://git.example.com', owner: 'team', repo: 'project', remote: 'origin',
-    } });
-    const other = parseSource({ kind: 'pr', number: 42, gitea: {
-      instanceUrl: 'https://other.example.com', owner: 'team', repo: 'project', remote: 'origin',
-    } });
-    expect(sourceKey(source)).not.toBe(sourceKey(other));
-    expect(sourceKey(source)).not.toBe(sourceKey(parseSource({ kind: 'pr', number: 42 })));
-    expect(() => parseSource({ kind: 'pr', number: 42, gitea: {
-      instanceUrl: 'https://git.example.com/', owner: 'team', repo: 'project', remote: 'origin',
-    } })).toThrow();
+describe('PR sources naming a revision', () => {
+  const REVISION = 'c'.repeat(40);
+
+  it('scopes the key by the revision and keeps the current revision\'s key unchanged', () => {
+    const named = parseSource({ kind: 'pr', number: 42, revision: REVISION.toUpperCase() });
+    expect(named).toEqual({ kind: 'pr', number: 42, revision: REVISION });
+    expect(sourceKey(named)).toBe(`pr:42@${REVISION}`);
+    expect(sourceKey(parseSource({ kind: 'pr', number: 42 }))).toBe('pr:42');
+  });
+
+  it('refuses anything but a full SHA', () => {
+    for (const revision of ['abc', 'g'.repeat(40), 3, '']) {
+      expect(() => parseSource({ kind: 'pr', number: 42, revision })).toThrow('full revision SHA');
+    }
+  });
+
+  it('hands the revision to the diff loader', async () => {
     let received;
-    await loadSourceSections('/repo', source, { getPullRequestDiff: async (...args) => {
-      received = args;
-      return { patch: 'diff --git a/a b/a', meta: {} };
-    } });
-    expect(received).toEqual(['/repo', 42, undefined, { sourceRepo: null, source }]);
+    await loadSourceSections('/repo', parseSource({ kind: 'pr', number: 42, revision: REVISION }), {
+      readContext: {},
+      getPullRequestDiff: async (...args) => {
+        received = args;
+        return { patch: '', meta: {} };
+      },
+    });
+    expect(received[3]).toEqual({ sourceRepo: null, revision: REVISION });
+  });
+});
+
+describe('top-level project PR sources', () => {
+  it('parses an empty owner and keys it by the joined path, as the UI does', () => {
+    const source = parseSource({ kind: 'pr', number: 7, sourceRepo: { owner: '', repo: 'demo' } });
+    expect(source.sourceRepo).toEqual({ owner: '', repo: 'demo' });
+    expect(sourceKey(source)).toBe('pr:demo:7');
+    expect(sourceKey(parseSource({ kind: 'pr', number: 7, sourceRepo: { owner: 'team/app', repo: 'sub' } }))).toBe('pr:team/app/sub:7');
+    expect(() => parseSource({ kind: 'pr', number: 7, sourceRepo: { repo: 'demo' } })).toThrow('valid repository');
   });
 });
