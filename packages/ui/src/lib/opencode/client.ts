@@ -524,10 +524,12 @@ const invalidFileFindResponse = (cause?: unknown, status = 503) => new FileFindR
 const preserveFileFindResponse = async (response: Response, signal?: AbortSignal | null): Promise<Response> => {
   let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
   let complete = false
-  let rejectStopped!: (reason: unknown) => void
-  const stopped = new Promise<never>((_, reject) => { rejectStopped = reject })
-  const abort = () => rejectStopped(signal?.reason ?? new DOMException("Aborted", "AbortError"))
-  signal?.addEventListener("abort", abort, { once: true })
+  let cleanupStopped: (() => void) | undefined
+  const stopped = new Promise<never>((_, reject) => {
+    const abort = () => reject(signal?.reason ?? new DOMException("Aborted", "AbortError"))
+    signal?.addEventListener("abort", abort, { once: true })
+    cleanupStopped = () => signal?.removeEventListener("abort", abort)
+  })
   try {
     if (signal?.aborted) throw signal.reason
     if (!response.body) throw new TypeError("File search response has no body")
@@ -579,7 +581,7 @@ const preserveFileFindResponse = async (response: Response, signal?: AbortSignal
     if (signal?.aborted) throw signal.reason
     throw invalidFileFindResponse(cause, response.ok ? 503 : response.status)
   } finally {
-    signal?.removeEventListener("abort", abort)
+    cleanupStopped?.()
     if (!complete) {
       if (reader) void reader.cancel().catch(() => undefined)
       else void response.body?.cancel().catch(() => undefined)
@@ -596,17 +598,19 @@ const withFileFindDeadline = async <T>(signal: AbortSignal | undefined, run: (si
   const timer = setTimeout(() => controller.abort(new FileFindResponseError("Remote file search timed out after 5000ms", {
     status: 503, kind: "remote-unavailable", cause: new DOMException("File search timed out", "TimeoutError"),
   })), 5_000)
-  let rejectStopped!: (reason: unknown) => void
-  const stopped = new Promise<never>((_, reject) => { rejectStopped = reject })
-  const stop = () => rejectStopped(controller.signal.reason)
-  controller.signal.addEventListener("abort", stop, { once: true })
+  let cleanupStopped: (() => void) | undefined
+  const stopped = new Promise<never>((_, reject) => {
+    const stop = () => reject(controller.signal.reason)
+    controller.signal.addEventListener("abort", stop, { once: true })
+    cleanupStopped = () => controller.signal.removeEventListener("abort", stop)
+  })
   try {
     if (controller.signal.aborted) throw controller.signal.reason
     return await Promise.race([run(controller.signal), stopped])
   } finally {
     clearTimeout(timer)
     signal?.removeEventListener("abort", abort)
-    controller.signal.removeEventListener("abort", stop)
+    cleanupStopped?.()
   }
 }
 
@@ -2602,7 +2606,7 @@ class OpencodeService {
       throw new FileFindResponseError("Remote file source changed", { status: 409, kind: "remote-source-changed" })
     }
     const normalizedDirectory = directory ? normalizeFsPath(directory).replace(/\/$/, "") : null
-    return {
+    const outcome: ProjectFileSearchOutcome = {
       files: response.data.map((item) => {
         const name = item.path.split("/").pop()!
         return {
@@ -2612,8 +2616,9 @@ class OpencodeService {
           extension: name.includes(".") ? name.split(".").pop()?.toLowerCase() : undefined,
         }
       }),
-      ...(response.sourceIdentity !== undefined ? { sourceIdentity: response.sourceIdentity } : {}),
     }
+    if (response.sourceIdentity !== undefined) outcome.sourceIdentity = response.sourceIdentity
+    return outcome
   }
 
   /** Fuzzy file search inside a directory through OpenCode's file index. */

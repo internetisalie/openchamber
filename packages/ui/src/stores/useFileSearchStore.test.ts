@@ -6,19 +6,19 @@ import { FilesystemError } from '@/lib/api/files-errors';
 type Deferred<T> = {
   promise: Promise<T>;
   resolve: (value: T) => void;
-  reject: (error: unknown) => void;
+  reject: (error: Error) => void;
 };
 
 const searchRequests: Array<Deferred<Array<{ path: string }>>> = [];
 let runtimeKey = 'runtime-a';
 let runtimeSearch: (() => Promise<Array<{ path: string; preview: string[] }>>) | undefined;
-const runtimeSearchCalls: unknown[] = [];
+const runtimeSearchCalls: FileSearchQuery[] = [];
 let runtimeSource: (() => Promise<WorkspaceFileSource>) | undefined;
 let runtimeSourceSearch: ((query: FileSearchQuery) => Promise<FileSearchOutcome>) | undefined;
 
 const createDeferred = <T>(): Deferred<T> => {
   let resolve!: (value: T) => void;
-  let reject!: (error: unknown) => void;
+  let reject!: (error: Error) => void;
   const promise = new Promise<T>((res, rej) => {
     resolve = res;
     reject = rej;
@@ -42,7 +42,7 @@ mock.module('@/contexts/runtimeAPIRegistry', () => ({
   getRegisteredRuntimeAPIs: () => {
     const search = runtimeSearch;
     return search || runtimeSource || runtimeSourceSearch ? { files: { resolveWorkspaceFileSource: runtimeSource,
-      searchWithSource: runtimeSourceSearch, search: (payload: unknown) => {
+      searchWithSource: runtimeSourceSearch, search: (payload: FileSearchQuery) => {
       runtimeSearchCalls.push(payload);
       return search ? search() : Promise.resolve([]);
     } } } : undefined;
@@ -257,7 +257,7 @@ describe('useFileSearchStore', () => {
     const started = createDeferred<void>();
     runtimeSourceSearch = async () => { started.resolve(undefined); return pending.promise; };
     const reading = useFileSearchStore.getState().searchFiles('/project', 'x');
-    const settled = reading.then((value) => ({ ok: true, value }), (error: unknown) => ({ ok: false, error }));
+    const settled = reading.then((value) => ({ ok: true, value }), (cause: unknown) => ({ ok: false, error: cause }));
     await started.promise;
     runtimeKey = 'runtime-b';
     useFileSearchStore.getState().resetForRuntimeSwitch();

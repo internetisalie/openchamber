@@ -25,6 +25,8 @@ describe('read-once remote workspace configuration', () => {
   });
 
   it.each(['', '[]', 'null', '{}', 'invalid', '[null]', '[[]]',
+    '[{"workspaceID":12,"directory":"/workspace"}]', '[{"workspaceID":"a","directory":12}]',
+    '[{"workspaceID":null,"directory":"/workspace"}]', '[{"workspaceID":"a","directory":null}]',
     '[{"workspaceID":"a"}]', '[{"directory":"/workspace"}]',
     '[{"workspaceID":" ","directory":"/workspace"}]',
     '[{"workspaceID":"a","directory":"relative"}]',
@@ -34,6 +36,12 @@ describe('read-once remote workspace configuration', () => {
     '[{"workspaceID":"a","directory":"/one"},{"workspaceID":"a","directory":"/two"}]',
     '[{"workspaceID":"a","directory":"/one"},{"workspaceID":"b","directory":"/one/"}]',
   ])('refuses invalid present configuration without upstream access: %s', async (raw) => {
+    const f = fixture(raw);
+    await expect(f.files.resolve(request())).rejects.toMatchObject({ status: 503, kind: 'remote-unavailable' });
+    expect(f.fetchImpl).not.toHaveBeenCalled();
+  });
+
+  it.each([null, 12, false, { workspaceID: 'a', directory: '/workspace' }])('refuses non-string present configuration without coercion: %j', async (raw) => {
     const f = fixture(raw);
     await expect(f.files.resolve(request())).rejects.toMatchObject({ status: 503, kind: 'remote-unavailable' });
     expect(f.fetchImpl).not.toHaveBeenCalled();

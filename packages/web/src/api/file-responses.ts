@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { FilesystemError, parseFilesystemErrorReason } from '@openchamber/ui/lib/api/files-errors';
 import { changedFileSource, invalidFileResponse } from '@openchamber/ui/lib/api/file-source';
 import { getRuntimeKey, subscribeRuntimeEndpointWillChange } from '@openchamber/ui/lib/runtime-switch';
@@ -6,26 +7,34 @@ export const FILE_JSON_BYTES = 1024 * 1024;
 export const FILE_ERROR_BYTES = 64 * 1024;
 export const FILE_SOURCE_HEADER = 'X-OpenChamber-File-Source';
 
-export function fileRecord(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw invalidFileResponse();
-  return value as Record<string, unknown>;
+export interface FileRequestRuntime {
+  getRuntimeKey: typeof getRuntimeKey;
+  subscribeRuntimeEndpointWillChange: (callback: (detail: { runtimeKey: string; previousRuntimeKey: string }) => void) => () => void;
 }
 
-export function createFileRequestScope(signal?: AbortSignal, remote = true) {
+const fileRequestRuntime: FileRequestRuntime = { getRuntimeKey, subscribeRuntimeEndpointWillChange };
+
+export const fileErrorResponseSchema = z.object({
+  error: z.string().optional().catch(undefined),
+  reason: z.string().optional().catch(undefined),
+  sourceKind: z.string().optional().catch(undefined),
+});
+
+export function createFileRequestScope(signal?: AbortSignal, remote = true, runtime = fileRequestRuntime) {
   const controller = new AbortController();
-  const runtimeKey = getRuntimeKey();
+  const runtimeKey = runtime.getRuntimeKey();
   const abort = () => controller.abort(signal?.reason);
   signal?.addEventListener('abort', abort, { once: true });
   if (signal?.aborted) abort();
   const timer = remote ? setTimeout(() => controller.abort(new FilesystemError('File request timed out', {
     status: 503, reason: 'remote-unavailable',
   })), 5_000) : undefined;
-  const unsubscribe = remote ? subscribeRuntimeEndpointWillChange((detail) => {
+  const unsubscribe = remote ? runtime.subscribeRuntimeEndpointWillChange((detail) => {
     if (detail.runtimeKey !== detail.previousRuntimeKey) controller.abort(changedFileSource());
   }) : () => {};
   const check = () => {
     controller.signal.throwIfAborted();
-    if (remote && runtimeKey !== getRuntimeKey()) throw changedFileSource();
+    if (remote && runtimeKey !== runtime.getRuntimeKey()) throw changedFileSource();
   };
   return {
     signal: controller.signal,
@@ -87,22 +96,26 @@ export async function readFileResponseText(response: Response, scope: FileReques
   }
 }
 
-export async function readFileResponseJSON(response: Response, scope: FileRequestScope, maxBytes = FILE_JSON_BYTES): Promise<unknown> {
+export async function readFileResponseJSON<T>(response: Response, scope: FileRequestScope, schema: z.ZodType<T>, maxBytes = FILE_JSON_BYTES): Promise<T> {
   const text = await readFileResponseText(response, scope, maxBytes);
-  try { return JSON.parse(text); }
+  try {
+    const parsed = schema.safeParse(JSON.parse(text));
+    if (!parsed.success) throw invalidFileResponse();
+    return parsed.data;
+  }
   catch { throw invalidFileResponse(); }
 }
 
 export async function fileResponseError(response: Response, scope: FileRequestScope): Promise<FilesystemError> {
-  let payload: Record<string, unknown>;
+  let payload: z.infer<typeof fileErrorResponseSchema>;
   try {
-    payload = fileRecord(await readFileResponseJSON(response, scope, FILE_ERROR_BYTES));
+    payload = await readFileResponseJSON(response, scope, fileErrorResponseSchema, FILE_ERROR_BYTES);
   } catch (error) {
     scope.check();
     if (!(error instanceof FilesystemError)) throw error;
     return new FilesystemError('Invalid file error response', { status: response.status, reason: 'invalid-response' });
   }
-  return new FilesystemError(typeof payload.error === 'string' ? payload.error : response.statusText || 'File request failed', {
+  return new FilesystemError(payload.error ?? (response.statusText || 'File request failed'), {
     status: response.status, reason: parseFilesystemErrorReason(payload.reason),
   });
 }

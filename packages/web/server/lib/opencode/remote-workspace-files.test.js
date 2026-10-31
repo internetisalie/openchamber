@@ -66,9 +66,12 @@ const fixture = async ({ directory = root, resolve = () => ({ ...remote, directo
   running.push(server);
   await new Promise((resolve) => server.once('listening', resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
-  const request = (route, options = {}) => fetch(`${origin}${route}`, {
-    ...options, headers: { ...(local ? {} : { 'x-opencode-directory': root }), ...options.headers },
-  });
+  const request = (route, options = {}) => {
+    const headers = {};
+    if (!local) headers['x-opencode-directory'] = root;
+    Object.assign(headers, options.headers);
+    return fetch(`${origin}${route}`, { ...options, headers });
+  };
   const expectNoLocalAccess = () => {
     for (const call of Object.values(fsCalls)) expect(call).not.toHaveBeenCalled();
     expect(localGit).not.toHaveBeenCalled();
@@ -79,6 +82,53 @@ const fixture = async ({ directory = root, resolve = () => ({ ...remote, directo
 };
 
 describe('configured remote workspace file routing through Express', () => {
+  it.each([
+    { route: '/api/fs/list', payload: null },
+    { route: '/api/fs/list', payload: [] },
+    { route: '/api/fs/list', payload: metadata([], { location: { directory: 12 } }) },
+    { route: '/api/fs/list', payload: metadata([], { sourceIdentity: 12 }) },
+    { route: '/api/fs/list', payload: metadata({ path: 'a', type: 'file' }) },
+    { route: '/api/fs/list', payload: metadata([{ path: 12, type: 'file' }]) },
+    { route: '/api/fs/list', payload: metadata([{ path: 'a', type: 'symlink' }]) },
+    { route: '/api/fs/find', payload: metadata([{ path: 'a', type: 'file', isSymbolicLink: true }]) },
+    { route: '/api/fs/find', payload: metadata([{ path: 'a', type: 'file', name: 12 }]) },
+    { route: '/api/fs/stat?path=%2Fworkspace%2Fa', payload: metadata({ path: 'a', exists: true, isFile: 'true', size: 1, mtimeMs: 2 }) },
+    { route: '/api/fs/stat?path=%2Fworkspace%2Fa', payload: metadata({ path: 'a', exists: false, isFile: true, size: 1, mtimeMs: 2 }) },
+    { route: '/api/fs/stat?path=%2Fworkspace%2Fa', payload: metadata({ path: 'a', exists: true, isFile: true, size: -1, mtimeMs: 2 }) },
+    { route: '/api/fs/stat?path=%2Fworkspace%2Fa', payload: metadata({ path: 'a', exists: true, isFile: true, size: 1.5, mtimeMs: 2 }) },
+    { route: '/api/fs/stat?path=%2Fworkspace%2Fa', payload: metadata({ path: 'a', exists: true, isFile: true, size: 9007199254740992, mtimeMs: 2 }) },
+    { route: '/api/fs/stat?path=%2Fworkspace%2Fa', payload: metadata({ path: 'a', exists: true, isFile: true, size: 1, mtimeMs: '2' }) },
+  ])('rejects malformed provider metadata without coercion or local fallthrough: %j', async ({ route, payload }) => {
+    const f = await fixture({ response: () => Response.json(payload) });
+    const response = await f.request(route);
+    expect(response.status).toBe(503);
+    const error = { error: 'Invalid remote file response', reason: 'invalid-response' };
+    if (route.startsWith('/api/fs/stat')) error.sourceKind = 'remote';
+    expect(await response.json()).toEqual(error);
+    f.expectNoLocalAccess();
+  });
+
+  it('projects valid provider metadata without exposing unrelated fields or imposing a strict provider extension ban', async () => {
+    const f = await fixture({ response: () => Response.json(metadata([{ path: 'a', type: 'file', providerExtension: true }], { providerExtension: true })) });
+    const list = await f.request('/api/fs/list');
+    expect(list.status).toBe(200);
+    expect(await list.json()).toEqual({ path: root, sourceIdentity, entries: [
+      { name: 'a', path: '/workspace/a', isFile: true, isDirectory: false, isSymbolicLink: false },
+    ] });
+    f.expectNoLocalAccess();
+  });
+
+  it.each([null, { _tag: 'ServiceUnavailableError', kind: 'remote-unavailable', message: 12 },
+    { _tag: 'FileNotFoundError', kind: 'remote-unavailable', message: 'refused' },
+    { _tag: 'ServiceUnavailableError', kind: 'not-found', message: 'refused' },
+  ])('rejects malformed structured provider errors without changing actual file state: %j', async (payload) => {
+    const f = await fixture({ response: () => Response.json(payload, { status: 503 }) });
+    const response = await f.request('/api/fs/read?path=%2Fworkspace%2Fa&optional=true');
+    expect(response.status).toBe(503);
+    expect(await response.json()).toEqual({ error: 'Invalid remote file response', reason: 'invalid-response' });
+    f.expectNoLocalAccess();
+  });
+
   it.each(['x'.repeat(1024), 'é'.repeat(512)])('preserves a 1024 UTF-8 byte opaque identity across empty results, stat, read and scoped missing (%#)', async (token) => {
     const f = await fixture({
       rootResponse: () => Response.json(metadata({ path: '', exists: true, isFile: false, size: 4096, mtimeMs: 321 }, { sourceIdentity: token })),

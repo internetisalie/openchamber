@@ -5,16 +5,22 @@ import {
   RemoteWorkspaceFileError,
   remoteWorkspaceDirectorySelectors,
 } from './remote-workspace-files.js';
+import { z } from 'zod';
+
+const configuredWorkspaceSchema = z.object({
+  workspaceID: z.string().refine((value) => value.trim().length > 0),
+  directory: z.string(),
+}).strict();
+const configuredWorkspacesSchema = z.array(configuredWorkspaceSchema).min(1);
 
 const configuredRoots = (raw) => {
-  const entries = JSON.parse(raw);
-  if (!Array.isArray(entries) || entries.length === 0) throw remoteFilesUnavailable();
+  const input = z.string().safeParse(raw);
+  if (!input.success) throw remoteFilesUnavailable();
+  const parsed = configuredWorkspacesSchema.safeParse(JSON.parse(input.data));
+  if (!parsed.success) throw remoteFilesUnavailable();
   const roots = new Map();
   const workspaceIDs = new Set();
-  for (const entry of entries) {
-    if (!entry || typeof entry !== 'object' || Array.isArray(entry)
-      || Object.keys(entry).length !== 2 || !Object.hasOwn(entry, 'workspaceID') || !Object.hasOwn(entry, 'directory')
-      || typeof entry.workspaceID !== 'string' || !entry.workspaceID.trim()) throw remoteFilesUnavailable();
+  for (const entry of parsed.data) {
     const directory = canonicalRemoteRoot(entry.directory);
     if (roots.has(directory) || workspaceIDs.has(entry.workspaceID)) throw remoteFilesUnavailable();
     workspaceIDs.add(entry.workspaceID);
@@ -27,7 +33,6 @@ export const createConfiguredRemoteWorkspaceFiles = ({ configuredWorkspaces, bui
   if (configuredWorkspaces === undefined) return undefined;
   let roots;
   try {
-    if (typeof configuredWorkspaces !== 'string') throw remoteFilesUnavailable();
     roots = configuredRoots(configuredWorkspaces);
   } catch {
     roots = null;

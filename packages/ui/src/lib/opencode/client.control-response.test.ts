@@ -32,7 +32,7 @@ mock.module("@/lib/runtime-switch", () => ({
 }))
 mock.module("@/lib/startupTrace", () => ({ ...startupTrace, markStartupTrace: () => undefined }))
 
-const { createRuntimeOpencodeClient, normalizeOpencodeError, OpencodeApiError } = await import(`./client?control-response-test=${Date.now()}`)
+const { createRuntimeOpencodeClient, normalizeOpencodeError, OpencodeApiError }: typeof import("./client") = await import(`./client?control-response-test=${Date.now()}`)
 const encoder = new TextEncoder()
 const refusal = (message = "Reader control refused before admission") => JSON.stringify({ _tag: "ServiceUnavailableError", message })
 const client = (baseUrl = "https://controls.test/api") => createRuntimeOpencodeClient({ baseUrl, directory: "/repo/space here" })
@@ -63,13 +63,17 @@ const streamed = (chunks: Uint8Array[], contentType = "application/json", status
   return { response: new Response(body, { status, headers: { "content-type": contentType } }), state }
 }
 
-const sdkRejection = async (pending: Promise<unknown>) => {
-  const error: unknown = await pending.then(() => { throw new Error("Expected SDK rejection") }, (failure: unknown) => failure)
-  if (!(error instanceof ClientError)) throw new Error("Expected the real SDK ClientError wrapper", { cause: error })
-  return error
+const sdkRejection = async <T>(pending: Promise<T>) => {
+  try {
+    await pending
+  } catch (error) {
+    if (!(error instanceof ClientError)) throw new Error("Expected the real SDK ClientError wrapper", { cause: error })
+    return error
+  }
+  throw new Error("Expected SDK rejection")
 }
 
-const controlRejection = async (pending: Promise<unknown>) => {
+const controlRejection = async <T>(pending: Promise<T>) => {
   const sdk = await sdkRejection(pending)
   expect(sdk.reason).toBe("Transport")
   if (!(sdk.cause instanceof ControlResponseError)) throw new Error("Expected the dedicated response error", { cause: sdk })
@@ -98,9 +102,9 @@ describe("original control response through the real SDK", () => {
         transport = async () => original.response
         const sid = "ses /?#é"
         const apiClient = client(baseUrl)
-        const result = await controlRejection(operation === "prompt"
-          ? apiClient.session.prompt({ sessionID: sid, text: "one attempt" })
-          : apiClient.session.interrupt({ sessionID: sid }))
+        const result = operation === "prompt"
+          ? await controlRejection(apiClient.session.prompt({ sessionID: sid, text: "one attempt" }))
+          : await controlRejection(apiClient.session.interrupt({ sessionID: sid }))
         expect(result.api.tag).toBe("ServiceUnavailableError")
         expect(result.api.detail).toBe(message)
         expect(isAmbiguousTransportFailure(result.api)).toBe(false)
@@ -234,7 +238,8 @@ describe("original control response through the real SDK", () => {
     jest.advanceTimersByTime(1)
     const { api, responseError } = await outcome
     expect(responseError.cause).toBeInstanceOf(DOMException)
-    expect((responseError.cause as DOMException).name).toBe("TimeoutError")
+    if (!(responseError.cause instanceof DOMException)) throw new Error("Expected timeout cause", { cause: responseError.cause })
+    expect(responseError.cause.name).toBe("TimeoutError")
     expect(api.tag).toBeUndefined()
     expect(api.detail).toContain("5000ms")
     expect(cancels).toBe(1)
@@ -258,10 +263,14 @@ describe("unchanged non-refusal transport", () => {
   test("declared non-503 control errors keep the generated SDK decoding path", async () => {
     const original = streamed([encoder.encode('{"_tag":"ConflictError","message":"ownership changed"}')], "application/json", 409)
     transport = async () => original.response
-    const error: unknown = await client().session.prompt({ sessionID: "ses_1", text: "one attempt" })
-      .then(() => { throw new Error("Expected conflict") }, (failure: unknown) => failure)
-    expect(error instanceof ClientError).toBe(false)
-    const api = normalizeOpencodeError("prompt", error)
+    let api: InstanceType<typeof OpencodeApiError> | undefined
+    try {
+      await client().session.prompt({ sessionID: "ses_1", text: "one attempt" })
+    } catch (error) {
+      expect(error instanceof ClientError).toBe(false)
+      api = normalizeOpencodeError("prompt", error)
+    }
+    if (!api) throw new Error("Expected conflict")
     expect(api.status).toBe(409)
     expect(api.tag).toBe("ConflictError")
     expect(api.detail).toBe("ownership changed")
@@ -273,9 +282,9 @@ describe("unchanged non-refusal transport", () => {
     const original = streamed([encoder.encode(refusal())])
     transport = async () => original.response
     const apiClient = client()
-    const sdk = await sdkRejection(route === "get"
-      ? apiClient.session.get({ sessionID: "ses?next=/api/session/other/prompt#interrupt" })
-      : apiClient.session.command({ sessionID: "ses_1", name: "explain", text: "one attempt" }))
+    const sdk = route === "get"
+      ? await sdkRejection(apiClient.session.get({ sessionID: "ses?next=/api/session/other/prompt#interrupt" }))
+      : await sdkRejection(apiClient.session.command({ sessionID: "ses_1", name: "explain", text: "one attempt" }))
     expect(sdk.reason).toBe("UnexpectedStatus")
     const api = normalizeOpencodeError("other route", sdk)
     expect(api.status).toBe(503)
@@ -319,8 +328,11 @@ describe("unchanged non-refusal transport", () => {
     let settled = false
     const apiClient = client()
     const iterator = eventStream ? apiClient.event.subscribe()[Symbol.asyncIterator]() : null
-    const pending = (iterator ? iterator.next() : apiClient.session.prompt({ sessionID: "ses_1", text: "admitted" }))
-      .then((value: unknown) => { settled = true; return value })
+    const pending = (async () => {
+      const value = await (iterator ? iterator.next() : apiClient.session.prompt({ sessionID: "ses_1", text: "admitted" }))
+      settled = true
+      return value
+    })()
     await reading.promise
     jest.advanceTimersByTime(6_000)
     expect(settled).toBe(false)

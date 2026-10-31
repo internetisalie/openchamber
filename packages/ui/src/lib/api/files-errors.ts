@@ -67,12 +67,12 @@ export const parseFilesystemErrorReason = (value: unknown): FilesystemErrorReaso
 // that carries the message.
 const messageCarrierSchema = z.object({ message: z.string() });
 
-export const isFileMissingError = (error: unknown): boolean => {
-  if (isFilesystemError(error) && (error.status !== undefined || error.reason !== 'unknown')) {
-    return error.reason === 'not-found' && (error.status === undefined || error.status === 404);
+export const isFileMissingError = (cause: unknown): boolean => {
+  if (isFilesystemError(cause) && (cause.status !== undefined || cause.reason !== 'unknown')) {
+    return cause.reason === 'not-found' && (cause.status === undefined || cause.status === 404);
   }
-  const carrier = messageCarrierSchema.safeParse(error);
-  const message = error instanceof Error ? error.message : carrier.success ? carrier.data.message : String(error ?? '');
+  const carrier = messageCarrierSchema.safeParse(cause);
+  const message = cause instanceof Error ? cause.message : carrier.success ? carrier.data.message : String(cause ?? '');
   const normalized = message.toLowerCase();
   return normalized.includes('file not found')
     || normalized.includes('enoent')

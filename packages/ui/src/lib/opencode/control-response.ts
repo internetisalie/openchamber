@@ -1,5 +1,8 @@
+import { z } from "zod"
+
 const MAX_BODY_BYTES = 64 * 1024
 const BODY_TIMEOUT_MS = 5_000
+const controlRefusalSchema = z.object({ _tag: z.literal("ServiceUnavailableError"), message: z.string() })
 
 export class ControlResponseError extends Error {
   readonly status = 503
@@ -32,13 +35,18 @@ const readBody = async (response: Response, signal?: AbortSignal | null): Promis
   if (!response.body) throw new TypeError("OpenCode control error response has no body")
   const reader = response.body.getReader()
   let complete = false
-  let rejectStopped!: (reason: unknown) => void
-  const stopped = new Promise<never>((_, reject) => { rejectStopped = reject })
-  const abort = () => rejectStopped(signal?.reason ?? new DOMException("Aborted", "AbortError"))
-  const timer = setTimeout(() => {
-    rejectStopped(new DOMException(`OpenCode control error body timed out after ${BODY_TIMEOUT_MS}ms`, "TimeoutError"))
-  }, BODY_TIMEOUT_MS)
-  signal?.addEventListener("abort", abort, { once: true })
+  let cleanupStopped: (() => void) | undefined
+  const stopped = new Promise<never>((_, reject) => {
+    const abort = () => reject(signal?.reason ?? new DOMException("Aborted", "AbortError"))
+    const timer = setTimeout(() => {
+      reject(new DOMException(`OpenCode control error body timed out after ${BODY_TIMEOUT_MS}ms`, "TimeoutError"))
+    }, BODY_TIMEOUT_MS)
+    signal?.addEventListener("abort", abort, { once: true })
+    cleanupStopped = () => {
+      clearTimeout(timer)
+      signal?.removeEventListener("abort", abort)
+    }
+  })
   try {
     if (signal?.aborted) throw signal.reason ?? new DOMException("Aborted", "AbortError")
     const decoder = new TextDecoder("utf-8", { fatal: true })
@@ -55,8 +63,7 @@ const readBody = async (response: Response, signal?: AbortSignal | null): Promis
       text += decoder.decode(chunk.value, { stream: true })
     }
   } finally {
-    clearTimeout(timer)
-    signal?.removeEventListener("abort", abort)
+    cleanupStopped?.()
     if (!complete) void reader.cancel().catch(() => undefined)
     reader.releaseLock()
   }
@@ -71,12 +78,11 @@ export const preserveControlResponse = async (response: Response, request: Contr
       void response.body?.cancel().catch(() => undefined)
       throw new TypeError("OpenCode control error response is not JSON")
     }
-    const body: unknown = JSON.parse(await readBody(response, request.signal))
-    if (!body || typeof body !== "object" || !("_tag" in body) || body._tag !== "ServiceUnavailableError"
-      || !("message" in body) || typeof body.message !== "string") {
-      throw new TypeError("OpenCode control error body is not a ServiceUnavailableError with a string message")
+    const refusal = controlRefusalSchema.safeParse(JSON.parse(await readBody(response, request.signal)))
+    if (!refusal.success) {
+      throw new TypeError("OpenCode control error body is not a ServiceUnavailableError with a string message", { cause: refusal.error })
     }
-    message = body.message
+    message = refusal.data.message
   } catch (cause) {
     const detail = cause instanceof Error ? cause.message : String(cause)
     throw new ControlResponseError(detail, { cause })

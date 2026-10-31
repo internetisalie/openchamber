@@ -1,7 +1,29 @@
 import path from 'node:path';
 import { validateHeaderValue } from 'node:http';
+import { z } from 'zod';
 
 export const REMOTE_FILE_LIMITS = Object.freeze({ fileBytes: 1048576, metadataBytes: 1048576, errorBytes: 65536, sourceIdentityBytes: 1024, entries: 1000, results: 100, deadlineMs: 5000 });
+
+const nonblankStringSchema = z.string().refine((value) => value.trim().length > 0);
+const remoteScopeSchema = z.object({ mode: z.literal('remote'), workspaceID: nonblankStringSchema, directory: z.string() });
+const logicalRootSchema = z.string().refine((value) => value.startsWith('/') && !value.includes('\\') && !value.includes('\0'));
+const relativePathSchema = z.string().min(1).refine((value) => !value.startsWith('/') && !value.includes('\\') && !value.includes('\0')
+  && value.split('/').every((part) => part.length > 0 && part !== '.' && part !== '..'));
+const sourceIdentitySchema = nonblankStringSchema.refine((value) => Buffer.byteLength(value, 'utf8') <= REMOTE_FILE_LIMITS.sourceIdentityBytes);
+const responseSchema = z.object({ status: z.number().int(), headers: z.object({ get: z.instanceof(Function) }) });
+const readableBodySchema = z.object({ getReader: z.instanceof(Function) });
+const metadataEnvelopeSchema = z.object({ location: z.object({ directory: z.string() }), sourceIdentity: sourceIdentitySchema, data: z.unknown() });
+const statDataSchema = z.object({
+  path: z.string(), exists: z.literal(true), isFile: z.boolean(),
+  isSymbolicLink: z.literal(false).optional(), size: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER), mtimeMs: z.number().finite(),
+});
+const entrySchema = z.object({
+  path: relativePathSchema, type: z.enum(['file', 'directory']), isSymbolicLink: z.literal(false).optional(),
+  name: z.string().optional(), sourceIdentity: sourceIdentitySchema.optional(),
+  location: z.object({ directory: z.string() }).optional(), isFile: z.boolean().optional(), isDirectory: z.boolean().optional(),
+});
+const entriesSchema = z.array(entrySchema);
+const entryCollectionSchema = z.array(z.unknown());
 
 export class RemoteWorkspaceFileError extends Error {
   constructor(status, kind, message) {
@@ -34,23 +56,24 @@ export const remoteFileRequest = (req) => {
 export const remoteFileParameter = scalar;
 
 export const canonicalRemoteRoot = (value) => {
-  if (typeof value !== 'string' || !value.startsWith('/') || value.includes('\\') || value.includes('\0')) throw invalidPath();
-  const root = value === '/' ? '/' : value.replace(/\/+$/, '');
+  const parsed = logicalRootSchema.safeParse(value);
+  if (!parsed.success) throw invalidPath();
+  const root = parsed.data === '/' ? '/' : parsed.data.replace(/\/+$/, '');
   if (root !== '/' && root.slice(1).split('/').some((part) => !part || part === '.' || part === '..')) throw invalidPath();
   return root;
 };
 
 const relativePath = (value, allowRoot = false) => {
   if (allowRoot && (value === '' || value === '.')) return '';
-  if (typeof value !== 'string' || !value || value.startsWith('/') || value.includes('\\') || value.includes('\0')) throw invalidPath();
-  if (value.split('/').some((part) => !part || part === '.' || part === '..')) throw invalidPath();
-  return value;
+  const parsed = relativePathSchema.safeParse(value);
+  if (!parsed.success) throw invalidPath();
+  return parsed.data;
 };
 
 export const remoteRelativePath = (root, value, { absolute = true, allowRoot = false } = {}) => {
   if (!absolute) return relativePath(value, allowRoot);
-  if (!allowRoot && typeof value === 'string' && value.endsWith('/')) throw invalidPath();
   const target = canonicalRemoteRoot(value);
+  if (!allowRoot && value.endsWith('/')) throw invalidPath();
   if (target === root) return relativePath('', allowRoot);
   const prefix = root === '/' ? '/' : `${root}/`;
   if (!target.startsWith(prefix)) throw invalidPath();
@@ -85,9 +108,10 @@ export const remoteWorkspaceDirectorySelectors = (req) => {
   if (hasEncoding && encoding !== 'uri') throw invalidPath();
   if (hasEncoding && !header) throw invalidPath();
   if (header !== undefined && header !== null) {
-    if (typeof header !== 'string') throw invalidPath();
+    const parsed = z.string().safeParse(header);
+    if (!parsed.success) throw invalidPath();
     try {
-      selectors.push(hasEncoding || !header.startsWith('/') ? decodeURIComponent(header) : header);
+      selectors.push(hasEncoding || !parsed.data.startsWith('/') ? decodeURIComponent(parsed.data) : parsed.data);
     } catch { throw invalidPath(); }
   }
   const roots = selectors.map(canonicalRemoteRoot);
@@ -97,16 +121,18 @@ export const remoteWorkspaceDirectorySelectors = (req) => {
 
 const validateRemoteScope = (req, scope) => {
   if (scope?.mode === 'local') return scope;
-  if (scope?.mode !== 'remote' || typeof scope.workspaceID !== 'string' || !scope.workspaceID.trim()) throw remoteFilesUnavailable();
-  const root = canonicalRemoteRoot(scope.directory);
+  const parsed = remoteScopeSchema.safeParse(scope);
+  if (!parsed.success) throw remoteFilesUnavailable();
+  const root = canonicalRemoteRoot(parsed.data.directory);
   if (remoteWorkspaceDirectorySelectors(req).some((value) => value !== root)) throw invalidPath();
-  return { mode: 'remote', workspaceID: scope.workspaceID, directory: root };
+  return { mode: 'remote', workspaceID: parsed.data.workspaceID, directory: root };
 };
 
 const remoteFileSourceIdentity = (value) => {
-  if (typeof value !== 'string' || !value.trim() || Buffer.byteLength(value, 'utf8') > REMOTE_FILE_LIMITS.sourceIdentityBytes) throw invalidResponse();
-  try { validateHeaderValue('X-OpenChamber-File-Source', value); } catch { throw invalidResponse(); }
-  return value;
+  const parsed = sourceIdentitySchema.safeParse(value);
+  if (!parsed.success) throw invalidResponse();
+  try { validateHeaderValue('X-OpenChamber-File-Source', parsed.data); } catch { throw invalidResponse(); }
+  return parsed.data;
 };
 
 export const awaitRemoteFileOperation = (operation, signal) => {
@@ -120,7 +146,7 @@ export const awaitRemoteFileOperation = (operation, signal) => {
 
 const readBytes = async (response, limit, kind, signal) => {
   if (response.body === null) return Buffer.alloc(0);
-  if (typeof response.body?.getReader !== 'function') throw invalidResponse();
+  if (!readableBodySchema.safeParse(response.body).success) throw invalidResponse();
   const reader = response.body.getReader();
   const chunks = [];
   let bytes = 0;
@@ -164,7 +190,7 @@ const errorKinds = new Map([
 const sourceChanged = () => new RemoteWorkspaceFileError(409, 'remote-source-changed', 'Remote workspace source changed during the file request');
 
 const checkStatus = async (response, signal, expectedSourceIdentity) => {
-  if (!response || !Number.isInteger(response.status) || typeof response.headers?.get !== 'function') throw invalidResponse();
+  if (!responseSchema.safeParse(response).success) throw invalidResponse();
   if (response.status === 200) return;
   const specification = errorKinds.get(response.status);
   if (!specification) {
@@ -172,8 +198,10 @@ const checkStatus = async (response, signal, expectedSourceIdentity) => {
     if (response.status < 400 || response.status > 599) throw invalidResponse();
     throw new RemoteWorkspaceFileError(response.status, 'remote-unavailable', 'Remote file request was refused');
   }
-  const payload = await jsonResponse(response, REMOTE_FILE_LIMITS.errorBytes, signal);
-  if (payload?._tag !== specification.tag || !specification.kinds.includes(payload.kind) || typeof payload.message !== 'string' || !payload.message) throw invalidResponse();
+  const parsed = z.object({ _tag: z.literal(specification.tag), kind: z.enum(specification.kinds), message: z.string().min(1) })
+    .safeParse(await jsonResponse(response, REMOTE_FILE_LIMITS.errorBytes, signal));
+  if (!parsed.success) throw invalidResponse();
+  const payload = parsed.data;
   const error = new RemoteWorkspaceFileError(response.status, payload.kind, payload.message);
   const identity = response.headers?.get('x-openchamber-file-source');
   if (identity !== null && identity !== undefined) error.sourceIdentity = remoteFileSourceIdentity(identity);
@@ -183,27 +211,26 @@ const checkStatus = async (response, signal, expectedSourceIdentity) => {
 };
 
 const checkEnvelope = (payload, scope, headers) => {
-  if (!payload || typeof payload !== 'object' || payload.location?.directory !== scope.directory) throw invalidResponse();
-  const identity = remoteFileSourceIdentity(payload.sourceIdentity);
+  const parsed = metadataEnvelopeSchema.safeParse(payload);
+  if (!parsed.success || parsed.data.location.directory !== scope.directory) throw invalidResponse();
+  const identity = remoteFileSourceIdentity(parsed.data.sourceIdentity);
   const header = headers?.get('x-openchamber-file-source');
   if (header !== undefined && header !== null && remoteFileSourceIdentity(header) !== identity) throw invalidResponse();
   if (scope.sourceIdentity && scope.sourceIdentity !== identity) throw sourceChanged();
-  return identity;
+  return { data: parsed.data.data, sourceIdentity: identity };
 };
 
 const statResult = (payload, scope, relative, headers) => {
-  const sourceIdentity = checkEnvelope(payload, scope, headers);
-  const data = payload.data;
-  if (!data || data.path !== relative || data.exists !== true || typeof data.isFile !== 'boolean'
-    || (data.isSymbolicLink !== undefined && data.isSymbolicLink !== false)
-    || !Number.isSafeInteger(data.size) || data.size < 0 || !Number.isFinite(data.mtimeMs)) throw invalidResponse();
+  const envelope = checkEnvelope(payload, scope, headers);
+  const sourceIdentity = envelope.sourceIdentity;
+  const parsed = statDataSchema.safeParse(envelope.data);
+  if (!parsed.success || parsed.data.path !== relative) throw invalidResponse();
+  const data = parsed.data;
   return { isFile: data.isFile, isDirectory: !data.isFile, size: data.size, mtimeMs: data.mtimeMs, sourceIdentity };
 };
 
 const entryPath = (entry, scope, sourceIdentity) => {
-  if (!entry || typeof entry !== 'object' || !['file', 'directory'].includes(entry.type) || (entry.isSymbolicLink !== undefined && entry.isSymbolicLink !== false)) throw invalidResponse();
-  let relative;
-  try { relative = relativePath(entry.path); } catch { throw invalidResponse(); }
+  const relative = entry.path;
   if (entry.name !== undefined && entry.name !== path.posix.basename(relative)) throw invalidResponse();
   if (entry.sourceIdentity !== undefined && entry.sourceIdentity !== sourceIdentity) throw invalidResponse();
   if (entry.location !== undefined && entry.location?.directory !== scope.directory) throw invalidResponse();
@@ -213,7 +240,7 @@ const entryPath = (entry, scope, sourceIdentity) => {
 };
 
 export const createRemoteWorkspaceFiles = ({ resolve, buildOpenCodeUrl, getOpenCodeAuthHeaders, fetchImpl = fetch }) => {
-  if (typeof resolve !== 'function') throw new TypeError('Remote workspace authority resolver is required');
+  if (!z.instanceof(Function).safeParse(resolve).success) throw new TypeError('Remote workspace authority resolver is required');
   const request = async (scope, operation, params, signal, file) => {
     const query = new URLSearchParams({ 'location[directory]': scope.directory, ...params });
     const endpoint = file === undefined ? `/api/fs/${operation}` : `/api/fs/read/${file.split('/').map(encodeURIComponent).join('/')}`;
@@ -245,11 +272,15 @@ export const createRemoteWorkspaceFiles = ({ resolve, buildOpenCodeUrl, getOpenC
       scope = (await pinSource(scope, signal)).scope;
       const response = await request(scope, 'list', { path: relative, respectGitignore: String(respectGitignore) }, signal);
       const payload = await jsonResponse(response, REMOTE_FILE_LIMITS.metadataBytes, signal);
-      const sourceIdentity = checkEnvelope(payload, scope, response.headers);
-      if (!Array.isArray(payload.data)) throw invalidResponse();
-      if (payload.data.length > REMOTE_FILE_LIMITS.entries) throw new RemoteWorkspaceFileError(400, 'directory-limit', 'Remote directory exceeds its entry limit');
+      const envelope = checkEnvelope(payload, scope, response.headers);
+      const sourceIdentity = envelope.sourceIdentity;
+      const collection = entryCollectionSchema.safeParse(envelope.data);
+      if (!collection.success) throw invalidResponse();
+      if (collection.data.length > REMOTE_FILE_LIMITS.entries) throw new RemoteWorkspaceFileError(400, 'directory-limit', 'Remote directory exceeds its entry limit');
+      const parsed = entriesSchema.safeParse(collection.data);
+      if (!parsed.success) throw invalidResponse();
       const seen = new Set();
-      const entries = payload.data.map((entry) => {
+      const entries = parsed.data.map((entry) => {
         const value = entryPath(entry, scope, sourceIdentity);
         const parent = path.posix.dirname(value);
         if ((parent === '.' ? '' : parent) !== relative || seen.has(value)) throw invalidResponse();
@@ -264,11 +295,14 @@ export const createRemoteWorkspaceFiles = ({ resolve, buildOpenCodeUrl, getOpenC
       if (type !== undefined) params.type = type;
       const response = await request(scope, 'find', params, signal);
       const payload = await jsonResponse(response, REMOTE_FILE_LIMITS.metadataBytes, signal);
-      const sourceIdentity = checkEnvelope(payload, scope, response.headers);
-      if (!Array.isArray(payload.data)) throw invalidResponse();
-      if (payload.data.length > limit) throw invalidResponse();
+      const envelope = checkEnvelope(payload, scope, response.headers);
+      const sourceIdentity = envelope.sourceIdentity;
+      const collection = entryCollectionSchema.safeParse(envelope.data);
+      if (!collection.success || collection.data.length > limit) throw invalidResponse();
+      const parsed = entriesSchema.safeParse(collection.data);
+      if (!parsed.success) throw invalidResponse();
       const seen = new Set();
-      const entries = payload.data.map((entry) => {
+      const entries = parsed.data.map((entry) => {
         const value = entryPath(entry, scope, sourceIdentity);
         if (seen.has(value) || (type !== undefined && entry.type !== type)) throw invalidResponse();
         seen.add(value);

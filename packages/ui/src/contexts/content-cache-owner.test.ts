@@ -310,7 +310,7 @@ describe('remote content cache ownership', () => {
         const owner = createContentCachedFiles(fixture.files)
         try {
           const reading = owner.files.readFile!('/repo/a', { fresh })
-          const settled = reading.then((value) => ({ ok: true, value }), (error: unknown) => ({ ok: false, error }))
+          const settled = reading.then((value) => ({ ok: true, value }), (cause: unknown) => ({ ok: false, error: cause }))
           await started.promise
           events.dispatchEvent(new CustomEvent('openchamber:runtime-endpoint-will-change', { detail: {
             runtimeKey: 'url:next', previousRuntimeKey: 'url:old',

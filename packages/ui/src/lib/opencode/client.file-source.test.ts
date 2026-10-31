@@ -5,6 +5,7 @@ import * as runtimeIdentity from "@/lib/runtime-switch"
 import * as runtimeRegistry from "@/contexts/runtimeAPIRegistry"
 import * as startupTrace from "@/lib/startupTrace"
 import { isAmbiguousTransportFailure, isDefiniteTransportFailure } from "@/lib/relay/transport-error"
+import type { JsonValue } from "./model"
 
 type Transport = (input: string | URL | Request, init?: RequestInit) => Promise<Response>
 const calls: Array<{ url: URL; method: string; headers: Headers; signal?: AbortSignal | null }> = []
@@ -34,7 +35,7 @@ const encoder = new TextEncoder()
 const root = "/repo/space here"
 const source = "opaque source/α?not-a-hash"
 const options = { directory: root, expectedSourceIdentity: source }
-const envelope = (data: Array<{ path: string; type: string }> = [], sourceIdentity: unknown = source) => ({
+const envelope = (data: Array<{ path: string; type: string }> = [], sourceIdentity = source) => ({
   location: { directory: root }, data, sourceIdentity,
 })
 const streamed = (bytes: Uint8Array, status = 200, contentType = "application/json") => {
@@ -52,15 +53,19 @@ const streamed = (bytes: Uint8Array, status = 200, contentType = "application/js
   }, { highWaterMark: 0 }), { status, headers: { "content-type": contentType } })
   return { response, state }
 }
-const respond = (body: unknown, status = 200) => {
+const respond = (body: JsonValue, status = 200) => {
   const original = streamed(encoder.encode(JSON.stringify(body)), status)
   transport = async () => original.response
   return original
 }
-const failure = async (pending: Promise<unknown>) => {
-  const result: unknown = await pending.then(() => { throw new Error("Expected a rejected search, not empty results") }, (error: unknown) => error)
-  if (!(result instanceof OpencodeApiError)) throw new Error("Expected source-aware API error", { cause: result })
-  return result
+const failure = async <T>(pending: Promise<T>) => {
+  try {
+    await pending
+  } catch (error) {
+    if (!(error instanceof OpencodeApiError)) throw new Error("Expected source-aware API error", { cause: error })
+    return error
+  }
+  throw new Error("Expected a rejected search, not empty results")
 }
 const deferred = <T>() => {
   let resolve!: (value: T | PromiseLike<T>) => void
@@ -178,7 +183,7 @@ describe("source-aware real SDK file.find", () => {
   for (const [name, body] of [
     ["missing identity", { location: { directory: root }, data: [] }],
     ["empty identity", envelope([], "")],
-    ["non-string identity", envelope([], 7)],
+    ["non-string identity", { ...envelope(), sourceIdentity: 7 }],
     ["oversized identity", envelope([], "x".repeat(1025))],
     ["missing location", { data: [], sourceIdentity: source }],
     ["wrong location", { ...envelope(), location: { directory: "/other" } }],
@@ -187,7 +192,7 @@ describe("source-aware real SDK file.find", () => {
     ["unknown type", envelope([{ path: "src/a", type: "symlink" }])],
     ["non-string path", { ...envelope(), data: [{ path: 7, type: "file" }] }],
     ["over-limit array", envelope(Array.from({ length: 101 }, (_, i) => ({ path: `${i}.ts`, type: "file" })))],
-  ] as const) test(`${name} is503 invalid-response`, async () => {
+  ] satisfies ReadonlyArray<readonly [string, JsonValue]>) test(`${name} is503 invalid-response`, async () => {
     respond(body)
     const error = await failure(opencodeClient.searchFilesWithSource("", options))
     expect(error.status).toBe(503)
@@ -300,7 +305,10 @@ describe("source-aware real SDK file.find", () => {
     transport = async () => new Response(new ReadableStream<Uint8Array>({
       pull() { reading.resolve() }, cancel() { cancels += 1 },
     }, { highWaterMark: 0 }), { headers: { "content-type": "application/json" } })
-    const pending = opencodeClient.searchFilesWithSource("", { ...options, signal: caller.signal }).catch((error: unknown) => error)
+    const pending = opencodeClient.searchFilesWithSource("", { ...options, signal: caller.signal }).catch((cause) => {
+      if (!(cause instanceof DOMException)) throw new Error("Expected caller abort reason", { cause })
+      return cause
+    })
     await reading.promise
     caller.abort(cause)
     expect(await pending).toBe(cause)

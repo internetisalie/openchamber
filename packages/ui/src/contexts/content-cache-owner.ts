@@ -142,8 +142,8 @@ export function createContentCachedFiles(files: FilesAPI): { files: FilesAPI; di
   };
 
   const localStat = async (path: string, options: Parameters<NonNullable<FilesAPI['readFile']>>[1]) =>
-    files.statFile?.(path, options).catch((error: unknown) => {
-      if (isFilesystemError(error) && ['remote-unavailable', 'remote-source-changed', 'invalid-response'].includes(error.reason)) throw error;
+    files.statFile?.(path, options).catch((cause: unknown) => {
+      if (isFilesystemError(cause) && ['remote-unavailable', 'remote-source-changed', 'invalid-response'].includes(cause.reason)) throw cause;
       return null;
     });
 

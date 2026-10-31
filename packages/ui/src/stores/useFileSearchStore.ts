@@ -1,3 +1,4 @@
+import { z } from 'zod';
 import { create } from 'zustand';
 import { devtools } from 'zustand/middleware';
 import { opencodeClient, type ProjectFileSearchHit } from '@/lib/opencode/client';
@@ -9,6 +10,11 @@ import type { WorkspaceFileSource } from '@/lib/api/types';
 const CACHE_TTL_MS = 30_000;
 const MAX_CACHE_ENTRIES = 40;
 const DEFAULT_SEARCH_LIMIT = 60;
+
+const remoteSearchOutcomeSchema = z.object({
+  files: z.array(z.object({ path: z.string(), preview: z.array(z.string()).min(1) })),
+  sourceIdentity: z.string().optional(),
+});
 
 interface FileSearchCacheEntry {
   files: ProjectFileSearchHit[];
@@ -113,9 +119,9 @@ export const useFileSearchStore = create<FileSearchStoreState>()(
                   extension: name.includes('.') ? name.split('.').pop()?.toLowerCase() : undefined,
                 };
               })
-            ).catch((error: unknown) => {
+            ).catch((cause: unknown) => {
               supplementalFailed = true;
-              console.warn('Supplemental file search failed; keeping indexed results:', error);
+              console.warn('Supplemental file search failed; keeping indexed results:', cause);
               return [];
             })
           : Promise.resolve([]);
@@ -135,8 +141,10 @@ export const useFileSearchStore = create<FileSearchStoreState>()(
           remote = true;
           requireFileSourceIdentity(source.sourceIdentity);
           if (!runtimeFiles?.searchWithSource || !runtimeFiles.resolveWorkspaceFileSource) throw invalidFileResponse();
-          const result = await runtimeFiles.searchWithSource({ directory: normalizedDirectory, query: normalizedQuery,
-            maxResults: limit, includeHidden, respectGitignore, type });
+          const parsed = remoteSearchOutcomeSchema.safeParse(await runtimeFiles.searchWithSource({ directory: normalizedDirectory, query: normalizedQuery,
+            maxResults: limit, includeHidden, respectGitignore, type }));
+          if (!parsed.success) throw invalidFileResponse();
+          const result = parsed.data;
           if (getRuntimeKey() !== runtimeKey || get().inFlight[key] !== searchPromise) throw changedFileSource();
           assertFileSourceIdentity(result.sourceIdentity, source.sourceIdentity);
           if (!Array.isArray(result.files) || result.files.length > Math.min(100, limit)) throw invalidFileResponse();
@@ -145,10 +153,9 @@ export const useFileSearchStore = create<FileSearchStoreState>()(
           assertFileSourceIdentity(current.sourceIdentity, source.sourceIdentity);
           if (getRuntimeKey() !== runtimeKey || get().inFlight[key] !== searchPromise) throw changedFileSource();
           return result.files.map((result) => {
-            if (!result || typeof result.path !== 'string') throw invalidFileResponse();
             const path = result.path.replace(/\\/g, '/');
             const relativePath = result.preview?.[0];
-            if (typeof relativePath !== 'string' || !relativePath
+            if (!relativePath
               || relativePath.startsWith('/') || relativePath.includes('\\') || relativePath.includes('\0')
               || relativePath.split('/').some((part) => !part || part === '.' || part === '..')
               || path !== `${normalizedDirectory.replace(/\/$/, '')}/${relativePath}`) throw invalidFileResponse();
@@ -204,7 +211,7 @@ export const useFileSearchStore = create<FileSearchStoreState>()(
             });
             return files;
           })
-          .catch((error: unknown) => {
+          .catch((cause: unknown) => {
             if (resolve && get().inFlight[key] === searchPromise) {
               set((state) => {
                 const cache = { ...state.cache };
@@ -212,7 +219,7 @@ export const useFileSearchStore = create<FileSearchStoreState>()(
                 return { cache, cacheKeys: state.cacheKeys.filter((item) => item !== key) };
               });
             }
-            throw error;
+            throw cause;
           })
           .finally(() => {
             set((state) => {

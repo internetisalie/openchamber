@@ -1,4 +1,5 @@
 import path from 'node:path';
+import { z } from 'zod';
 import {
   REMOTE_FILE_LIMITS,
   RemoteWorkspaceFileError,
@@ -11,6 +12,7 @@ import {
 } from './remote-workspace-files.js';
 
 const invalidPath = () => new RemoteWorkspaceFileError(400, 'invalid-path', 'Invalid remote file request');
+const remoteWorkspaceResolverSchema = z.object({ resolve: z.instanceof(Function) });
 const unsupported = (contentSearch = false) => new RemoteWorkspaceFileError(501, contentSearch ? 'search-unavailable' : 'unsupported', contentSearch ? 'Remote content search is unavailable' : 'This operation is unavailable for remote workspaces');
 
 const booleanParameter = (params, name, fallback) => {
@@ -75,7 +77,7 @@ export const registerRemoteWorkspaceFileRoutes = (app, { remoteWorkspaceFiles } 
     let requestedPath;
     let optional = false;
     try {
-      if (typeof remoteWorkspaceFiles?.resolve !== 'function') throw remoteFilesUnavailable();
+      if (!remoteWorkspaceResolverSchema.safeParse(remoteWorkspaceFiles).success) throw remoteFilesUnavailable();
       const scope = await awaitRemoteFileOperation(remoteWorkspaceFiles.resolve(req), abort.signal);
       if (scope?.mode === 'local') { cleanup(); return next(); }
       if (scope?.mode !== 'remote') throw remoteFilesUnavailable();
@@ -156,7 +158,9 @@ export const registerRemoteWorkspaceFileRoutes = (app, { remoteWorkspaceFiles } 
         return res.json({ path: requestedPath, exists: false, sourceKind: 'remote', sourceIdentity: error.sourceIdentity });
       }
       const failure = error instanceof RemoteWorkspaceFileError ? error : remoteFilesUnavailable();
-      return res.status(failure.status).json({ error: failure.message, reason: failure.kind, ...(statRequest ? { sourceKind: 'remote' } : {}) });
+      const payload = { error: failure.message, reason: failure.kind };
+      if (statRequest) payload.sourceKind = 'remote';
+      return res.status(failure.status).json(payload);
     }
   });
 };

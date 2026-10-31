@@ -1,19 +1,23 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { RuntimeUrlQuery, RuntimeUrlResolver } from '@openchamber/ui/lib/runtime-url';
+import type { WebFileDependencies } from './files';
 
 const runtimeFetchMock = vi.fn();
 const searchFilesMock = vi.fn();
 let fileRuntimeKey = 'runtime-a';
 const runtimeChanges = new Set<(detail: { runtimeKey: string; previousRuntimeKey: string }) => void>();
-vi.mock('@openchamber/ui/lib/runtime-switch', async (original) => ({
-  ...await original<typeof import('@openchamber/ui/lib/runtime-switch')>(),
-  getRuntimeKey: () => fileRuntimeKey,
-  subscribeRuntimeEndpointWillChange: (callback: (detail: { runtimeKey: string; previousRuntimeKey: string }) => void) => {
-    runtimeChanges.add(callback);
-    return () => runtimeChanges.delete(callback);
+const fileDependencies: WebFileDependencies = {
+  fetch: runtimeFetchMock,
+  runtime: {
+    getRuntimeKey: () => fileRuntimeKey,
+    subscribeRuntimeEndpointWillChange: (callback) => {
+      const listener = (detail: { runtimeKey: string; previousRuntimeKey: string }) => callback(detail);
+      runtimeChanges.add(listener);
+      return () => { runtimeChanges.delete(listener); };
+    },
   },
-}));
+};
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -39,11 +43,11 @@ describe('remote workspace file responses', () => {
       }
       return operation(path, init);
     });
-    const resolveWorkspaceFileSource = createWebWorkspaceFileSourceResolver({ getDirectory: () => '/repo' });
+    const resolveWorkspaceFileSource = createWebWorkspaceFileSourceResolver({ getDirectory: () => '/repo', dependencies: fileDependencies });
     const indexed = vi.fn(async () => ({ files: [], sourceIdentity: identity }));
     const legacy = vi.fn(async () => []);
     const api = createWebFilesAPI({ getDirectory: () => '/repo', resolveWorkspaceFileSource,
-      searchFilesWithSource: indexed, searchFiles: legacy });
+      searchFilesWithSource: indexed, searchFiles: legacy, dependencies: fileDependencies });
     return { api, indexed, legacy, resolveWorkspaceFileSource, roots: () => rootCalls,
       replace: () => { identity = 'workspace-live-b'; },
       setIdentity: (value: string) => { identity = value; },
@@ -79,7 +83,7 @@ describe('remote workspace file responses', () => {
   it('uses the actual production constructor to classify via root stat, not a test-only mode flag', async () => {
     await prepare();
     const { createWebAPIs } = await import('./index');
-    const api = createWebAPIs({ urls });
+    const api = createWebAPIs({ urls, fileDependencies });
     expect(await api.files.resolveWorkspaceFileSource!('/repo')).toEqual({ kind: 'remote', sourceIdentity: 'workspace-live-a' });
     const result = await api.files.readFile!('/repo/empty', { directory: '/repo' });
     expect(result).toEqual({ path: '/repo/empty', content: '', sourceIdentity: 'workspace-live-a' });
@@ -108,6 +112,51 @@ describe('remote workspace file responses', () => {
       runtimeFetchMock.mockResolvedValueOnce(Response.json(payload));
       await expect(resolve('/repo')).rejects.toMatchObject({ status: 503, reason: 'invalid-response' });
     }
+  });
+
+  it('wires the production constructor to the shared source-aware SDK caller with cancellation and identity', async () => {
+    await prepare();
+    const { createWebAPIs } = await import('./index');
+    const { opencodeClient } = await import('@openchamber/ui/lib/opencode/client');
+    const indexed = vi.spyOn(opencodeClient, 'searchFilesWithSource').mockResolvedValue({
+      files: [], sourceIdentity: 'workspace-live-a',
+    });
+    try {
+      const api = createWebAPIs({ urls, fileDependencies });
+      expect(await api.files.searchWithSource!({ directory: '/repo', query: 'needle' }))
+        .toEqual({ files: [], sourceIdentity: 'workspace-live-a' });
+      expect(indexed).toHaveBeenCalledExactlyOnceWith('needle', expect.objectContaining({
+        directory: '/repo', type: 'file', signal: expect.any(AbortSignal), expectedSourceIdentity: 'workspace-live-a',
+      }));
+      expect(runtimeFetchMock.mock.calls.some(([path]) => path === '/api/fs/search')).toBe(false);
+    } finally { indexed.mockRestore(); }
+  });
+
+  it('rejects malformed remote domain fields instead of projecting partial listings or metadata', async () => {
+    const fixture = await prepare();
+    for (const entry of [
+      { name: 7, path: '/repo/a', isDirectory: false, isFile: true },
+      { name: 'a', path: 7, isDirectory: false, isFile: true },
+      { name: 'a', path: '/repo/a', isDirectory: 'false', isFile: true },
+      { name: 'a', path: '/repo/a', isDirectory: false, isFile: 'true' },
+      { name: '..', path: '/repo/..', isDirectory: true, isFile: false },
+      { name: 'a', path: '/repo/a', isDirectory: false, isFile: true, isSymbolicLink: true },
+    ]) {
+      fixture.respond(() => Response.json({ path: '/repo', sourceIdentity: 'workspace-live-a', entries: [entry] }));
+      await expect(fixture.api.listDirectory('/repo')).rejects.toMatchObject({ status: 503, reason: 'invalid-response' });
+    }
+    for (const metadata of [
+      { isFile: 'true', size: 1, mtimeMs: 10 },
+      { isFile: true, size: '1', mtimeMs: 10 },
+      { isFile: true, size: -1, mtimeMs: 10 },
+      { isFile: true, size: 1, mtimeMs: null },
+    ]) {
+      fixture.respond(() => Response.json({ sourceKind: 'remote', sourceIdentity: 'workspace-live-a', path: '/repo/a', ...metadata }));
+      await expect(fixture.api.statFile!('/repo/a')).rejects.toMatchObject({ status: 503, reason: 'invalid-response' });
+    }
+    fixture.respond(() => Response.json({ files: [{ path: 7, relativePath: 'a' }], sourceIdentity: 'workspace-live-a' }));
+    await expect(fixture.api.search({ directory: '/repo', query: 'a', includeHidden: true }))
+      .rejects.toMatchObject({ status: 503, reason: 'invalid-response' });
   });
 
   it('keeps confirmed local optional/outside/fresh behavior after the known root-directory refusal', async () => {
