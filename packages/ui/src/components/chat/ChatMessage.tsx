@@ -46,6 +46,7 @@ import { getContextObligatoryMessages } from '@/lib/contextObligatoryMessages';
 import { setContextObligatoryMessage } from '@/sync/session-actions';
 import { isVSCodeRuntime } from '@/lib/desktop';
 import { useChatColumnActions } from './chatColumnSession';
+import { useMessagePopupOwner } from './message/message-popup-context';
 
 const ToolOutputDialog = lazyWithChunkRecovery(() => import('./message/ToolOutputDialog'));
 
@@ -582,13 +583,18 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
     }, [message.info.id]);
 
     const setImagePreviewOpen = useUIStore((state) => state.setImagePreviewOpen);
+    const messagePopupOwner = useMessagePopupOwner();
 
     // Images and diagrams open the overlay; a text payload (a pasted text
     // attachment) opens the content dialog.
     const handleShowPopup = React.useCallback((content: ToolPopupContent) => {
+        if (messagePopupOwner) {
+            messagePopupOwner(content);
+            return;
+        }
         setPopupContent(content);
         setImagePreviewOpen(true);
-    }, [setImagePreviewOpen]);
+    }, [messagePopupOwner, setImagePreviewOpen]);
 
     const handlePopupChange = React.useCallback((open: boolean) => {
         setPopupContent((prev) => ({ ...prev, open }));
@@ -769,13 +775,13 @@ const ChatMessage: React.FC<ChatMessageProps> = ({
                     )}
                 </div>
             </div>
-            <React.Suspense fallback={null}>
+            {!messagePopupOwner ? <React.Suspense fallback={null}>
                 <ToolOutputDialog
                     popup={popupContent}
                     onOpenChange={handlePopupChange}
                     isMobile={isMobile}
                 />
-            </React.Suspense>
+            </React.Suspense> : null}
         </>
     );
 };

@@ -26,6 +26,7 @@ import { KeepAlive } from '@/components/ui/KeepAlive';
 import ChatEmptyState from './ChatEmptyState';
 import { useGlobalSyncStore } from '@/sync/global-sync-store';
 import MessageList, { type MessageListHandle } from './MessageList';
+import { MessagePopupOwner } from './message/message-popup-owner';
 import { createTimelineRevealGate, type TimelineRevealGate } from './timelineRevealGate';
 
 // How long the previous timeline stays on screen while a session that is not
@@ -554,7 +555,7 @@ const ChatViewport = React.memo(({
     }), [focusScrollContainer]);
 
     return (
-        <>
+        <MessagePopupOwner scopeKey={currentSessionKey} isMobile={isMobile}>
             {placeholder}
             <div
                 className={cn(
@@ -634,7 +635,7 @@ const ChatViewport = React.memo(({
                     ) : null}
                 </div>
             </div>
-        </>
+        </MessagePopupOwner>
     );
 }, (prev, next) => {
     return prev.currentSessionId === next.currentSessionId
