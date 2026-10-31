@@ -49,9 +49,10 @@ export const DraggableSessionRow: React.FC<{
 }> = ({ sessionId, dragKey, ownerKey = null, sessionDirectory, sessionTitle, archivedBucket = false, children }) => {
   const folderOwners = React.useContext(SessionFolderOwnersContext);
   const hasFolderToDropInto = folderOwners === null || (ownerKey !== null && folderOwners.has(ownerKey));
+  const canDrag = !archivedBucket && hasFolderToDropInto;
   const { attributes, listeners, setNodeRef, isDragging } = useDraggable({
     id: getSessionDragId(dragKey ?? sessionId),
-    disabled: archivedBucket || !hasFolderToDropInto,
+    disabled: !canDrag,
     data: { type: 'session', sessionId, ownerKey, sessionDirectory, sessionTitle, archivedBucket },
   });
 
@@ -69,9 +70,9 @@ export const DraggableSessionRow: React.FC<{
   return (
     <div
       ref={setNodeRef}
-      {...attributes}
-      {...listeners}
-      onPointerDown={handlePointerDown}
+      {...(canDrag ? attributes : {})}
+      {...(canDrag ? listeners : {})}
+      onPointerDown={canDrag ? handlePointerDown : undefined}
       className={`touch-pan-y select-none${isDragging ? ' opacity-30' : ''}`}
     >
       {children}
