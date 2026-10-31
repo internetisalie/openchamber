@@ -7,9 +7,10 @@ import {
   type RuntimeUrlResolver,
 } from '@openchamber/ui/lib/runtime-url';
 import { useDirectoryStore } from '@openchamber/ui/stores/useDirectoryStore';
+import { opencodeClient } from '@openchamber/ui/lib/opencode/client';
 import { createWebTerminalAPI } from './terminal';
 import { createWebGitAPI } from './git';
-import { createWebFilesAPI } from './files';
+import { createWebFilesAPI, createWebWorkspaceFileSourceResolver } from './files';
 import { createWebSettingsAPI } from './settings';
 import { createWebPermissionsAPI } from './permissions';
 import { createWebNotificationsAPI } from './notifications';
@@ -37,6 +38,7 @@ export const createWebAPIs = (options: WebAPIsOptions = {}): RuntimeAPIs => {
   const urls = options.urls ?? createRuntimeUrlResolver();
   setRuntimeUrlResolver(urls);
   const activeUrls = createActiveRuntimeUrlResolver();
+  const getFileDirectory = () => useDirectoryStore.getState().currentDirectory;
 
   return {
     clipboard: createDesktopClipboardAPI(),
@@ -44,7 +46,9 @@ export const createWebAPIs = (options: WebAPIsOptions = {}): RuntimeAPIs => {
   runtime: { platform: 'web', isDesktop: false, isVSCode: false, label: 'web' },
   terminal: createWebTerminalAPI(),
   git: createWebGitAPI(),
-  files: createWebFilesAPI({ urls: activeUrls, getDirectory: () => useDirectoryStore.getState().currentDirectory }),
+  files: createWebFilesAPI({ urls: activeUrls, getDirectory: getFileDirectory,
+    searchFilesWithSource: (query, options) => opencodeClient.searchFilesWithSource(query, options),
+    resolveWorkspaceFileSource: createWebWorkspaceFileSourceResolver({ getDirectory: getFileDirectory }) }),
   settings: createWebSettingsAPI(),
   permissions: createWebPermissionsAPI(),
   notifications: createWebNotificationsAPI(),

@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, mock, spyOn, test } from 'bun:test';
+import assert from 'node:assert/strict';
+import type { FileSearchOutcome, FileSearchQuery, WorkspaceFileSource } from '@/lib/api/types';
+import { FilesystemError } from '@/lib/api/files-errors';
 
 type Deferred<T> = {
   promise: Promise<T>;
@@ -10,6 +13,8 @@ const searchRequests: Array<Deferred<Array<{ path: string }>>> = [];
 let runtimeKey = 'runtime-a';
 let runtimeSearch: (() => Promise<Array<{ path: string; preview: string[] }>>) | undefined;
 const runtimeSearchCalls: unknown[] = [];
+let runtimeSource: (() => Promise<WorkspaceFileSource>) | undefined;
+let runtimeSourceSearch: ((query: FileSearchQuery) => Promise<FileSearchOutcome>) | undefined;
 
 const createDeferred = <T>(): Deferred<T> => {
   let resolve!: (value: T) => void;
@@ -36,9 +41,10 @@ mock.module('@/lib/runtime-switch', () => ({ getRuntimeKey: () => runtimeKey }))
 mock.module('@/contexts/runtimeAPIRegistry', () => ({
   getRegisteredRuntimeAPIs: () => {
     const search = runtimeSearch;
-    return search ? { files: { search: (payload: unknown) => {
+    return search || runtimeSource || runtimeSourceSearch ? { files: { resolveWorkspaceFileSource: runtimeSource,
+      searchWithSource: runtimeSourceSearch, search: (payload: unknown) => {
       runtimeSearchCalls.push(payload);
-      return search();
+      return search ? search() : Promise.resolve([]);
     } } } : undefined;
   },
 }));
@@ -50,6 +56,8 @@ describe('useFileSearchStore', () => {
     searchRequests.length = 0;
     runtimeKey = 'runtime-a';
     runtimeSearch = undefined;
+    runtimeSource = undefined;
+    runtimeSourceSearch = undefined;
     runtimeSearchCalls.length = 0;
     useFileSearchStore.setState({
       cache: {},
@@ -197,5 +205,80 @@ describe('useFileSearchStore', () => {
     runtimeKey = 'runtime-b';
     expect(await useFileSearchStore.getState().searchFiles('/project', 'foo')).toEqual([{ path: 'runtime-b.ts' }]);
     expect(searchRequests).toHaveLength(2);
+  });
+
+  test('validates empty remote identities and never reuses a remote TTL result', async () => {
+    runtimeSource = async () => ({ kind: 'remote', sourceIdentity: 'source-a' });
+    let calls = 0;
+    const search = async () => { calls++; return { files: [], sourceIdentity: 'source-a' }; };
+    runtimeSourceSearch = search;
+    expect(await useFileSearchStore.getState().searchFiles('/project', 'missing')).toEqual([]);
+    expect(await useFileSearchStore.getState().searchFiles('/project', 'missing')).toEqual([]);
+    expect(calls).toBe(2);
+    expect(searchRequests).toHaveLength(0);
+    expect(useFileSearchStore.getState().cache).toEqual({});
+    runtimeSourceSearch = async () => ({ files: [] });
+    await assert.rejects(useFileSearchStore.getState().searchFiles('/project', 'missing'), { status: 503, reason: 'invalid-response' });
+  });
+
+  test('uses exactly one authoritative remote toggle result, including directory queries', async () => {
+    runtimeSource = async () => ({ kind: 'remote', sourceIdentity: 'source-a' });
+    const calls: FileSearchQuery[] = [];
+    const search = async (query: FileSearchQuery) => { calls.push(query); return { files: [{ path: '/project/.hidden', preview: ['.hidden'] }], sourceIdentity: 'source-a' }; };
+    runtimeSourceSearch = search;
+    expect(await useFileSearchStore.getState().searchFiles('/project', 'hidden', 12,
+      { includeHidden: true, respectGitignore: false, type: 'directory' })).toEqual([
+      { path: '/project/.hidden', relativePath: '.hidden', name: '.hidden', extension: 'hidden' },
+    ]);
+    expect(searchRequests).toHaveLength(0);
+    expect(calls).toEqual([{ directory: '/project', query: 'hidden', maxResults: 12,
+      includeHidden: true, respectGitignore: false, type: 'directory' }]);
+    const failure = new FilesystemError('unavailable', { status: 503, reason: 'remote-unavailable' });
+    runtimeSourceSearch = async () => { throw failure; };
+    await assert.rejects(useFileSearchStore.getState().searchFiles('/project', 'hidden', 12, { includeHidden: true }), (error) => error === failure);
+    expect(searchRequests).toHaveLength(0);
+  });
+
+  test('does not fall back to the index when remote source metadata support is missing', async () => {
+    runtimeSource = async () => ({ kind: 'remote', sourceIdentity: 'source-a' });
+    await assert.rejects(useFileSearchStore.getState().searchFiles('/project', 'x'), { status: 503, reason: 'invalid-response' });
+    expect(searchRequests).toHaveLength(0);
+    runtimeSource = async () => { throw new FilesystemError('bad source', { status: 503, reason: 'invalid-response' }); };
+    await assert.rejects(useFileSearchStore.getState().searchFiles('/project', 'x'), { status: 503, reason: 'invalid-response' });
+    expect(searchRequests).toHaveLength(0);
+  });
+
+  test('revalidates current binding and rejects stale empty/runtime completion', async () => {
+    let identity = 'source-a';
+    runtimeSource = async () => ({ kind: 'remote', sourceIdentity: identity });
+    runtimeSourceSearch = async () => { identity = 'source-b'; return { files: [], sourceIdentity: 'source-a' }; };
+    await assert.rejects(useFileSearchStore.getState().searchFiles('/project', 'x'), { status: 409, reason: 'remote-source-changed' });
+    const pending = createDeferred<FileSearchOutcome>();
+    const started = createDeferred<void>();
+    runtimeSourceSearch = async () => { started.resolve(undefined); return pending.promise; };
+    const reading = useFileSearchStore.getState().searchFiles('/project', 'x');
+    const settled = reading.then((value) => ({ ok: true, value }), (error: unknown) => ({ ok: false, error }));
+    await started.promise;
+    runtimeKey = 'runtime-b';
+    useFileSearchStore.getState().resetForRuntimeSwitch();
+    pending.resolve({ files: [], sourceIdentity: 'source-b' });
+    expect(await settled).toMatchObject({ ok: false, error: { status: 409, reason: 'remote-source-changed' } });
+    expect(useFileSearchStore.getState().cache).toEqual({});
+    expect(searchRequests).toHaveLength(0);
+  });
+
+  test('shares a bounded in-flight remote query without retaining its result', async () => {
+    runtimeSource = async () => ({ kind: 'remote', sourceIdentity: 'source-a' });
+    const pending = createDeferred<FileSearchOutcome>();
+    let calls = 0;
+    const search = async () => { calls++; return pending.promise; };
+    runtimeSourceSearch = search;
+    const first = useFileSearchStore.getState().searchFiles('/project', 'x');
+    const second = useFileSearchStore.getState().searchFiles('/project', 'x');
+    pending.resolve({ files: [], sourceIdentity: 'source-a' });
+    expect(await first).toEqual([]);
+    expect(await second).toEqual([]);
+    expect(calls).toBe(1);
+    expect(useFileSearchStore.getState().inFlight).toEqual({});
   });
 });

@@ -69,6 +69,7 @@ import { createSettingsNormalizationRuntime } from './lib/opencode/settings-norm
 import { createSettingsHelpers } from './lib/opencode/settings-helpers.js';
 import { createThemeRuntime } from './lib/opencode/theme-runtime.js';
 import { createFeatureRoutesRuntime } from './lib/opencode/feature-routes-runtime.js';
+import { createConfiguredRemoteWorkspaceFiles } from './lib/opencode/remote-workspace-file-config.js';
 import { parseServeCliOptions } from './lib/opencode/cli-options.js';
 import {
   isRequestAuthorized,
@@ -1646,6 +1647,11 @@ const clientPairingRuntime = createClientPairingRuntime({
 const featureRoutesRuntime = createFeatureRoutesRuntime({
   clientReloadDelayMs: CLIENT_RELOAD_DELAY_MS,
   trackers: trackerRegistry,
+  remoteWorkspaceFiles: createConfiguredRemoteWorkspaceFiles({
+    configuredWorkspaces: process.env.OPENCHAMBER_REMOTE_WORKSPACES,
+    buildOpenCodeUrl,
+    getOpenCodeAuthHeaders,
+  }),
 });
 const bootstrapRuntime = createBootstrapRuntime({
   createUiAuth,

@@ -1365,6 +1365,36 @@ export interface FileListEntry {
 export interface DirectoryListResult {
   directory: string;
   entries: FileListEntry[];
+  sourceIdentity?: string;
+}
+
+export type WorkspaceFileSource = { kind: 'local' } | { kind: 'remote'; sourceIdentity: string };
+
+export interface FileReadResult {
+  content: string;
+  path: string;
+  sourceIdentity?: string;
+}
+
+export type FileStatResult = {
+  path: string;
+  isFile: boolean;
+  size: number;
+  mtimeMs?: number;
+  sourceIdentity?: string;
+  exists?: true;
+} | {
+  path: string;
+  isFile: false;
+  exists: false;
+  sourceIdentity?: string;
+  size?: never;
+  mtimeMs?: never;
+};
+
+export interface FileSearchOutcome {
+  files: FileSearchResult[];
+  sourceIdentity?: string;
 }
 
 export interface FileSearchQuery {
@@ -1373,6 +1403,8 @@ export interface FileSearchQuery {
   maxResults?: number;
   includeHidden?: boolean;
   respectGitignore?: boolean;
+  type?: 'file' | 'directory';
+  signal?: AbortSignal;
 }
 
 export interface FileSearchResult {
@@ -1426,6 +1458,7 @@ export interface CommandExecResult {
 
 interface ListDirectoryOptions {
   respectGitignore?: boolean;
+  signal?: AbortSignal;
 }
 
 interface FileReadOptions {
@@ -1434,11 +1467,14 @@ interface FileReadOptions {
   optional?: boolean;
   directory?: string;
   fresh?: boolean;
+  signal?: AbortSignal;
 }
 
 export interface FilesAPI {
   listDirectory(path: string, options?: ListDirectoryOptions): Promise<DirectoryListResult>;
   search(payload: FileSearchQuery): Promise<FileSearchResult[]>;
+  searchWithSource?(payload: FileSearchQuery): Promise<FileSearchOutcome>;
+  resolveWorkspaceFileSource?(directory: string, options?: { signal?: AbortSignal }): Promise<WorkspaceFileSource>;
   /**
    * Find in files. Absent on runtimes without it (VS Code has its own
    * search), so the files tree offers the mode only when it is here.
@@ -1446,8 +1482,8 @@ export interface FilesAPI {
    */
   searchContents?(payload: FileContentSearchQuery): Promise<FileContentSearchOutcome>;
   createDirectory(path: string): Promise<{ success: boolean; path: string }>;
-  statFile?(path: string, options?: FileReadOptions): Promise<{ path: string; isFile: boolean; size: number; mtimeMs?: number }>;
-  readFile?(path: string, options?: FileReadOptions): Promise<{ content: string; path: string }>;
+  statFile?(path: string, options?: FileReadOptions): Promise<FileStatResult>;
+  readFile?(path: string, options?: FileReadOptions): Promise<FileReadResult>;
   readFileBinary?(path: string, options?: FileReadOptions): Promise<{ dataUrl: string; path: string }>;
   writeFile?(path: string, content: string): Promise<{ success: boolean; path: string }>;
   uploadFile?(path: string, file: Blob, options?: { overwrite?: boolean; directory?: string }): Promise<{ success: boolean; path: string }>;

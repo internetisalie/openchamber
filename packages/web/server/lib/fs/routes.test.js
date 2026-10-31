@@ -1082,7 +1082,7 @@ describe('fs read', () => {
     });
     const res = await callRead(getRoute('GET', '/api/fs/stat'), { path: '/tmp/plan.txt', allowOutsideWorkspace: 'true' });
     expect(res.statusCode).toBe(200);
-    expect(res.body).toEqual({ path: '/tmp/plan.txt', isFile: true, size: 100, mtimeMs: 123 });
+    expect(res.body).toEqual({ path: '/tmp/plan.txt', isFile: true, size: 100, mtimeMs: 123, sourceKind: 'local' });
   });
 
   it.each(['realpath', 'stat'].flatMap((operation) =>
@@ -1098,7 +1098,7 @@ describe('fs read', () => {
       });
 
       expect(res.statusCode).toBe(200);
-      expect(res.body).toEqual({ path: '/repo/app.asar', exists: false });
+      expect(res.body).toEqual({ path: '/repo/app.asar', exists: false, sourceKind: 'local' });
       expect(logError).not.toHaveBeenCalled();
     } finally {
       logError.mockRestore();
@@ -1115,7 +1115,7 @@ describe('fs read', () => {
       });
 
       expect(res.statusCode).toBe(500);
-      expect(res.body).toEqual({ error: 'Invalid package' });
+      expect(res.body).toEqual({ error: 'Invalid package', sourceKind: 'local' });
       expect(logError).toHaveBeenCalledWith('Failed to stat file:', error);
     } finally {
       logError.mockRestore();
@@ -1131,7 +1131,7 @@ describe('fs read', () => {
     });
 
     expect(res.statusCode).toBe(403);
-    expect(res.body).toEqual({ error: 'Access to file denied', reason: 'os-permission' });
+    expect(res.body).toEqual({ error: 'Access to file denied', reason: 'os-permission', sourceKind: 'local' });
   });
 
   it.each(['realpath', 'stat', 'workspace'].flatMap((operation) =>
@@ -1148,7 +1148,7 @@ describe('fs read', () => {
       const res = await callRead(handler, { path: '/repo/app.asar', optional: 'true' });
 
       expect(res.statusCode).toBe(500);
-      expect(res.body).toEqual({ error: 'Unexpected failure' });
+      expect(res.body).toEqual({ error: 'Unexpected failure', sourceKind: 'local' });
       expect(logError).toHaveBeenCalledWith('Failed to stat file:', error);
     } finally {
       logError.mockRestore();
@@ -2167,7 +2167,7 @@ describe('fs stat directory scope (issue 3019)', () => {
     const res = await callStat(handler, { query: { path: '/repo-b/src/index.ts', optional: 'true' } });
 
     expect(res.statusCode).toBe(400);
-    expect(res.body).toEqual({ error: 'Path is outside of active workspace' });
+    expect(res.body).toEqual({ error: 'Path is outside of active workspace', sourceKind: 'local' });
   });
 
   it('accepts the same stat when the session directory rides the x-opencode-directory header', async () => {

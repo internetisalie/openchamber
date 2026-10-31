@@ -6,6 +6,16 @@ export type FilesystemErrorReason =
   | 'not-found'
   | 'not-directory'
   | 'invalid-response'
+  | 'invalid-path'
+  | 'excluded-path'
+  | 'file-too-large'
+  | 'directory-limit'
+  | 'search-visit-limit'
+  | 'non-text'
+  | 'result-too-large'
+  | 'remote-source-changed'
+  | 'remote-unavailable'
+  | 'search-unavailable'
   | 'unknown';
 
 export class FilesystemError extends Error {
@@ -37,6 +47,16 @@ export const parseFilesystemErrorReason = (value: unknown): FilesystemErrorReaso
     case 'not-found':
     case 'not-directory':
     case 'invalid-response':
+    case 'invalid-path':
+    case 'excluded-path':
+    case 'file-too-large':
+    case 'directory-limit':
+    case 'search-visit-limit':
+    case 'non-text':
+    case 'result-too-large':
+    case 'remote-source-changed':
+    case 'remote-unavailable':
+    case 'search-unavailable':
       return value;
     default:
       return 'unknown';
@@ -48,8 +68,8 @@ export const parseFilesystemErrorReason = (value: unknown): FilesystemErrorReaso
 const messageCarrierSchema = z.object({ message: z.string() });
 
 export const isFileMissingError = (error: unknown): boolean => {
-  if (isFilesystemError(error) && error.reason === 'not-found') {
-    return true;
+  if (isFilesystemError(error) && (error.status !== undefined || error.reason !== 'unknown')) {
+    return error.reason === 'not-found' && (error.status === undefined || error.status === 404);
   }
   const carrier = messageCarrierSchema.safeParse(error);
   const message = error instanceof Error ? error.message : carrier.success ? carrier.data.message : String(error ?? '');
@@ -59,4 +79,3 @@ export const isFileMissingError = (error: unknown): boolean => {
     || normalized.includes('no such file')
     || normalized.includes('does not exist');
 };
-

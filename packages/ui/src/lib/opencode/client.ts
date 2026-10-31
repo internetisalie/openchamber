@@ -69,6 +69,7 @@ import {
 } from "./model"
 import { ascendingId } from "./ids"
 import { runningShellFromWire, shellCancellationNote, type RunningShell, type ShellToStop } from "./background-shell"
+import { ControlResponseError, preserveControlResponse } from "./control-response"
 import { subagentCancellationNote } from "./subagent-run"
 import { toJsonRecord } from "./json"
 import { readMessageThroughAncestors } from "./message-ownership"
@@ -146,8 +147,10 @@ export class OpencodeApiError extends Error {
   /** The id OpenCode prints next to the stack in its own log for a 500, so a
       surface can quote something that can be searched for. */
   readonly ref: string | undefined
+  readonly kind: string | undefined
+  readonly reason: string | undefined
 
-  constructor(operation: string, message: string, options: { status?: number; tag?: string; ref?: string; cause?: unknown }) {
+  constructor(operation: string, message: string, options: { status?: number; tag?: string; ref?: string; kind?: string; cause?: unknown }) {
     super(`${operation} failed${options.status ? ` (${options.status})` : ""}: ${message}`, { cause: options.cause })
     this.name = "OpencodeApiError"
     this.operation = operation
@@ -155,6 +158,8 @@ export class OpencodeApiError extends Error {
     this.tag = options.tag
     this.detail = message
     this.ref = options.ref
+    this.kind = options.kind
+    this.reason = options.kind
   }
 }
 
@@ -185,6 +190,16 @@ const validateRuntimeResponse = (response: Response): Response => {
  */
 export function normalizeOpencodeError(operation: string, error: unknown): OpencodeApiError {
   if (error instanceof OpencodeApiError) return error
+  if (error instanceof ClientError && error.cause instanceof FileFindResponseError) return error.cause
+  const controlError = error instanceof ControlResponseError ? error
+    : error instanceof ClientError && error.cause instanceof ControlResponseError ? error.cause : null
+  if (controlError) {
+    const wrapped = new OpencodeApiError(operation, controlError.message, {
+      status: controlError.status, tag: controlError.tag, cause: error,
+    })
+    if (!controlError.tag) markAmbiguousTransportFailure(wrapped)
+    return wrapped
+  }
   const routingError = error instanceof RuntimeRoutingResponseError ? error
     : error instanceof ClientError && error.cause instanceof RuntimeRoutingResponseError ? error.cause : null
   if (routingError) {
@@ -330,6 +345,7 @@ type RuntimeOpencodeClientConfig = {
   directory?: string
   /** Read-request timeout in ms. Overridable so tests can use short value. */
   requestTimeoutMs?: number
+  boundedFileFind?: boolean
 }
 
 /**
@@ -354,13 +370,23 @@ export const createRuntimeOpencodeClient = (config: RuntimeOpencodeClientConfig)
   const requestTimeoutMs = config.requestTimeoutMs ?? OPENCODE_REQUEST_TIMEOUT_MS
   const send = async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const url = requestUrlOf(input)
-    if (isEventStreamUrl(url) || requestMethodOf(input, init) === "POST") {
-      return validateRuntimeResponse(await runtimeFetch(input, init))
-    }
-    const timeout = createTimeoutSignal(requestTimeoutMs)
     const callerSignal = init?.signal !== undefined
       ? init.signal
       : input instanceof Request ? input.signal : undefined
+    const root = config.boundedFileFind ? new URL(toOpencodeClientRoot(config.baseUrl)) : null
+    if (root && requestMethodOf(input, init) === "GET" && url.origin === root.origin
+      && url.pathname === `${root.pathname.replace(/\/$/, "")}/api/fs/find`) {
+      const response = validateRuntimeResponse(await runtimeFetch(input, init))
+      return preserveFileFindResponse(response, callerSignal)
+    }
+    if (isEventStreamUrl(url) || requestMethodOf(input, init) === "POST") {
+      const response = validateRuntimeResponse(await runtimeFetch(input, init))
+      await preserveControlResponse(response, {
+        url, method: requestMethodOf(input, init), clientRoot: toOpencodeClientRoot(config.baseUrl), signal: callerSignal,
+      })
+      return response
+    }
+    const timeout = createTimeoutSignal(requestTimeoutMs)
     const supportsAny = typeof AbortSignal !== "undefined" && typeof (AbortSignal as { any?: unknown }).any === "function"
     let signal: AbortSignal
     let detachFallback: (() => void) | null = null
@@ -453,6 +479,135 @@ export type ProjectFileSearchHit = {
   path: string
   relativePath: string
   extension?: string
+}
+
+export type ProjectFileSearchOutcome = {
+  files: ProjectFileSearchHit[]
+  sourceIdentity?: string
+}
+
+export type ProjectFileSearchOptions = {
+  directory?: string | null
+  limit?: number
+  type?: "file" | "directory"
+  signal?: AbortSignal
+  expectedSourceIdentity?: string
+}
+
+const fileSourceIdentitySchema = z.string().min(1).refine((value) => new TextEncoder().encode(value).byteLength <= 1024)
+const canonicalRelativeFilePathSchema = z.string().min(1).refine((value) =>
+  !value.includes("\\") && !value.includes("\0")
+  && value.split("/").every((part) => part !== "" && part !== "." && part !== ".."))
+const fileFindEnvelopeSchema = z.object({
+  location: z.object({ directory: z.string().min(1) }),
+  data: z.array(z.object({ path: canonicalRelativeFilePathSchema, type: z.enum(["file", "directory"]) })),
+  sourceIdentity: fileSourceIdentitySchema.optional(),
+})
+const fileFindErrorSchema = z.object({
+  _tag: z.string(),
+  message: z.string(),
+  kind: z.enum(["invalid-path", "excluded-path", "not-directory", "file-too-large", "directory-limit",
+    "search-visit-limit", "non-text", "result-too-large", "not-found", "remote-source-changed",
+    "remote-unavailable", "invalid-response"]),
+})
+
+class FileFindResponseError extends OpencodeApiError {
+  constructor(message: string, options: { status: number; tag?: string; kind: string; cause?: unknown }) {
+    super("file.find", message, options)
+  }
+}
+
+const invalidFileFindResponse = (cause?: unknown, status = 503) => new FileFindResponseError(
+  "Invalid file search response", { status, kind: "invalid-response", cause },
+)
+
+const preserveFileFindResponse = async (response: Response, signal?: AbortSignal | null): Promise<Response> => {
+  let reader: ReadableStreamDefaultReader<Uint8Array> | undefined
+  let complete = false
+  let rejectStopped!: (reason: unknown) => void
+  const stopped = new Promise<never>((_, reject) => { rejectStopped = reject })
+  const abort = () => rejectStopped(signal?.reason ?? new DOMException("Aborted", "AbortError"))
+  signal?.addEventListener("abort", abort, { once: true })
+  try {
+    if (signal?.aborted) throw signal.reason
+    if (!response.body) throw new TypeError("File search response has no body")
+    reader = response.body.getReader()
+    const decoder = new TextDecoder("utf-8", { fatal: true })
+    const maxBytes = response.ok ? 1024 * 1024 : 64 * 1024
+    let bytes = 0
+    let text = ""
+    for (;;) {
+      const chunk = await Promise.race([reader.read(), stopped])
+      if (chunk.done) {
+        complete = true
+        text += decoder.decode()
+        break
+      }
+      bytes += chunk.value.byteLength
+      if (bytes > maxBytes) throw new RangeError(`File search body exceeds ${maxBytes} UTF-8 bytes`)
+      text += decoder.decode(chunk.value, { stream: true })
+    }
+    const mediaType = (response.headers.get("content-type") ?? "").split(";", 1)[0].trim().toLowerCase()
+    if (mediaType !== "application/json" && !/^application\/[^/]+\+json$/.test(mediaType)) {
+      throw new TypeError("File search response is not JSON")
+    }
+    const body: unknown = JSON.parse(text)
+    if (response.ok && response.headers.has("x-openchamber-file-source")) {
+      const header = fileSourceIdentitySchema.safeParse(response.headers.get("x-openchamber-file-source"))
+      const payload = z.object({ sourceIdentity: fileSourceIdentitySchema }).safeParse(body)
+      if (!header.success || !payload.success || header.data !== payload.data.sourceIdentity) {
+        throw invalidFileFindResponse()
+      }
+    }
+    if (!response.ok && response.status !== 401 && response.status !== 403) {
+      const parsed = fileFindErrorSchema.safeParse(body)
+      const taggedStatus = parsed.success && parsed.data._tag === "LocationNotFoundError" ? 404
+        : parsed.success ? STATUS_BY_TAG.get(parsed.data._tag) : undefined
+      if (!parsed.success || taggedStatus !== response.status) {
+        throw invalidFileFindResponse(parsed.success ? undefined : parsed.error, response.status)
+      }
+      throw new FileFindResponseError(parsed.data.message, {
+        status: response.status, tag: parsed.data._tag, kind: parsed.data.kind,
+      })
+    }
+    const headers = new Headers(response.headers)
+    headers.delete("content-encoding")
+    headers.delete("content-length")
+    return new Response(text, { status: response.status, headers })
+  } catch (cause) {
+    if (cause instanceof FileFindResponseError) throw cause
+    if (signal?.aborted) throw signal.reason
+    throw invalidFileFindResponse(cause, response.ok ? 503 : response.status)
+  } finally {
+    signal?.removeEventListener("abort", abort)
+    if (!complete) {
+      if (reader) void reader.cancel().catch(() => undefined)
+      else void response.body?.cancel().catch(() => undefined)
+    }
+    reader?.releaseLock()
+  }
+}
+
+const withFileFindDeadline = async <T>(signal: AbortSignal | undefined, run: (signal: AbortSignal) => Promise<T>): Promise<T> => {
+  const controller = new AbortController()
+  const abort = () => controller.abort(signal?.reason ?? new DOMException("Aborted", "AbortError"))
+  signal?.addEventListener("abort", abort, { once: true })
+  if (signal?.aborted) abort()
+  const timer = setTimeout(() => controller.abort(new FileFindResponseError("Remote file search timed out after 5000ms", {
+    status: 503, kind: "remote-unavailable", cause: new DOMException("File search timed out", "TimeoutError"),
+  })), 5_000)
+  let rejectStopped!: (reason: unknown) => void
+  const stopped = new Promise<never>((_, reject) => { rejectStopped = reject })
+  const stop = () => rejectStopped(controller.signal.reason)
+  controller.signal.addEventListener("abort", stop, { once: true })
+  try {
+    if (controller.signal.aborted) throw controller.signal.reason
+    return await Promise.race([run(controller.signal), stopped])
+  } finally {
+    clearTimeout(timer)
+    signal?.removeEventListener("abort", abort)
+    controller.signal.removeEventListener("abort", stop)
+  }
 }
 
 type FileInputLite = {
@@ -2407,6 +2562,58 @@ class OpencodeService {
     })
     this.listDirectoryInFlight.set(cacheKey, trackedTask)
     return trackedTask
+  }
+
+  async searchFilesWithSource(query: string, options: ProjectFileSearchOptions = {}): Promise<ProjectFileSearchOutcome> {
+    const directory = this.resolveDirectory(options.directory)
+    const remote = options.expectedSourceIdentity !== undefined
+    if (remote && (!directory || !fileSourceIdentitySchema.safeParse(options.expectedSourceIdentity).success)) {
+      throw invalidFileFindResponse()
+    }
+    const limit = remote
+      ? Math.max(1, Math.min(100, Number.isFinite(options.limit) ? Math.floor(options.limit!) : 100))
+      : options.limit !== undefined && Number.isFinite(options.limit) ? options.limit : undefined
+    const find = (signal?: AbortSignal) => {
+      const client = remote ? createRuntimeOpencodeClient({
+        baseUrl: this.baseUrl, directory, boundedFileFind: true,
+      }) : this.clientFor(directory)
+      return client.file.find({ query, limit, type: options.type }, { signal })
+    }
+    let raw: unknown
+    try {
+      raw = remote ? await withFileFindDeadline(options.signal, find) : await find(options.signal)
+    } catch (error) {
+      if (options.signal?.aborted) throw options.signal.reason
+      const api = normalizeOpencodeError("file.find", error)
+      if (remote && api.status === undefined) {
+        throw new FileFindResponseError(api.detail, { status: 503, kind: "remote-unavailable", cause: error })
+      }
+      throw api
+    }
+    const parsed = fileFindEnvelopeSchema.safeParse(raw)
+    if (!parsed.success) throw invalidFileFindResponse(parsed.error)
+    const response = parsed.data
+    if ((directory && response.location.directory !== directory)
+      || (remote && (response.sourceIdentity === undefined || response.data.length > limit!
+        || (options.type !== undefined && response.data.some((item) => item.type !== options.type))))) {
+      throw invalidFileFindResponse()
+    }
+    if (remote && response.sourceIdentity !== options.expectedSourceIdentity) {
+      throw new FileFindResponseError("Remote file source changed", { status: 409, kind: "remote-source-changed" })
+    }
+    const normalizedDirectory = directory ? normalizeFsPath(directory).replace(/\/$/, "") : null
+    return {
+      files: response.data.map((item) => {
+        const name = item.path.split("/").pop()!
+        return {
+          name,
+          path: normalizedDirectory !== null ? `${normalizedDirectory}/${item.path}` : item.path,
+          relativePath: item.path,
+          extension: name.includes(".") ? name.split(".").pop()?.toLowerCase() : undefined,
+        }
+      }),
+      ...(response.sourceIdentity !== undefined ? { sourceIdentity: response.sourceIdentity } : {}),
+    }
   }
 
   /** Fuzzy file search inside a directory through OpenCode's file index. */

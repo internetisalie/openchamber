@@ -1755,6 +1755,7 @@ export const FilesView: React.FC<FilesViewProps> = ({ mode = 'full', visible = t
     if (files.statFile) {
       const options = resolveFileReadOptions(path);
       const result = await files.statFile(path, { ...options, directory: root || undefined });
+      if (result.exists === false) return null;
       return {
         path: result.path,
         size: result.size,
