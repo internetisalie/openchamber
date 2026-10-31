@@ -151,8 +151,8 @@ export const registerRemoteWorkspaceFileRoutes = (app, { remoteWorkspaceFiles } 
       if (res.destroyed || req.aborted) { cleanup(); return; }
       if (res.headersSent) { res.destroy(); cleanup(); return; }
       if (optional && ['read', 'stat'].includes(operation) && error instanceof RemoteWorkspaceFileError && error.status === 404 && error.kind === 'not-found' && error.sourceIdentity && error.sourceIdentity === error.expectedSourceIdentity) {
+        res.setHeader('X-OpenChamber-File-Source', error.sourceIdentity);
         if (operation === 'read') {
-          res.setHeader('X-OpenChamber-File-Source', error.sourceIdentity);
           return res.type('text/plain').send('');
         }
         return res.json({ path: requestedPath, exists: false, sourceKind: 'remote', sourceIdentity: error.sourceIdentity });

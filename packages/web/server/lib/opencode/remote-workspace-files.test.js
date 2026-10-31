@@ -443,10 +443,59 @@ describe('configured remote workspace file routing through Express', () => {
     expect(response.status).toBe(200);
     expect(await response.text()).toBe('');
     const stat = await f.request('/api/fs/stat?path=%2Fworkspace%2Fa&optional=true');
+    expect(stat.status).toBe(200);
+    expect(stat.headers.get('X-OpenChamber-File-Source')).toBe(sourceIdentity);
     expect(await stat.json()).toEqual({ path: '/workspace/a', exists: false, sourceKind: 'remote', sourceIdentity });
     f.fetchUpstream.mockImplementationOnce(() => new Response('not a file response', { status: 404 }));
     const malformed = await f.request('/api/fs/read?path=%2Fworkspace%2Fa&optional=true');
     expect(malformed.status).toBe(503);
+    f.expectNoLocalAccess();
+  });
+
+  it('passes scoped optional stat absence from the actual router into the actual WebFilesAPI', async () => {
+    const { createWebFilesAPI, createWebWorkspaceFileSourceResolver } = await import('../../../src/api/files.ts');
+    const f = await fixture({ response: () => {
+      const response = refused(404, 'not-found');
+      response.headers.set('X-OpenChamber-File-Source', sourceIdentity);
+      return response;
+    } });
+    const dependencies = {
+      fetch: (route, options) => f.request(`${route}?${new URLSearchParams(options.query)}`, {
+        signal: options.signal, headers: options.headers,
+      }),
+      runtime: {
+        getRuntimeKey: () => 'router-optional-stat-fixture',
+        subscribeRuntimeEndpointWillChange: () => () => {},
+      },
+    };
+    const resolveWorkspaceFileSource = createWebWorkspaceFileSourceResolver({ getDirectory: () => root, dependencies });
+    const api = createWebFilesAPI({ getDirectory: () => root, resolveWorkspaceFileSource, dependencies });
+    expect(await api.statFile('/workspace/missing', { optional: true })).toEqual({
+      path: '/workspace/missing', isFile: false, exists: false, sourceIdentity,
+    });
+    expect(f.fetchUpstream).toHaveBeenCalledTimes(1);
+    expect(f.fetchRoot.mock.calls.length).toBeGreaterThan(0);
+    f.expectNoLocalAccess();
+  });
+
+  it.each([
+    { status: 404, kind: 'not-found', token: undefined, expectedStatus: 404, expectedReason: 'not-found' },
+    { status: 404, kind: 'not-found', token: 'replacement-binding', expectedStatus: 409, expectedReason: 'remote-source-changed' },
+    { status: 409, kind: 'remote-source-changed', token: sourceIdentity, expectedStatus: 409, expectedReason: 'remote-source-changed' },
+  ])('keeps optional stat refusal as an error without a success source header: %j', async ({ status, kind, token, expectedStatus, expectedReason }) => {
+    const f = await fixture({ response: () => {
+      const response = refused(status, kind);
+      if (token !== undefined) response.headers.set('X-OpenChamber-File-Source', token);
+      return response;
+    } });
+    const response = await f.request('/api/fs/stat?path=%2Fworkspace%2Fmissing&optional=true');
+    expect(response.status).toBe(expectedStatus);
+    expect(response.headers.get('X-OpenChamber-File-Source')).toBeNull();
+    expect(await response.json()).toEqual({
+      error: expectedReason === 'remote-source-changed' && status === 404
+        ? 'Remote workspace source changed during the file request' : 'Provider refused the file request',
+      reason: expectedReason, sourceKind: 'remote',
+    });
     f.expectNoLocalAccess();
   });
 
