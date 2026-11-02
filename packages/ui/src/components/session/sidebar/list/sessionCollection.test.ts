@@ -483,7 +483,8 @@ describe('buildActiveSessionNode', () => {
 
 let restoreRuntimeKey = () => {};
 beforeAll(async () => {
-  const key = spyOn(runtime, 'getRuntimeKey').mockReturnValue('test:sidebar-collection');
+  const key = spyOn(runtime, 'getRuntimeKey');
+  key.mockReturnValue('test:sidebar-collection');
   restoreRuntimeKey = () => key.mockRestore();
   const home = spyOn(opencodeClient, 'getFilesystemHomeInfo').mockResolvedValue({
     home: '/home',
