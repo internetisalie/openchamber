@@ -14,6 +14,23 @@ const fixture = (response: () => Response) => {
 };
 
 describe('native relative file read adapter', () => {
+  it('bounds projection text at 16 KiB while preserving native source checks and dispatch refusals', async () => {
+    const path = '.supervisor/dispatch-session-projection/ses_one.json';
+    const oversized = fixture(() => new Response('x'.repeat(16385), { headers: { 'X-OpenChamber-File-Source': identity } }));
+    await expect(oversized.read(path, { directory, maxBytes: 16384 })).rejects.toMatchObject({ reason: 'invalid-response' });
+    for (const reason of ['dispatch-invalid', 'excluded-path']) {
+      const refusal = fixture(() => Response.json({ reason, error: 'Refused' }, { status: 400 }));
+      await expect(refusal.read(path, { directory, maxBytes: 16384 })).rejects.toMatchObject({ reason, status: 400 });
+    }
+    const bounded = fixture(() => new Response('{}', { headers: { 'X-OpenChamber-File-Source': identity } }));
+    await bounded.read(path, { directory, maxBytes: 16384 });
+    expect(bounded.fetch.mock.calls[0][0]).toBe('/api/fs/read/.supervisor/dispatch-session-projection/ses_one.json');
+    expect(bounded.fetch.mock.calls[0][1]).toMatchObject({ headers: { 'x-opencode-directory': directory }, cache: 'no-store' });
+    for (const maxBytes of [0, -1, 1.5, 1048577]) {
+      await expect(bounded.read(path, { directory, maxBytes })).rejects.toMatchObject({ reason: 'invalid-path' });
+    }
+    expect(bounded.fetch).toHaveBeenCalledTimes(1);
+  });
   it('uses the existing per-segment route and selected container, with text response and no optional query', async () => {
     const f = fixture(() => new Response('{"version":1}', { headers: { 'X-OpenChamber-File-Source': identity } }));
     expect(await f.read('.supervisor/manifest.json', { directory })).toEqual({ status: 'read', content: '{"version":1}' });

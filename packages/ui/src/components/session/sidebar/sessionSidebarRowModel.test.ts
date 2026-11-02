@@ -1,4 +1,5 @@
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
+import * as runtime from '@/lib/runtime-switch';
 import type { Session } from '@/lib/opencode/model';
 import type { SessionGroup, SessionNode } from './types';
 import type { ProjectSection } from './projects/sessionProjectRender';
@@ -982,11 +983,15 @@ describe('buildSessionSidebarRowModel', () => {
   });
 });
 
-const originalHomeInfo = opencodeClient.getFilesystemHomeInfo;
-opencodeClient.getFilesystemHomeInfo = async () => ({
-  home: '/home',
-  canonicalChatsRoot: '/home/.config/openchamber/chats',
-  canonicalLegacyChatsRoot: '/home/.config/openchamber/chats',
+let restoreRuntimeKey = () => {};
+beforeAll(async () => {
+  const key = spyOn(runtime, 'getRuntimeKey').mockReturnValue('test:sidebar-row-model');
+  restoreRuntimeKey = () => key.mockRestore();
+  const home = spyOn(opencodeClient, 'getFilesystemHomeInfo').mockResolvedValue({
+    home: '/home',
+    canonicalChatsRoot: '/home/.config/openchamber/chats',
+    canonicalLegacyChatsRoot: '/home/.config/openchamber/chats',
+  });
+  try { await ensureChatsRootDirectory(); } finally { home.mockRestore(); }
 });
-await ensureChatsRootDirectory();
-opencodeClient.getFilesystemHomeInfo = originalHomeInfo;
+afterAll(() => restoreRuntimeKey());

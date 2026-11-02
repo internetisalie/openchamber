@@ -424,7 +424,7 @@ describe('configured remote workspace file routing through Express', () => {
     f.expectNoLocalAccess();
   });
 
-  it.each([[400, 'excluded-path'], [400, 'invalid-path'], [400, 'directory-limit'], [400, 'search-visit-limit'], [400, 'result-too-large'], [409, 'remote-source-changed'], [503, 'remote-unavailable']])('preserves actual refusal status %s and kind %s without empty-success fallback', async (status, kind) => {
+  it.each([[400, 'dispatch-invalid'], [400, 'excluded-path'], [400, 'invalid-path'], [400, 'directory-limit'], [400, 'search-visit-limit'], [400, 'result-too-large'], [409, 'remote-source-changed'], [503, 'remote-unavailable']])('preserves actual refusal status %s and kind %s without empty-success fallback', async (status, kind) => {
     const f = await fixture({ response: () => refused(status, kind) });
     const response = await f.request('/api/fs/read?path=%2Fworkspace%2Fa&optional=true');
     expect(response.status).toBe(status);

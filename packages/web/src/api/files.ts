@@ -314,6 +314,10 @@ export const createWebFilesAPI = ({ getDirectory, searchFiles = defaultSearchFil
   resolveWorkspaceFileSource,
   searchWithSource,
   async readNativeFile(relativePath, options) {
+    const maxBytes = options.maxBytes ?? FILE_JSON_BYTES;
+    if (!Number.isSafeInteger(maxBytes) || maxBytes < 1 || maxBytes > FILE_JSON_BYTES) {
+      throw new FilesystemError('Invalid native read limit', { status: 400, reason: 'invalid-path' });
+    }
     if (!options.directory || !relativePath || relativePath.includes('\\') || relativePath.includes('\0')
       || relativePath.split('/').some((part) => !part || part === '.' || part === '..')) {
       throw new FilesystemError('Invalid native file path', { status: 400, reason: 'invalid-path' });
@@ -335,7 +339,7 @@ export const createWebFilesAPI = ({ getDirectory, searchFiles = defaultSearchFil
         return { status: 'missing' };
       }
       assertFileSourceIdentity(response.headers.get(FILE_SOURCE_HEADER), source.sourceIdentity);
-      const content = await readFileResponseText(response, scope, FILE_JSON_BYTES);
+      const content = await readFileResponseText(response, scope, maxBytes);
       await complete(source, directory, scope);
       return { status: 'read', content };
     } finally { scope.dispose(); }

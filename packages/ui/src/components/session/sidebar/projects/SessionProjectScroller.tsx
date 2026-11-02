@@ -305,7 +305,8 @@ function SessionProjectScrollerComponent({ model, view, actions }: SessionProjec
             groupDirectory={row.lead.session.directory} projectId={row.projectId} renderChildren={false}
             editingId={model.state.editingId} openSidebarMenuKey={model.state.openSidebarMenuKey}
             setOpenSidebarMenuKey={model.state.setOpenSidebarMenuKey} rowKey={row.key} />
-          <LocationSessionFacts session={row.lead.session} source={row.source} predecessor={row.predecessor ?? null} />
+          <LocationSessionFacts session={row.lead.session} source={row.source} predecessor={row.predecessor ?? null}
+            dispatch={row.leadDispatch} placementConflict={row.placementConflict} />
         </> : null}
       </CanonicalLocationRow>;
     }

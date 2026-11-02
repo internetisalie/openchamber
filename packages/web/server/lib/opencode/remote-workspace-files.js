@@ -181,7 +181,7 @@ const jsonResponse = async (response, limit, signal) => {
 };
 
 const errorKinds = new Map([
-  [400, { tag: 'InvalidRequestError', kinds: ['invalid-path', 'excluded-path', 'not-directory', 'file-too-large', 'directory-limit', 'search-visit-limit', 'non-text', 'result-too-large'] }],
+  [400, { tag: 'InvalidRequestError', kinds: ['invalid-path', 'excluded-path', 'dispatch-invalid', 'not-directory', 'file-too-large', 'directory-limit', 'search-visit-limit', 'non-text', 'result-too-large'] }],
   [404, { tag: 'FileNotFoundError', kinds: ['not-found'] }],
   [409, { tag: 'ConflictError', kinds: ['remote-source-changed'] }],
   [503, { tag: 'ServiceUnavailableError', kinds: ['remote-unavailable', 'invalid-response'] }],

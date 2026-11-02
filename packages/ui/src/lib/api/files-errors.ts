@@ -8,6 +8,7 @@ export type FilesystemErrorReason =
   | 'invalid-response'
   | 'invalid-path'
   | 'excluded-path'
+  | 'dispatch-invalid'
   | 'file-too-large'
   | 'directory-limit'
   | 'search-visit-limit'
@@ -49,6 +50,7 @@ export const parseFilesystemErrorReason = (value: unknown): FilesystemErrorReaso
     case 'invalid-response':
     case 'invalid-path':
     case 'excluded-path':
+    case 'dispatch-invalid':
     case 'file-too-large':
     case 'directory-limit':
     case 'search-visit-limit':

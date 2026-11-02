@@ -8,11 +8,16 @@ import type { Session } from '@/lib/opencode/model';
 import type { CanonicalLocationGroup } from './canonical-location-model';
 import { useCanonicalSidebarPreferences } from './canonical-sidebar-preferences';
 import { WorkspaceComposition } from './workspace-composition';
+import { DispatchProjectionFacts } from './dispatch-projection-facts';
+import type { DispatchProjectionState } from './dispatch-projection';
 
-export function LocationSessionFacts({ session, source, predecessor }: { session: Session; source: string; predecessor: Session | null }) {
+export function LocationSessionFacts({ session, source, predecessor, dispatch, placementConflict }: {
+  session: Session; source: string; predecessor: Session | null; dispatch?: DispatchProjectionState; placementConflict?: boolean;
+}) {
   const updated = useGlobalSessionsStore((state) => state.entityById.get(session.id)?.time.updated ?? session.time.updated);
   return <div className="flex items-center gap-2 px-1 typography-micro text-muted-foreground">
     <time dateTime={new Date(updated).toISOString()}>{new Date(updated).toLocaleString(getCurrentIntlLocale())}</time>
+    {dispatch ? <DispatchProjectionFacts state={dispatch} conflict={placementConflict} /> : null}
     {predecessor ? <button type="button" title={predecessor.title} aria-label={predecessor.title}
       onClick={() => { if (getRuntimeKey() === source) useSessionUIStore.getState().setCurrentSession(predecessor.id, predecessor.directory); }}>
       <Icon name="arrow-left" className="size-3" />
@@ -33,8 +38,7 @@ export function CanonicalLocationRow({ row, onToggle, children }: {
         <Icon name={row.expanded ? 'arrow-down-s' : 'arrow-right-s'} className="size-3.5 shrink-0" />
         <span className="truncate" title={row.label}>{row.groupKind === 'finished' ? t('sessions.sidebar.location.finished') : row.label}</span>
       </button>
-      {row.groupKind === 'workspace' ? <span title={t('sessions.sidebar.location.dispatchUnavailable')}
-        className="typography-micro text-muted-foreground">{t('common.unavailable')}</span> : null}
+      {row.groupKind === 'workspace' ? <DispatchProjectionFacts state={row.dispatchAttribution} workspace conflict={row.placementConflict} /> : null}
       {row.previousWorkspaceKey ? <button type="button" aria-label={t('mobile.sessions.moveUpAria', { label: row.label })}
         onClick={() => { if (row.previousWorkspaceKey) moveWorkspace(row.key, row.previousWorkspaceKey, row.workspaceSiblingKeys ?? []); }}>
         <Icon name="arrow-up" className="size-3.5" />
