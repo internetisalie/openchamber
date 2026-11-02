@@ -1,4 +1,6 @@
 import React from 'react';
+import { CanonicalLocationRow, LocationSessionFacts } from '@/components/session/sidebar/canonical-location-row';
+import { locationLeadSessionRow } from '@/components/session/sidebar/canonical-location-model';
 import { ScrollShadow } from '@/components/ui/ScrollShadow';
 import type { SessionProjectListProps } from '@/components/session/sidebar/projects/SessionProjectScroller';
 import {
@@ -48,6 +50,7 @@ const findCurrentRowIndex = (
   if (sessionId) {
     const index = rows.findIndex((row) => (
       (row.kind === 'session' && row.node.session.id === sessionId)
+      || (row.kind === 'location-group' && row.lead?.session.id === sessionId)
       || (row.kind === 'run' && row.run.memberIds.includes(sessionId))
       || (row.kind === 'group-header' && nodeHolds(row.group.sessions, sessionId))
     ));
@@ -103,6 +106,14 @@ export const MobileSessionList: React.FC<SessionProjectListProps> = ({ model, vi
 
   const renderRow = React.useCallback((row: SessionSidebarRow): React.ReactNode => {
     switch (row.kind) {
+      case 'location-group': {
+        const leadRow = locationLeadSessionRow(row);
+        return <CanonicalLocationRow row={row} onToggle={() => model.groupProps.toggleParent(row.expansionKey)}>
+          {leadRow ? <><MobileSessionRow row={leadRow} geometry={geometry} toggleParent={model.groupProps.toggleParent} />
+            <LocationSessionFacts session={leadRow.node.session} source={row.source} predecessor={row.predecessor ?? null}
+              dispatch={row.leadDispatch} placementConflict={row.placementConflict} /></> : null}
+        </CanonicalLocationRow>;
+      }
       case 'activity-header':
         return <MobileZoneHeader row={row} onToggle={() => toggleActivityZone(row, { model, actions })} />;
       case 'caption':
@@ -130,7 +141,8 @@ export const MobileSessionList: React.FC<SessionProjectListProps> = ({ model, vi
       case 'folder-header':
         return <MobileFolderRow row={row} geometry={geometry} />;
       case 'session':
-        return <MobileSessionRow row={row} geometry={geometry} toggleParent={model.groupProps.toggleParent} />;
+        return <><MobileSessionRow row={row} geometry={geometry} toggleParent={model.groupProps.toggleParent} />
+          {row.locationFacts ? <LocationSessionFacts session={row.node.session} {...row.locationFacts} /> : null}</>;
       case 'run':
         return <MobileRunRow row={row} geometry={geometry} toggleParent={model.groupProps.toggleParent} />;
       case 'draft':

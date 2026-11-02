@@ -1,13 +1,304 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { RuntimeUrlQuery, RuntimeUrlResolver } from '@openchamber/ui/lib/runtime-url';
+import type { WebFileDependencies } from './files';
 
 const runtimeFetchMock = vi.fn();
 const searchFilesMock = vi.fn();
+let fileRuntimeKey = 'runtime-a';
+const runtimeChanges = new Set<(detail: { runtimeKey: string; previousRuntimeKey: string }) => void>();
+const fileDependencies: WebFileDependencies = {
+  fetch: runtimeFetchMock,
+  runtime: {
+    getRuntimeKey: () => fileRuntimeKey,
+    subscribeRuntimeEndpointWillChange: (callback) => {
+      const listener = (detail: { runtimeKey: string; previousRuntimeKey: string }) => callback(detail);
+      runtimeChanges.add(listener);
+      return () => { runtimeChanges.delete(listener); };
+    },
+  },
+};
 
 afterEach(() => {
   vi.unstubAllGlobals();
   vi.clearAllMocks();
+  fileRuntimeKey = 'runtime-a';
+  runtimeChanges.clear();
+});
+
+describe('remote workspace file responses', () => {
+  const prepare = async () => {
+    const { createWebFilesAPI, createWebWorkspaceFileSourceResolver } = await import('./files');
+    let identity = 'workspace-live-a';
+    let rootCalls = 0;
+    let operation: (path: string, init: { query: URLSearchParams; signal?: AbortSignal }) => Response | Promise<Response> = () => new Response('', {
+      headers: { 'X-OpenChamber-File-Source': identity },
+    });
+    runtimeFetchMock.mockReset();
+    runtimeFetchMock.mockImplementation((path, init) => {
+      if (path === '/api/fs/stat' && init.query.get('path') === '/repo') {
+        rootCalls++;
+        return Response.json({ path: '/repo', isFile: false, size: 4096, mtimeMs: 10,
+          sourceKind: 'remote', sourceIdentity: identity });
+      }
+      return operation(path, init);
+    });
+    const resolveWorkspaceFileSource = createWebWorkspaceFileSourceResolver({ getDirectory: () => '/repo', dependencies: fileDependencies });
+    const indexed = vi.fn(async () => ({ files: [], sourceIdentity: identity }));
+    const legacy = vi.fn(async () => []);
+    const api = createWebFilesAPI({ getDirectory: () => '/repo', resolveWorkspaceFileSource,
+      searchFilesWithSource: indexed, searchFiles: legacy, dependencies: fileDependencies });
+    return { api, indexed, legacy, resolveWorkspaceFileSource, roots: () => rootCalls,
+      replace: () => { identity = 'workspace-live-b'; },
+      setIdentity: (value: string) => { identity = value; },
+      respond: (handler: typeof operation) => { operation = handler; } };
+  };
+
+  it('enforces the same 1024 UTF8-byte identity bound in JSON, read headers and optional404 fences', async () => {
+    for (const identity of ['a'.repeat(1024), 'é'.repeat(512)]) {
+      const fixture = await prepare();
+      fixture.setIdentity(identity);
+      expect(await fixture.resolveWorkspaceFileSource('/repo')).toEqual({ kind: 'remote', sourceIdentity: identity });
+      fixture.respond(() => new Response('', { headers: { 'X-OpenChamber-File-Source': identity } }));
+      expect((await fixture.api.readFile!('/repo/a')).sourceIdentity).toBe(identity);
+    }
+    for (const identity of ['a'.repeat(1025), 'é'.repeat(512) + 'x']) {
+      const fixture = await prepare();
+      fixture.setIdentity(identity);
+      await expect(fixture.resolveWorkspaceFileSource('/repo')).rejects.toMatchObject({ status: 503, reason: 'invalid-response' });
+      fixture.setIdentity('workspace-live-a');
+      fixture.respond(() => new Response('', { headers: { 'X-OpenChamber-File-Source': identity } }));
+      await expect(fixture.api.readFile!('/repo/a', { optional: true })).rejects.toMatchObject({ status: 503, reason: 'invalid-response' });
+      fixture.respond(() => Response.json({ error: 'Missing', reason: 'not-found' }, { status: 404,
+        headers: { 'X-OpenChamber-File-Source': identity } }));
+      await expect(fixture.api.readFile!('/repo/a', { optional: true })).rejects.toMatchObject({ status: 503, reason: 'invalid-response' });
+      fixture.respond(() => Response.json({ path: '/repo', entries: [], sourceIdentity: identity }));
+      await expect(fixture.api.listDirectory('/repo')).rejects.toMatchObject({ status: 503, reason: 'invalid-response' });
+      fixture.respond(() => Response.json({ files: [], sourceIdentity: identity }));
+      await expect(fixture.api.searchWithSource!({ directory: '/repo', query: 'x', includeHidden: true }))
+        .rejects.toMatchObject({ status: 503, reason: 'invalid-response' });
+    }
+  });
+
+  it('uses the actual production constructor to classify via root stat, not a test-only mode flag', async () => {
+    await prepare();
+    const { createWebAPIs } = await import('./index');
+    const api = createWebAPIs({ urls, fileDependencies });
+    expect(await api.files.resolveWorkspaceFileSource!('/repo')).toEqual({ kind: 'remote', sourceIdentity: 'workspace-live-a' });
+    const result = await api.files.readFile!('/repo/empty', { directory: '/repo' });
+    expect(result).toEqual({ path: '/repo/empty', content: '', sourceIdentity: 'workspace-live-a' });
+    expect(runtimeFetchMock.mock.calls.some(([path, init]) => path === '/api/fs/stat' && init.query.get('path') === '/repo')).toBe(true);
+  });
+
+  it('classifies only the known local root-directory refusal, never auth/server/missing errors', async () => {
+    const { createWebWorkspaceFileSourceResolver } = await import('./files');
+    const resolve = createWebWorkspaceFileSourceResolver({ getDirectory: () => '/repo' });
+    runtimeFetchMock.mockReset();
+    runtimeFetchMock.mockResolvedValueOnce(Response.json({ sourceKind: 'local', error: 'Specified path is not a file' }, { status: 400 }));
+    expect(await resolve('/repo')).toEqual({ kind: 'local' });
+    for (const status of [401, 403, 404, 500]) {
+      runtimeFetchMock.mockResolvedValueOnce(Response.json({ sourceKind: 'local', error: 'failure', reason: 'unknown' }, { status }));
+      await expect(resolve('/repo')).rejects.toMatchObject({ status, reason: 'unknown' });
+    }
+    runtimeFetchMock.mockResolvedValueOnce(Response.json({ error: 'Unauthorized' }, { status: 401 }));
+    await expect(resolve('/repo')).rejects.toMatchObject({ status: 401 });
+    runtimeFetchMock.mockResolvedValueOnce(Response.json({ sourceKind: 'remote', error: 'not found while offline', reason: 'remote-unavailable' }, { status: 503 }));
+    await expect(resolve('/repo')).rejects.toMatchObject({ status: 503, reason: 'remote-unavailable' });
+    for (const payload of [
+      { path: '/repo', isFile: false, size: 1 },
+      { sourceKind: 'remote', path: '/repo', isFile: false, size: 1 },
+      { sourceKind: 'other', sourceIdentity: 'a' },
+    ]) {
+      runtimeFetchMock.mockResolvedValueOnce(Response.json(payload));
+      await expect(resolve('/repo')).rejects.toMatchObject({ status: 503, reason: 'invalid-response' });
+    }
+  });
+
+  it('wires the production constructor to the shared source-aware SDK caller with cancellation and identity', async () => {
+    await prepare();
+    const { createWebAPIs } = await import('./index');
+    const { opencodeClient } = await import('@openchamber/ui/lib/opencode/client');
+    const indexed = vi.spyOn(opencodeClient, 'searchFilesWithSource').mockResolvedValue({
+      files: [], sourceIdentity: 'workspace-live-a',
+    });
+    try {
+      const api = createWebAPIs({ urls, fileDependencies });
+      expect(await api.files.searchWithSource!({ directory: '/repo', query: 'needle' }))
+        .toEqual({ files: [], sourceIdentity: 'workspace-live-a' });
+      expect(indexed).toHaveBeenCalledExactlyOnceWith('needle', expect.objectContaining({
+        directory: '/repo', type: 'file', signal: expect.any(AbortSignal), expectedSourceIdentity: 'workspace-live-a',
+      }));
+      expect(runtimeFetchMock.mock.calls.some(([path]) => path === '/api/fs/search')).toBe(false);
+    } finally { indexed.mockRestore(); }
+  });
+
+  it('rejects malformed remote domain fields instead of projecting partial listings or metadata', async () => {
+    const fixture = await prepare();
+    for (const entry of [
+      { name: 7, path: '/repo/a', isDirectory: false, isFile: true },
+      { name: 'a', path: 7, isDirectory: false, isFile: true },
+      { name: 'a', path: '/repo/a', isDirectory: 'false', isFile: true },
+      { name: 'a', path: '/repo/a', isDirectory: false, isFile: 'true' },
+      { name: '..', path: '/repo/..', isDirectory: true, isFile: false },
+      { name: 'a', path: '/repo/a', isDirectory: false, isFile: true, isSymbolicLink: true },
+    ]) {
+      fixture.respond(() => Response.json({ path: '/repo', sourceIdentity: 'workspace-live-a', entries: [entry] }));
+      await expect(fixture.api.listDirectory('/repo')).rejects.toMatchObject({ status: 503, reason: 'invalid-response' });
+    }
+    for (const metadata of [
+      { isFile: 'true', size: 1, mtimeMs: 10 },
+      { isFile: true, size: '1', mtimeMs: 10 },
+      { isFile: true, size: -1, mtimeMs: 10 },
+      { isFile: true, size: 1, mtimeMs: null },
+    ]) {
+      fixture.respond(() => Response.json({ sourceKind: 'remote', sourceIdentity: 'workspace-live-a', path: '/repo/a', ...metadata }));
+      await expect(fixture.api.statFile!('/repo/a')).rejects.toMatchObject({ status: 503, reason: 'invalid-response' });
+    }
+    fixture.respond(() => Response.json({ files: [{ path: 7, relativePath: 'a' }], sourceIdentity: 'workspace-live-a' }));
+    await expect(fixture.api.search({ directory: '/repo', query: 'a', includeHidden: true }))
+      .rejects.toMatchObject({ status: 503, reason: 'invalid-response' });
+  });
+
+  it('keeps confirmed local optional/outside/fresh behavior after the known root-directory refusal', async () => {
+    const { createWebFilesAPI, createWebWorkspaceFileSourceResolver } = await import('./files');
+    runtimeFetchMock.mockReset();
+    runtimeFetchMock.mockImplementation((path, init) => path === '/api/fs/stat'
+      ? init.query.get('path') === '/repo'
+        ? Response.json({ sourceKind: 'local', error: 'Specified path is not a file' }, { status: 400 })
+        : Response.json({ sourceKind: 'local', error: 'missing file', reason: 'not-found' }, { status: 404 }) : new Response(''));
+    const api = createWebFilesAPI({ getDirectory: () => '/repo',
+      resolveWorkspaceFileSource: createWebWorkspaceFileSourceResolver({ getDirectory: () => '/repo' }) });
+    expect(await api.readFile!('/outside/a', { directory: '/repo', optional: true, fresh: true, allowOutsideWorkspace: true }))
+      .toEqual({ content: '', path: '/outside/a' });
+    await expect(api.statFile!('/repo', { directory: '/repo' })).rejects.toMatchObject({ status: 400, reason: 'unknown' });
+    await expect(api.statFile!('/outside/a', { directory: '/repo' })).rejects.toMatchObject({ status: 404, reason: 'not-found' });
+  });
+
+  it('preserves exact UTF8 read bytes and rejects missing, mismatching and replaced completed sources', async () => {
+    const fixture = await prepare();
+    const text = '\ufeffhello\r\n世界\n';
+    fixture.respond(() => new Response(text, { headers: { 'X-OpenChamber-File-Source': 'workspace-live-a' } }));
+    expect(await fixture.api.readFile!('/repo/a')).toEqual({ path: '/repo/a', content: text, sourceIdentity: 'workspace-live-a' });
+    fixture.respond(() => new Response(''));
+    await expect(fixture.api.readFile!('/repo/a', { optional: true })).rejects.toMatchObject({ status: 503, reason: 'invalid-response' });
+    fixture.respond(() => new Response('', { headers: { 'X-OpenChamber-File-Source': 'workspace-live-b' } }));
+    await expect(fixture.api.readFile!('/repo/a')).rejects.toMatchObject({ status: 409, reason: 'remote-source-changed' });
+    fixture.respond(() => { fixture.replace(); return new Response('', { headers: { 'X-OpenChamber-File-Source': 'workspace-live-a' } }); });
+    await expect(fixture.api.readFile!('/repo/a')).rejects.toMatchObject({ status: 409, reason: 'remote-source-changed' });
+  });
+
+  it('preserves HTTP stat/read failures and only accepts fenced projected optional absence', async () => {
+    const fixture = await prepare();
+    for (const [status, reason] of [[404, 'not-found'], [409, 'remote-source-changed'], [503, 'remote-unavailable']] as const) {
+      fixture.respond(() => Response.json({ error: 'File not found', reason }, { status,
+        headers: status === 404 ? { 'X-OpenChamber-File-Source': 'workspace-live-a' } : {} }));
+      await expect(fixture.api.readFile!('/repo/missing', { optional: true })).rejects.toMatchObject({ name: 'FilesystemError', status, reason });
+      await expect(fixture.api.statFile!('/repo/missing', { optional: true })).rejects.toMatchObject({ name: 'FilesystemError', status, reason });
+    }
+    fixture.respond(() => Response.json({ error: 'Missing', reason: 'not-found' }, { status: 404 }));
+    await expect(fixture.api.readFile!('/repo/missing', { optional: true })).rejects.toMatchObject({ status: 503, reason: 'invalid-response' });
+    fixture.respond(() => Response.json({ error: 'Missing', reason: 'not-found' }, { status: 404,
+      headers: { 'X-OpenChamber-File-Source': 'workspace-live-b' } }));
+    await expect(fixture.api.statFile!('/repo/missing', { optional: true })).rejects.toMatchObject({ status: 409, reason: 'remote-source-changed' });
+    fixture.respond((path) => path === '/api/fs/stat'
+      ? Response.json({ sourceKind: 'remote', sourceIdentity: 'workspace-live-a', path: '/repo/missing', exists: false },
+        { headers: { 'X-OpenChamber-File-Source': 'workspace-live-a' } })
+      : new Response('', { headers: { 'X-OpenChamber-File-Source': 'workspace-live-a' } }));
+    expect(await fixture.api.statFile!('/repo/missing', { optional: true }))
+      .toEqual({ path: '/repo/missing', isFile: false, exists: false, sourceIdentity: 'workspace-live-a' });
+    expect((await fixture.api.readFile!('/repo/missing', { optional: true })).content).toBe('');
+    fixture.respond(() => Response.json({ sourceKind: 'remote', sourceIdentity: 'workspace-live-a', path: '/repo/missing', exists: false }));
+    await expect(fixture.api.statFile!('/repo/missing', { optional: true })).rejects.toMatchObject({ status: 503, reason: 'invalid-response' });
+    fixture.respond(() => Response.json({ sourceKind: 'remote', sourceIdentity: 'workspace-live-a', path: '/repo/a', isFile: true, size: 3 }));
+    await expect(fixture.api.statFile!('/repo/a')).rejects.toMatchObject({ status: 503, reason: 'invalid-response' });
+  });
+
+  it('validates empty list/search metadata and rejects partial, overcount and conflicting headers', async () => {
+    const fixture = await prepare();
+    fixture.respond(() => Response.json({ path: '/repo', entries: [], sourceIdentity: 'workspace-live-a' }));
+    // List the workspace root while keeping root-stat classification separate.
+    expect((await fixture.api.listDirectory('/repo')).sourceIdentity).toBe('workspace-live-a');
+    fixture.respond(() => Response.json({ path: '/repo', entries: [] }));
+    await expect(fixture.api.listDirectory('/repo')).rejects.toMatchObject({ status: 503, reason: 'invalid-response' });
+    fixture.respond(() => Response.json({ path: '/repo', sourceIdentity: 'workspace-live-a', entries: [{ name: 'a', path: '/repo/a', isDirectory: false }] }));
+    await expect(fixture.api.listDirectory('/repo')).rejects.toMatchObject({ status: 503, reason: 'invalid-response' });
+    fixture.respond(() => Response.json({ path: '/repo', sourceIdentity: 'workspace-live-a', entries: Array.from({ length: 1001 }, () => ({ name: 'a', path: '/repo/a', isDirectory: false, isFile: true })) }));
+    await expect(fixture.api.listDirectory('/repo')).rejects.toMatchObject({ status: 503, reason: 'invalid-response' });
+    fixture.respond(() => Response.json({ files: [], sourceIdentity: 'workspace-live-a' }, { headers: { 'X-OpenChamber-File-Source': 'workspace-live-b' } }));
+    await expect(fixture.api.search({ directory: '/repo', query: 'x', includeHidden: true })).rejects.toMatchObject({ status: 409, reason: 'remote-source-changed' });
+    fixture.respond(() => Response.json({ files: [{ path: '/outside/x', relativePath: 'x' }], sourceIdentity: 'workspace-live-a' }));
+    await expect(fixture.api.search({ directory: '/repo', query: 'x', includeHidden: true })).rejects.toMatchObject({ status: 503, reason: 'invalid-response' });
+    fixture.respond(() => Response.json({ files: [{ path: '/repo/x', relativePath: 'x' }, { path: '/repo/y', relativePath: 'y' }], sourceIdentity: 'workspace-live-a' }));
+    await expect(fixture.api.search({ directory: '/repo', query: 'x', includeHidden: true, maxResults: 1 })).rejects.toMatchObject({ status: 503, reason: 'invalid-response' });
+  });
+
+  it('uses real source-aware index selection for default queries and only supplemental for remote toggles', async () => {
+    const fixture = await prepare();
+    expect(await fixture.api.searchWithSource!({ directory: '/repo', query: 'x' })).toEqual({ files: [], sourceIdentity: 'workspace-live-a' });
+    expect(fixture.indexed).toHaveBeenCalledWith('x', expect.objectContaining({ directory: '/repo', type: 'file',
+      expectedSourceIdentity: 'workspace-live-a', signal: expect.any(AbortSignal) }));
+    expect(fixture.legacy).not.toHaveBeenCalled();
+    fixture.respond(() => Response.json({ files: [], sourceIdentity: 'workspace-live-a' }));
+    expect(await fixture.api.searchWithSource!({ directory: '/repo', query: 'x', includeHidden: true, respectGitignore: false, type: 'directory' }))
+      .toEqual({ files: [], sourceIdentity: 'workspace-live-a' });
+    expect(fixture.indexed).toHaveBeenCalledTimes(1);
+    expect(runtimeFetchMock.mock.calls.find(([path]) => path === '/api/fs/search')?.[1].query)
+      .toEqual(new URLSearchParams({ query: 'x', directory: '/repo', includeHidden: 'true', respectGitignore: 'false', type: 'directory' }));
+    fixture.respond(() => Response.json({ files: [] }));
+    await expect(fixture.api.searchWithSource!({ directory: '/repo', query: 'x', includeHidden: true }))
+      .rejects.toMatchObject({ status: 503, reason: 'invalid-response' });
+    fixture.respond(() => Response.json({ error: 'offline', reason: 'remote-unavailable' }, { status: 503 }));
+    await expect(fixture.api.search({ directory: '/repo', query: 'x', includeHidden: true }))
+      .rejects.toMatchObject({ status: 503, reason: 'remote-unavailable' });
+  });
+
+  it('fences SDK empty completion and bridges actual SDK response status/kind', async () => {
+    const fixture = await prepare();
+    fixture.indexed.mockImplementationOnce(async () => { throw Object.assign(new Error('offline'), { status: 503, kind: 'remote-unavailable' }); });
+    await expect(fixture.api.search({ directory: '/repo', query: 'x' })).rejects.toMatchObject({ name: 'FilesystemError', status: 503, reason: 'remote-unavailable' });
+    fixture.indexed.mockImplementationOnce(async () => { fixture.replace(); return { files: [], sourceIdentity: 'workspace-live-a' }; });
+    await expect(fixture.api.search({ directory: '/repo', query: 'x' })).rejects.toMatchObject({ status: 409, reason: 'remote-source-changed' });
+  });
+
+  it('bounds actual decoded response bodies without trusting Content-Length', async () => {
+    const fixture = await prepare();
+    fixture.respond(() => new Response('x'.repeat(1024 * 1024 + 1), { headers: { 'Content-Length': '1', 'X-OpenChamber-File-Source': 'workspace-live-a' } }));
+    await expect(fixture.api.readFile!('/repo/a')).rejects.toMatchObject({ status: 503, reason: 'invalid-response' });
+    fixture.respond(() => new Response('{"files":[],"sourceIdentity":"workspace-live-a","padding":"' + 'x'.repeat(1024 * 1024) + '"}'));
+    await expect(fixture.api.search({ directory: '/repo', query: 'x', includeHidden: true })).rejects.toMatchObject({ status: 503, reason: 'invalid-response' });
+    fixture.respond(() => new Response('x'.repeat(64 * 1024 + 1), { status: 409 }));
+    await expect(fixture.api.readFile!('/repo/a')).rejects.toMatchObject({ status: 409, reason: 'invalid-response' });
+    fixture.respond(() => new Response(new Uint8Array([255]), { headers: { 'X-OpenChamber-File-Source': 'workspace-live-a' } }));
+    await expect(fixture.api.readFile!('/repo/a')).rejects.toMatchObject({ status: 503, reason: 'invalid-response' });
+  });
+
+  for (const cause of ['caller', 'runtime', 'deadline'] as const) it(`rejects incomplete read body on ${cause} without a stale result`, async () => {
+    const fixture = await prepare();
+    const controller = new AbortController();
+    let started!: () => void;
+    const bodyStarted = new Promise<void>((resolve) => { started = resolve; });
+    let cancelled = 0;
+    fixture.respond(() => new Response(new ReadableStream({
+      start(stream) { stream.enqueue(new TextEncoder().encode('partial')); },
+      pull() { started(); },
+      cancel() { cancelled++; },
+    }), { headers: { 'X-OpenChamber-File-Source': 'workspace-live-a' } }));
+    if (cause === 'deadline') vi.useFakeTimers();
+    try {
+      const reading = fixture.api.readFile!('/repo/a', { signal: controller.signal });
+      const rejected = expect(reading).rejects.toMatchObject(cause === 'caller' ? { name: 'AbortError' }
+        : { status: cause === 'runtime' ? 409 : 503, reason: cause === 'runtime' ? 'remote-source-changed' : 'remote-unavailable' });
+      await bodyStarted;
+      if (cause === 'caller') controller.abort();
+      else if (cause === 'runtime') {
+        fileRuntimeKey = 'runtime-b';
+        for (const callback of runtimeChanges) callback({ runtimeKey: 'runtime-b', previousRuntimeKey: 'runtime-a' });
+      } else await vi.advanceTimersByTimeAsync(5_001);
+      await rejected;
+      expect(cancelled).toBe(1);
+      expect(fixture.roots()).toBe(1);
+    } finally { vi.useRealTimers(); }
+  });
 });
 
 vi.mock('@openchamber/ui/lib/runtime-fetch', () => ({

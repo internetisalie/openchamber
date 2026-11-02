@@ -65,7 +65,7 @@ const readFileSize = async (
       directory: options?.directory,
       allowOutsideWorkspace: isOutsideWorkspace(path, options),
     });
-    return stat.size;
+    return stat.size ?? null;
   } catch {
     return null;
   }

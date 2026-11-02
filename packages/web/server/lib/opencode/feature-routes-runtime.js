@@ -1,4 +1,5 @@
 import { registerFsRoutes } from '../fs/routes.js';
+import { registerRemoteWorkspaceFileRoutes } from './remote-workspace-file-routes.js';
 import { createRipgrepResolver } from '../fs/ripgrep.js';
 import { registerEnvironmentRoutes } from '../environment/routes.js';
 import { registerQuotaRoutes } from '../quota/routes.js';
@@ -101,6 +102,7 @@ export const createFeatureRoutesRuntime = (dependencies) => {
   const {
     clientReloadDelayMs,
     trackers,
+    remoteWorkspaceFiles,
   } = dependencies;
   const gitRuntimeIdentity = Object.freeze({
     id: `server_${crypto.randomUUID()}`,
@@ -280,6 +282,8 @@ export const createFeatureRoutesRuntime = (dependencies) => {
       // Absent in builds without workflows; their routes are then not served.
       workflowRuntime = null,
     } = routeDependencies;
+
+    registerRemoteWorkspaceFileRoutes(app, { remoteWorkspaceFiles });
 
     registerSettingsUtilityRoutes(app, {
       readCustomThemesFromDisk,

@@ -1,9 +1,11 @@
-import type { FilesAPI } from '@/lib/api/types';
+import type { FileReadResult, FileStatResult, FilesAPI } from '@/lib/api/types';
+import { assertFileSourceIdentity, changedFileSource, invalidFileResponse, requireFileSourceIdentity } from '@/lib/api/file-source';
+import { isFilesystemError } from '@/lib/api/files-errors';
 import { subscribeRuntimeEndpointWillChange } from '@/lib/runtime-switch';
 
 const MAX_ENTRIES = 40;
 const MAX_BYTES = 20 * 1024 * 1024;
-type Entry = { content: string; path: string; sourcePath: string; size: number; mtimeMs: number; bytes: number };
+type Entry = FileReadResult & { sourcePath: string; size: number; mtimeMs: number; bytes: number };
 
 /**
  * Content-cached `FilesAPI.readFile` wrapper.
@@ -17,6 +19,7 @@ export function createContentCachedFiles(files: FilesAPI): { files: FilesAPI; di
   const cache = new Map<string, Entry>();
   let totalBytes = 0;
   let generation = 0;
+  let runtimeGeneration = 0;
   let active = true;
   let mutationBarrier = Promise.resolve();
 
@@ -34,7 +37,7 @@ export function createContentCachedFiles(files: FilesAPI): { files: FilesAPI; di
       if (entry.sourcePath === path || entry.sourcePath.startsWith(prefix)) removeEntry(key);
     }
   };
-  const metadataMatches = (cached: Entry, latest: { isFile: boolean; size: number; mtimeMs?: number }) => (
+  const metadataMatches = (cached: Entry, latest: FileStatResult) => (
     latest.isFile
     && latest.mtimeMs !== undefined
     && cached.mtimeMs === latest.mtimeMs
@@ -47,10 +50,10 @@ export function createContentCachedFiles(files: FilesAPI): { files: FilesAPI; di
   const cacheResult = (
     key: string,
     sourcePath: string,
-    result: { content: string; path: string },
-    stat: { isFile: boolean; size: number; mtimeMs?: number },
+    result: FileReadResult,
+    stat: FileStatResult,
   ) => {
-    if (!active || !stat.isFile || stat.mtimeMs === undefined) return result;
+    if (!active || !stat.isFile || stat.size === undefined || stat.mtimeMs === undefined) return result;
     const bytes = contentBytes(result.content);
     if (bytes > MAX_BYTES) return result;
     removeEntry(key);
@@ -64,15 +67,99 @@ export function createContentCachedFiles(files: FilesAPI): { files: FilesAPI; di
     return result;
   };
 
+  const assertRemoteCurrent = (capturedGeneration: number, signal?: AbortSignal) => {
+    signal?.throwIfAborted();
+    if (!active) throw new Error('File cache owner disposed');
+    if (capturedGeneration !== generation) throw changedFileSource();
+  };
+
+  const confirmRemoteSource = async (directory: string, sourceIdentity: string, capturedGeneration: number, signal?: AbortSignal) => {
+    assertRemoteCurrent(capturedGeneration, signal);
+    if (!files.resolveWorkspaceFileSource) throw invalidFileResponse();
+    const current = await files.resolveWorkspaceFileSource(directory, { signal });
+    assertRemoteCurrent(capturedGeneration, signal);
+    if (current.kind !== 'remote') throw changedFileSource();
+    assertFileSourceIdentity(current.sourceIdentity, sourceIdentity);
+  };
+
+  const remoteStat = async (
+    path: string,
+    options: Parameters<NonNullable<FilesAPI['readFile']>>[1],
+    sourceIdentity: string,
+    capturedGeneration: number,
+  ): Promise<FileStatResult> => {
+    assertRemoteCurrent(capturedGeneration, options?.signal);
+    if (!files.statFile) throw invalidFileResponse();
+    const stat = await files.statFile(path, options);
+    assertRemoteCurrent(capturedGeneration, options?.signal);
+    assertFileSourceIdentity(stat.sourceIdentity, sourceIdentity);
+    if (stat.path !== path) throw invalidFileResponse();
+    if (stat.exists === false && options?.optional) return stat;
+    if (!stat.isFile || !Number.isFinite(stat.size) || stat.size! < 0
+      || !Number.isFinite(stat.mtimeMs)) throw invalidFileResponse();
+    return stat;
+  };
+
+  const readRemote = async (
+    key: string,
+    path: string,
+    options: Parameters<NonNullable<FilesAPI['readFile']>>[1],
+    sourceIdentity: string,
+    capturedGeneration: number,
+  ): Promise<FileReadResult> => {
+    try {
+      assertRemoteCurrent(capturedGeneration, options?.signal);
+      requireFileSourceIdentity(sourceIdentity);
+      const hit = cache.get(key);
+      if (hit) assertFileSourceIdentity(hit.sourceIdentity, sourceIdentity);
+      const before = await remoteStat(path, options, sourceIdentity, capturedGeneration);
+      if (hit && !options?.fresh && metadataMatches(hit, before)) {
+        await confirmRemoteSource(options?.directory ?? '', sourceIdentity, capturedGeneration, options?.signal);
+        cache.delete(key);
+        cache.set(key, hit);
+        return { content: hit.content, path: hit.path, sourceIdentity };
+      }
+      removeEntry(key);
+      const result = await files.readFile!(path, options);
+      assertRemoteCurrent(capturedGeneration, options?.signal);
+      assertFileSourceIdentity(result.sourceIdentity, sourceIdentity);
+      if (result.path !== path) throw invalidFileResponse();
+      const after = await remoteStat(path, options, sourceIdentity, capturedGeneration);
+      await confirmRemoteSource(options?.directory ?? '', sourceIdentity, capturedGeneration, options?.signal);
+      if (before.exists === false && after.exists === false) {
+        if (result.content !== '') throw invalidFileResponse();
+        return result;
+      }
+      if (!before.isFile || !after.isFile || before.size !== after.size || before.mtimeMs !== after.mtimeMs) {
+        throw changedFileSource();
+      }
+      if (contentBytes(result.content) !== after.size) throw invalidFileResponse();
+      return cacheResult(key, path, result, after);
+    } catch (error) {
+      removeEntry(key);
+      throw error;
+    }
+  };
+
+  const localStat = async (path: string, options: Parameters<NonNullable<FilesAPI['readFile']>>[1]) =>
+    files.statFile?.(path, options).catch((cause: unknown) => {
+      if (isFilesystemError(cause) && ['remote-unavailable', 'remote-source-changed', 'invalid-response'].includes(cause.reason)) throw cause;
+      return null;
+    });
+
   const readFresh = async (
     key: string,
     path: string,
     options: Parameters<NonNullable<FilesAPI['readFile']>>[1] | undefined,
     capturedGeneration: number,
   ): Promise<{ content: string; path: string }> => {
-    const before = await files.statFile?.(path, options).catch(() => null);
+    const before = await localStat(path, options);
     const result = await files.readFile!(path, options);
-    const after = await files.statFile?.(path, options).catch(() => null);
+    const after = await localStat(path, options);
+    if (before?.sourceIdentity !== undefined || result.sourceIdentity !== undefined || after?.sourceIdentity !== undefined) {
+      removeEntry(key);
+      throw invalidFileResponse();
+    }
     if (!active) throw new Error('File cache owner disposed');
     if (capturedGeneration !== generation) return cachedReadFile!(path, options);
     const stable = before && after && before.isFile && after.isFile
@@ -83,18 +170,36 @@ export function createContentCachedFiles(files: FilesAPI): { files: FilesAPI; di
 
   const cachedReadFile: FilesAPI['readFile'] = files.readFile
     ? async (path, options) => {
+        const requestedRuntimeGeneration = runtimeGeneration;
         await mutationBarrier;
         if (!active) throw new Error('File cache owner disposed');
         const capturedGeneration = generation;
-        if (options?.allowOutsideWorkspace) return files.readFile!(path, options);
         const key = cacheKey(path, options);
+        if (files.resolveWorkspaceFileSource) {
+          try {
+            if (requestedRuntimeGeneration !== runtimeGeneration) throw changedFileSource();
+            assertRemoteCurrent(capturedGeneration, options?.signal);
+            const source = await files.resolveWorkspaceFileSource(options?.directory ?? '', { signal: options?.signal });
+            if (source.kind === 'remote') {
+              return await readRemote(key, path, options, source.sourceIdentity, capturedGeneration);
+            }
+            if (cache.get(key)?.sourceIdentity !== undefined) throw changedFileSource();
+          } catch (error) {
+            removeEntry(key);
+            throw error;
+          }
+        }
+        if (options?.allowOutsideWorkspace) return files.readFile!(path, options);
         if (options?.fresh) {
           removeEntry(key);
           return files.readFile!(path, options);
         }
         const hit = cache.get(key);
         if (!hit) return readFresh(key, path, options, capturedGeneration);
-        const latest = await files.statFile?.(path, options).catch(() => null);
+        let latest: FileStatResult | null | undefined;
+        try { latest = await localStat(path, options); }
+        catch (error) { removeEntry(key); throw error; }
+        if (latest?.sourceIdentity !== undefined) { removeEntry(key); throw invalidFileResponse(); }
         if (!active) throw new Error('File cache owner disposed');
         if (capturedGeneration !== generation) return cachedReadFile!(path, options);
         if (!latest || !metadataMatches(hit, latest)) {
@@ -132,6 +237,7 @@ export function createContentCachedFiles(files: FilesAPI): { files: FilesAPI; di
   };
   const unsubscribeRuntime = subscribeRuntimeEndpointWillChange((detail) => {
     if (detail.runtimeKey === detail.previousRuntimeKey) return;
+    runtimeGeneration += 1;
     // Invalidate cached content for the previous runtime, but keep serving reads.
     // `apis.files` is typically stable across endpoint switches, so permanently
     // deactivating this owner would break every subsequent text-file open.

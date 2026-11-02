@@ -31,6 +31,18 @@ describe('FilesystemError', () => {
     expect(isFilesystemError({ reason: 'already-exists' })).toBe(true);
     expect(isFilesystemError({ reason: 409 })).toBe(false);
   });
+
+  test('retains ratified remote reasons without message inference', () => {
+    for (const reason of ['invalid-path', 'excluded-path', 'file-too-large', 'directory-limit', 'search-visit-limit',
+      'non-text', 'result-too-large', 'remote-source-changed', 'remote-unavailable', 'search-unavailable']) {
+      expect(parseFilesystemErrorReason(reason)).toBe(reason);
+    }
+    expect(isFileMissingError(new FilesystemError('File not found on disconnected peer', { status: 503, reason: 'remote-unavailable' }))).toBe(false);
+    expect(isFileMissingError(new FilesystemError('ENOENT', { status: 409, reason: 'remote-source-changed' }))).toBe(false);
+    expect(isFileMissingError(new FilesystemError('Missing', { status: 503, reason: 'not-found' }))).toBe(false);
+    expect(isFileMissingError(new FilesystemError('Missing', { status: 404, reason: 'not-found' }))).toBe(true);
+    expect(isFileMissingError(new FilesystemError('ENOENT'))).toBe(true);
+  });
 });
 
 describe('isFileMissingError', () => {

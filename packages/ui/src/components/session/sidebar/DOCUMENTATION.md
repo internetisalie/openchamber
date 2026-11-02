@@ -1,5 +1,88 @@
 # Session Sidebar
 
+## Canonical Location projection
+
+`SessionProjectCollection` uses `buildCanonicalLocationRows` for desktop/web,
+mobile, search and the VS Code sidebar. The projection is project → lane →
+workspaces and direct native children. A lane with a native lead contains its
+lead row exactly once. Only a unique `metadata.loom.laneLead` string marks
+a lead; ambiguous markers remain ordinary workspace sessions. Titles, default
+agents, parentlessness and structural manifests do not assign lanes or roles.
+Native parent IDs and directories remain unchanged, including cross-project
+children. Missing-parent sessions remain visible and cyclic lineage has a
+deterministic display root without rewriting the native relation.
+
+`useDispatchProjections` collects sanitized `loom.dispatch-projection.v1` data
+through `FilesAPI.readNativeFile`. The only aliases are
+`.supervisor/dispatch-workspace-projection.json` and
+`.supervisor/dispatch-session-projection/<nativeSID>.json`. Agent generates these
+aliases; physical alias file bytes and raw dispatch records are outside this
+consumer. No Catalog, store, roster, ancestor search or directory enumeration
+participates. The manifest remains structural only.
+
+Known workspace-default context may group an external workspace beneath a lane
+without a lead. It cannot mark a session as lead. Session lane/item/phase and
+captured agent selection come exclusively from that session's historical alias.
+Missing and legacy-unknown history stay unknown even beneath a workspace-default
+lane. Workspace-local titles remain native titles. Captured agent selection is
+displayed separately from the native runtime agent and is not execution proof.
+Qualified item identity includes repository, register subPath and ID. Explicit
+null item means chore; phase selectors retain their exact text. The projection's
+workspace must equal the requested registered directory. Context container stays
+in the producer's namespace and is not compared to the published directory.
+
+If any admitted session history or recognized lead in a directory disagrees with
+its known workspace-default lane, the workspace stays at project level with a
+conflict mark. Both projections retain their values. Native parent/child placement
+and explicit lead recognition still apply. Unknown history alone creates no
+conflict and supplies no captured context. A lead's own unambiguous workspace
+stays under its lane when there is no conflicting default evidence.
+
+The collector reads only admitted sessions' exact native directories in the
+current active/archive projection. One scope has at most 64 directories, 256
+session snapshots and 2 concurrent reads. Candidates beyond the cap remain
+unrequested. No polling, retries or global projection service is added. Structural
+session membership, source changes, visibility and API-owner changes delimit a
+scope; a new scope loads once. Hiding or changing scope aborts queued/in-flight
+work and prevents old results from rendering. Runtime generation checks reject
+instance round trips; native source-generation changes invalidate the whole
+batch. Shared native adapters retain authentication, registered-directory and
+file-source identity checks, with a 16 KiB text limit for projection reads.
+
+Known, legacy-unknown, missing, unsupported, refused, invalid, failed, stale,
+cancelled, loading and unrequested remain distinct states. An older Agent's
+excluded-path refusal remains refused and cannot become missing context or chore.
+An absent alias without a v1 response is unsupported. Only a validated v1
+`missing` response establishes absence of the selected dispatch source.
+Malformed identity/context, duplicate keys, unsupported markers and oversized
+text never supply attribution. Web, Electron, hosted mobile and Capacitor use
+the native adapter; VS Code retains explicit unsupported native reads.
+
+`canonical-sidebar-preferences` persists manual, alphabetical or optional recent
+workspace order. Move-up operates within workspace siblings; project ordering
+controls retain their own preference. There are no duplicate Pinned, In-work or
+time-group session placements in this projection. Lane/workspace groups fold;
+explicit `loom.finished: true` leads, root sessions and direct lane children enter a
+separate folded Finished group. Idle does not imply finished. Native row
+components retain title, status and actions; `LocationSessionFacts` adds last
+activity and navigation only for an explicit native `loom.predecessor` session
+ID resolved in the current source. Source-qualified row/group keys prevent
+presentation-key aliasing; simultaneous multi-source navigation is not supplied.
+
+The VS Code archive toggle selects archive-only rows using native archive
+timestamp semantics. Desktop/web and mobile retain their separate Archive
+surface. Archives are not mixed into active workspace buckets.
+
+Expanded workspace composition reads require the current source and an exact
+match with the selected native session directory. Checkout children do not cause
+an ancestor read. The committed Location manifest reader supplies structural
+members and pins only; missing manifests add nothing, and failed, invalid or
+unsupported reads do not become lane attribution.
+
+The remaining sections describe shared native collection/row machinery and the
+legacy grouping model retained by `buildSessionSidebarRowModel`; its zone/folder
+placement rules do not control the canonical Location projection.
+
 Sidebar code is organized by the business object it owns. Shared contracts are
 kept at this root in `types.ts` and `utils.tsx`.
 

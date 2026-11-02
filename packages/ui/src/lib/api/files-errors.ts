@@ -6,6 +6,17 @@ export type FilesystemErrorReason =
   | 'not-found'
   | 'not-directory'
   | 'invalid-response'
+  | 'invalid-path'
+  | 'excluded-path'
+  | 'dispatch-invalid'
+  | 'file-too-large'
+  | 'directory-limit'
+  | 'search-visit-limit'
+  | 'non-text'
+  | 'result-too-large'
+  | 'remote-source-changed'
+  | 'remote-unavailable'
+  | 'search-unavailable'
   | 'unknown';
 
 export class FilesystemError extends Error {
@@ -37,6 +48,17 @@ export const parseFilesystemErrorReason = (value: unknown): FilesystemErrorReaso
     case 'not-found':
     case 'not-directory':
     case 'invalid-response':
+    case 'invalid-path':
+    case 'excluded-path':
+    case 'dispatch-invalid':
+    case 'file-too-large':
+    case 'directory-limit':
+    case 'search-visit-limit':
+    case 'non-text':
+    case 'result-too-large':
+    case 'remote-source-changed':
+    case 'remote-unavailable':
+    case 'search-unavailable':
       return value;
     default:
       return 'unknown';
@@ -47,16 +69,15 @@ export const parseFilesystemErrorReason = (value: unknown): FilesystemErrorReaso
 // that carries the message.
 const messageCarrierSchema = z.object({ message: z.string() });
 
-export const isFileMissingError = (error: unknown): boolean => {
-  if (isFilesystemError(error) && error.reason === 'not-found') {
-    return true;
+export const isFileMissingError = (cause: unknown): boolean => {
+  if (isFilesystemError(cause) && (cause.status !== undefined || cause.reason !== 'unknown')) {
+    return cause.reason === 'not-found' && (cause.status === undefined || cause.status === 404);
   }
-  const carrier = messageCarrierSchema.safeParse(error);
-  const message = error instanceof Error ? error.message : carrier.success ? carrier.data.message : String(error ?? '');
+  const carrier = messageCarrierSchema.safeParse(cause);
+  const message = cause instanceof Error ? cause.message : carrier.success ? carrier.data.message : String(cause ?? '');
   const normalized = message.toLowerCase();
   return normalized.includes('file not found')
     || normalized.includes('enoent')
     || normalized.includes('no such file')
     || normalized.includes('does not exist');
 };
-

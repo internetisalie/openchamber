@@ -44,7 +44,8 @@ import { updateDesktopSettings } from '@/lib/persistence';
 import { cn } from '@/lib/utils';
 import { refreshGlobalSessions, useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
-import { resolveSidebarGrouping, useSessionDisplayStore, type ProjectSortOrder } from '@/stores/useSessionDisplayStore';
+import { useSessionDisplayStore, type ProjectSortOrder } from '@/stores/useSessionDisplayStore';
+import { useCanonicalSidebarPreferences } from '@/components/session/sidebar/canonical-sidebar-preferences';
 import { useUIStore } from '@/stores/useUIStore';
 import { TooltipLabelWithShortcut } from '@/components/ui/action-toolbar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -90,9 +91,10 @@ const PROJECT_SORT_OPTIONS = [
   ['recent', 'sessions.sidebar.header.projectSort.recent'],
 ] as const;
 
-const GROUPING_OPTIONS = [
-  ['project', 'sessions.sidebar.header.listGrouping.project'],
-  ['time', 'sessions.sidebar.header.listGrouping.time'],
+const WORKSPACE_ORDER_OPTIONS = [
+  ['manual', 'sessions.sidebar.header.projectSort.manual'],
+  ['a-z', 'sessions.sidebar.header.projectSort.aToZ'],
+  ['recent', 'sessions.sidebar.header.projectSort.recent'],
 ] as const;
 
 const MOBILE_MENU_ITEM_CLASS = 'min-h-10 items-center justify-between';
@@ -146,19 +148,8 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
   const openNewSessionDraft = useSessionUIStore((state) => state.openNewSessionDraft);
   const projectSortOrder = useSessionDisplayStore((state) => state.projectSortOrder);
   const setProjectSortOrder = useSessionDisplayStore((state) => state.setProjectSortOrder);
-  const grouping = useSessionDisplayStore(resolveSidebarGrouping);
-  const setSidebarGrouping = useSessionDisplayStore((state) => state.setSidebarGrouping);
-  const showWorkSection = useSessionDisplayStore((state) => state.showWorkSection);
-  const setShowWorkSection = useSessionDisplayStore((state) => state.setShowWorkSection);
-  const showPinnedSection = useSessionDisplayStore((state) => state.showPinnedSection);
-  const setShowPinnedSection = useSessionDisplayStore((state) => state.setShowPinnedSection);
-  const keepWorkInPlace = useSessionDisplayStore((state) => state.keepWorkInPlace);
-  const setKeepWorkInPlace = useSessionDisplayStore((state) => state.setKeepWorkInPlace);
-  const detailedZoneRows = useSessionDisplayStore((state) => state.detailedZoneRows);
-  const setDetailedZoneRows = useSessionDisplayStore((state) => state.setDetailedZoneRows);
-  const worktreeNameByBranch = useSessionDisplayStore((state) => state.worktreeNameByBranch);
-  const setWorktreeNameByBranch = useSessionDisplayStore((state) => state.setWorktreeNameByBranch);
-  const sessionWorkEnabled = useUIStore((state) => state.sessionWorkEnabled);
+  const workspaceOrder = useCanonicalSidebarPreferences((state) => state.workspaceOrder);
+  const setWorkspaceOrder = useCanonicalSidebarPreferences((state) => state.setWorkspaceOrder);
   const shortcutOverrides = useUIStore((state) => state.shortcutOverrides);
   const admissionScope = getSessionAdmissionScope();
   useChatsRoot();
@@ -231,15 +222,6 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
     void updateDesktopSettings({ sidebarProjectSortOrder: order });
     if (order !== 'manual') setEditingOrder(false);
   };
-  const handleGroupingChange = (next: 'project' | 'time') => {
-    setSidebarGrouping(next);
-    void updateDesktopSettings({ sidebarGrouping: next });
-    if (next === 'time') setEditingOrder(false);
-  };
-  const toggleSetting = (current: boolean, set: (next: boolean) => void, persist: (next: boolean) => void) => () => {
-    set(!current);
-    persist(!current);
-  };
 
   const renderMenuChoice = (key: string, labelKey: I18nKey, checked: boolean, onSelect: () => void): React.ReactNode => (
     <DropdownMenuItem key={key} onClick={onSelect} className={MOBILE_MENU_ITEM_CLASS}>
@@ -261,7 +243,7 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
     reorderProjects(fromIndex, toIndex);
   };
 
-  const canEditOrder = !query && projects.length > 1 && projectSortOrder === 'manual' && grouping === 'project';
+  const canEditOrder = !query && projects.length > 1 && projectSortOrder === 'manual';
 
   const displayMenu = !editingOrder && projects.length > 0 ? (
     <DropdownMenu>
@@ -278,31 +260,12 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-64">
-        <DropdownMenuLabel>{t('sessions.sidebar.header.listGrouping.label')}</DropdownMenuLabel>
-        {GROUPING_OPTIONS.map(([option, labelKey]) => renderMenuChoice(option, labelKey, grouping === option, () => handleGroupingChange(option)))}
-        {grouping === 'project' ? (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuLabel>{t('sessions.sidebar.header.actions.sortProjects')}</DropdownMenuLabel>
-            {PROJECT_SORT_OPTIONS.map(([order, labelKey]) => renderMenuChoice(order, labelKey, projectSortOrder === order, () => handleProjectSortChange(order)))}
-          </>
-        ) : null}
+        <DropdownMenuLabel>{t('sessions.sidebar.location.workspaceOrder')}</DropdownMenuLabel>
+        {WORKSPACE_ORDER_OPTIONS.map(([option, labelKey]) => renderMenuChoice(option, labelKey, workspaceOrder === option, () => setWorkspaceOrder(option)))}
         <DropdownMenuSeparator />
-        {renderMenuChoice('pinned', 'sessions.sidebar.header.displayMode.showPinned', showPinnedSection, toggleSetting(showPinnedSection, setShowPinnedSection, (next) => {
-          void updateDesktopSettings({ sidebarShowPinnedSection: next });
-        }))}
-        {sessionWorkEnabled ? renderMenuChoice('work', 'sessions.sidebar.header.displayMode.showWork', showWorkSection, toggleSetting(showWorkSection, setShowWorkSection, (next) => {
-          void updateDesktopSettings({ sidebarShowWorkSection: next });
-        })) : null}
-        {sessionWorkEnabled && showWorkSection ? renderMenuChoice('in-place', 'sessions.sidebar.header.displayMode.keepWorkInPlace', keepWorkInPlace, toggleSetting(keepWorkInPlace, setKeepWorkInPlace, (next) => {
-          void updateDesktopSettings({ sidebarKeepWorkInPlace: next });
-        })) : null}
-        {renderMenuChoice('detailed', 'sessions.sidebar.header.displayMode.detailedZoneRows', detailedZoneRows, toggleSetting(detailedZoneRows, setDetailedZoneRows, (next) => {
-          void updateDesktopSettings({ sidebarDetailedZoneRows: next });
-        }))}
-        {renderMenuChoice('branch-names', 'sessions.sidebar.header.displayMode.worktreeNameByBranch', worktreeNameByBranch, toggleSetting(worktreeNameByBranch, setWorktreeNameByBranch, (next) => {
-          void updateDesktopSettings({ sidebarWorktreeNameByBranch: next });
-        }))}
+        <DropdownMenuLabel>{t('sessions.sidebar.header.actions.sortProjects')}</DropdownMenuLabel>
+        {PROJECT_SORT_OPTIONS.map(([order, labelKey]) => renderMenuChoice(order, labelKey, projectSortOrder === order, () => handleProjectSortChange(order)))}
+        <DropdownMenuSeparator />
         {canEditOrder ? (
           <>
             <DropdownMenuSeparator />

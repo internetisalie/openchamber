@@ -1181,7 +1181,7 @@ export const registerFsRoutes = (app, dependencies) => {
     const filePath = typeof req.query.path === 'string' ? req.query.path : '';
     const optional = req.query.optional === 'true';
     if (!filePath) {
-      return res.status(400).json({ error: 'Path is required' });
+      return res.status(400).json({ error: 'Path is required', sourceKind: 'local' });
     }
 
     try {
@@ -1201,7 +1201,7 @@ export const registerFsRoutes = (app, dependencies) => {
         if (req.query?.allowOutsideWorkspace === 'true') {
           console.warn(`Rejected outside-workspace stat: ${resolved.error}`);
         }
-        return res.status(400).json({ error: resolved.error });
+        return res.status(400).json({ error: resolved.error, sourceKind: 'local' });
       }
 
       let canonicalPath;
@@ -1211,28 +1211,28 @@ export const registerFsRoutes = (app, dependencies) => {
         stats = await fsPromises.stat(canonicalPath);
       } catch (error) {
         if (optional && ['ENOENT', 'ENOTDIR', 'EINVAL', 'ENAMETOOLONG'].includes(error?.code)) {
-          return res.json({ path: filePath, exists: false });
+          return res.json({ path: filePath, exists: false, sourceKind: 'local' });
         }
         throw error;
       }
       if (!stats.isFile()) {
-        return res.status(400).json({ error: 'Specified path is not a file' });
+        return res.status(400).json({ error: 'Specified path is not a file', sourceKind: 'local' });
       }
 
-      return res.json({ path: canonicalPath, isFile: true, size: stats.size, mtimeMs: stats.mtimeMs });
+      return res.json({ path: canonicalPath, isFile: true, size: stats.size, mtimeMs: stats.mtimeMs, sourceKind: 'local' });
     } catch (error) {
       const err = error;
       if (err && typeof err === 'object' && err.code === 'ENOENT') {
         if (optional) {
-          return res.json({ path: filePath, exists: false });
+          return res.json({ path: filePath, exists: false, sourceKind: 'local' });
         }
-        return res.status(404).json({ error: 'File not found' });
+        return res.status(404).json({ error: 'File not found', sourceKind: 'local' });
       }
       if (isOsPermissionError(err)) {
-        return sendOsPermissionDenied(res, 'Access to file denied');
+        return res.status(403).json({ error: 'Access to file denied', reason: 'os-permission', sourceKind: 'local' });
       }
       console.error('Failed to stat file:', error);
-      return res.status(500).json({ error: (error && error.message) || 'Failed to stat file' });
+      return res.status(500).json({ error: (error && error.message) || 'Failed to stat file', sourceKind: 'local' });
     }
   });
 
