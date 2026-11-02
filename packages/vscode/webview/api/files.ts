@@ -11,6 +11,9 @@ import { sendBridgeMessage, sendBridgeMessageWithOptions } from './bridge';
 const normalizePath = (value: string): string => value.replace(/\\/g, '/');
 
 export const createVSCodeFilesAPI = (): FilesAPI => ({
+  async readNativeFile() {
+    return { status: 'unsupported' };
+  },
   async listDirectory(path: string, options?: { respectGitignore?: boolean }): Promise<DirectoryListResult> {
     const target = normalizePath(path);
     const data = await sendBridgeMessage<{

@@ -11,6 +11,17 @@ import {
 } from './sections';
 
 describe('section registry', () => {
+  test('Location retains the repository preference ID and every other section label', () => {
+    expect(WORK_STATUS_SECTION_LABEL_KEYS).toEqual({
+      session: 'chat.workStatus.section.session', repository: 'chat.workStatus.section.location',
+      usage: 'chat.workStatus.section.usage', telemetry: 'chat.workStatus.section.telemetry',
+      subagents: 'chat.workStatus.section.subagents', ptys: 'chat.workStatus.section.ptys',
+      workflows: 'chat.workStatus.section.workflows', mcp: 'chat.workStatus.section.mcp',
+      pinned: 'chat.workStatus.section.pinned', contextSources: 'chat.workStatus.section.contextBreakdown',
+    });
+    expect(isWorkStatusSectionVisible(['repository'], 'repository')).toBe(false);
+    expect(isWorkStatusSectionVisible(['repository'], 'session')).toBe(true);
+  });
   test('restores defaults for missing or empty saved order', () => {
     for (const value of [undefined, null, []]) {
       expect(sanitizeWorkStatusSectionOrder(value)).toEqual([...WORK_STATUS_SECTION_IDS]);

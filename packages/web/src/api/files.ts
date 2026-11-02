@@ -313,6 +313,33 @@ export const createWebFilesAPI = ({ getDirectory, searchFiles = defaultSearchFil
   return {
   resolveWorkspaceFileSource,
   searchWithSource,
+  async readNativeFile(relativePath, options) {
+    if (!options.directory || !relativePath || relativePath.includes('\\') || relativePath.includes('\0')
+      || relativePath.split('/').some((part) => !part || part === '.' || part === '..')) {
+      throw new FilesystemError('Invalid native file path', { status: 400, reason: 'invalid-path' });
+    }
+    const directory = options.directory;
+    const { source, scope } = await start(directory, options.signal);
+    try {
+      if (source.kind !== 'remote') return { status: 'unsupported' };
+      const route = `/api/fs/read/${relativePath.split('/').map(encodeURIComponent).join('/')}`;
+      const response = await scope.wait(fetchFiles(route, {
+        headers: directoryHeaders(getDirectory, directory), signal: scope.signal, cache: 'no-store',
+      }));
+      if (!response.ok) {
+        const failure = await fileResponseError(response, scope);
+        if (response.status !== 404) throw failure;
+        assertFileSourceIdentity(response.headers.get(FILE_SOURCE_HEADER), source.sourceIdentity);
+        if (failure.reason !== 'not-found') throw invalidFileResponse();
+        await complete(source, directory, scope);
+        return { status: 'missing' };
+      }
+      assertFileSourceIdentity(response.headers.get(FILE_SOURCE_HEADER), source.sourceIdentity);
+      const content = await readFileResponseText(response, scope, FILE_JSON_BYTES);
+      await complete(source, directory, scope);
+      return { status: 'read', content };
+    } finally { scope.dispose(); }
+  },
   async listDirectory(path: string, options): Promise<DirectoryListResult> {
     const target = normalizePath(path);
     const directory = directoryOf(undefined, target);
