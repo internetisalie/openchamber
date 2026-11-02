@@ -29,7 +29,7 @@ export type WorkStatusSectionId = (typeof WORK_STATUS_SECTION_IDS)[number];
 
 export const WORK_STATUS_SECTION_LABEL_KEYS = {
   session: 'chat.workStatus.section.session',
-  repository: 'chat.workStatus.section.project',
+  repository: 'chat.workStatus.section.location',
   usage: 'chat.workStatus.section.usage',
   telemetry: 'chat.workStatus.section.telemetry',
   subagents: 'chat.workStatus.section.subagents',

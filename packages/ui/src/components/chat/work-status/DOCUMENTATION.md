@@ -102,7 +102,7 @@ mode. It remains available on a new-session draft: when the draft targets a
 project or pending worktree, the panel uses that directory for project, MCP,
 and usage readouts before a session exists.
 
-Managed Chats never render or warm the Project repository section. A Chat draft
+Managed Chats never render or warm the Location section. A Chat draft
 passes no fallback directory to the panel, so an active project's branch cannot
 leak into it. The MCP section prepares the draft's own directory through
 `prepareChatDraftDirectory`, shared with the header dropdown and first send.
@@ -174,12 +174,13 @@ and a laptop are set up apart anyway, as the drawer's tabs already are.
 
 ## Data sources
 
-Everything is read from already-warm caches. The panel adds no aggregated
+Session and repository readouts use already-warm caches. The panel adds no aggregated
 endpoint; quota data refreshes through the shared fixed three-minute quota timer,
 which requests only providers enabled for this panel.
 
 | Block | Source | Notes |
 |---|---|---|
+| Location composition | `FilesAPI.readNativeFile` reads `.supervisor/manifest.json` relative to the selected container | structural member roles, repos, directories and pins; no live seats or dispatch attribution |
 | Context + cost | `contextUsage.ts` over `useSessionMessages`; cost via `useSubagentCostRollup` (own cost + every descendant subagent, recursively) | see below — the store getters cannot serve this |
 | Branch, ahead/behind, attention | `useGitStore` directory state | warmed via `runBackgroundNetworkTask(ensureStatus)` and refreshed from Git mutation hints |
 | Changed files | `useGitStore` status `files` + `diffStats` | working tree, not session-authored edits |
@@ -196,6 +197,37 @@ which requests only providers enabled for this panel.
 | MCP | `useMcpStore` | connect/disconnect reuses the dropdown's actions |
 | Pinned messages | `getContextObligatoryMessages` + `state.part`, else one `getSessionMessage` read | see below |
 | Todos | live `state.todo[sessionId]`, persisted fallback | live channel wins |
+
+### Location composition
+
+Location keeps the `repository` preference ID and the existing project subject,
+Git rows and actions. A selected plain directory keeps the section visible even
+without repository data. Its directory row always names the selected container.
+
+The manifest parser accepts version 1, requires exact container equality, and
+projects only member role, repo, relative directory and pin fields. Member
+directories cannot escape, overlap or repeat. Exactly one project and one base
+member are required. Identity, seats, steps and model overrides are excluded
+from the display model. Members describe trees; seats declare available roles.
+
+Web, Electron, hosted mobile and Capacitor use the web native-read adapter
+through runtime transport/auth. It requires a remote workspace source, uses
+`/api/fs/read/<per-segment-relativepath>` with the explicit container directory,
+and preserves source-identity and response-size checks. VS Code reports this
+operation unsupported. A runtime without the operation is also unsupported.
+There is no local filesystem fallback.
+
+Only identity-checked not-found is absence. Absence leaves the native directory
+and existing readouts visible without composition rows. Read failures, invalid
+JSON, invalid manifests and unsupported reads remain visible as separate states.
+Directory/runtime changes discard mismatched displayed results and cancel reads.
+Composition is read on mount or scope change; it has no live manifest watcher.
+
+### Why Location uses a native read operation
+
+`FilesAPI.readFile` serves the query-style file route and the VS Code local
+bridge. The separate native operation preserves container-relative backend
+selection without exposing local-file fallback to the composition reader.
 
 ### Subagent rows
 
@@ -454,7 +486,7 @@ saved order, so it comes back where the user put it.
 
 The default order is by durability:
 
-1. **Session** (goal, context, cost), **Project** (attention, branch,
+1. **Session** (goal, context, cost), **Location** (directory, composition, attention, branch,
    changes, PR, checks), **Usage**, and **Turn stats** (session telemetry:
    throughput, duration, TTFT, cache hit rate) — true for as long as the session
    is open. Usage sits here rather than lower down because a spent quota stops the
@@ -469,7 +501,7 @@ store. Missing or empty order uses the default; duplicate and obsolete ids are
 discarded, and newly introduced sections append in default order. Visibility
 changes never alter positions.
 
-`WorkStatusPrimaryGroup` supplies Session and Project through a composition
+`WorkStatusPrimaryGroup` supplies Session and Location through a composition
 callback so the panel can place them independently while retaining one set of
 data subscriptions. Keyed fragments preserve mounted sections and DOM order;
 sections that render nothing leave no spacing wrappers. Secondary elements are
@@ -684,8 +716,8 @@ Rows that name something the app can already show are buttons:
 | Changes | working-tree diff (`openContextPanelTab`, `diffScope: 'working'`, no target path) |
 | Branch | git surface (`openContextSurface(dir, 'git')`) |
 | Pull request, Checks | The Tracker's branch tab (`openContextPanelTab(dir, { mode: 'pr' })`) |
-| App icon (Project heading, right) | opens the project in the chosen app (`OpenInAppButton`, desktop with a local host only); its chevron copies the path or picks another app. The project name beside the title is plain text |
-| Project action | runs or stops the selected project action (`ProjectActionsButton`); its chevron picks another action. The project's own actions come first and auto-discovery last, so with nothing picked the row offers the first configured action, or auto-discovery when there is none. The pick is stored per runtime and project (`lib/projectActionSelection.ts`) and survives remounts and restarts; a pick that no longer names an action falls back to the first one. A running action takes the row over an idle pick, and pressing the row acts on the action it shows, through the same shared-setup trust prompt as the menu. The row is a view: the runner lives in `ProjectActionsProvider` above the whole layout (see below). The header carries no action control, so a project without a repository still gets a Project section |
+| App icon (Location heading, right) | opens the project in the chosen app (`OpenInAppButton`, desktop with a local host only); its chevron copies the path or picks another app. The project name beside the title is plain text |
+| Project action | runs or stops the selected project action (`ProjectActionsButton`); its chevron picks another action. The project's own actions come first and auto-discovery last, so with nothing picked the row offers the first configured action, or auto-discovery when there is none. The pick is stored per runtime and project (`lib/projectActionSelection.ts`) and survives remounts and restarts; a pick that no longer names an action falls back to the first one. A running action takes the row over an idle pick, and pressing the row acts on the action it shows, through the same shared-setup trust prompt as the menu. The row is a view: the runner lives in `ProjectActionsProvider` above the whole layout (see below). The header carries no action control, so a project without a repository still gets a Location section |
 | Subagent | that child session's chat tab, read-only |
 | Goal (row) | the composer's own `SessionGoalDialog` |
 | Goal (pause/resume) | `setSessionGoalStatus(sessionId, directory, status)` |

@@ -43,6 +43,7 @@ import { useMobileAppActions } from '@/apps/mobileAppContext';
 import { useOpenTrackerItem } from '@/components/sourceBoard/openTrackerItem';
 import { useLeaveWorkStatus } from './leaveWorkStatus';
 import { prChecksTooltip } from './prChecks';
+import { WorkStatusLocationSection } from './work-status-location-details';
 
 type Props = {
   sessionId: string | null;
@@ -294,7 +295,7 @@ export const WorkStatusPrimaryGroup: React.FC<Props> = ({ sessionId, directory, 
   // restate the number directly above it.
   const showCostBreakdown = cost !== null && subagentCount > 0 && subagentCost > 0;
   const hasSession = showSession && (contextUsage !== null || cost !== null || Boolean(goalRow));
-  const hasRepository = showRepository && Boolean(branch || changed || prSummary || attentionLabel || projectActionsContext);
+  const hasRepository = showRepository && Boolean(directory || branch || changed || prSummary || attentionLabel || projectActionsContext);
 
   useReportWorkStatusPresence('session-repository', hasSession || hasRepository);
 
@@ -344,8 +345,8 @@ export const WorkStatusPrimaryGroup: React.FC<Props> = ({ sessionId, directory, 
       ) : null,
 
       repository: hasRepository ? (
-        <WorkStatusSection
-          title={t('chat.workStatus.section.project')}
+        <WorkStatusLocationSection
+          directory={directory}
           subject={projectLabel}
           summary={projectActionsContext?.directory
             ? <OpenInAppButton directory={projectActionsContext.directory} />
@@ -437,7 +438,7 @@ export const WorkStatusPrimaryGroup: React.FC<Props> = ({ sessionId, directory, 
 
           {/* Last: the readouts above describe the project, this runs something in it. */}
           {projectActionsContext ? <ProjectActionsButton /> : null}
-        </WorkStatusSection>
+        </WorkStatusLocationSection>
       ) : null,
   });
 };
