@@ -1,5 +1,49 @@
 # Session Sidebar
 
+## Canonical Location projection
+
+`SessionProjectCollection` uses `buildCanonicalLocationRows` for desktop/web,
+mobile, search and the VS Code sidebar. The projection is project → explicitly
+marked lane → workspaces and direct native children. A lane header contains its
+native lead row exactly once. Only a unique `metadata.loom.laneLead` string marks
+a lead; ambiguous markers remain ordinary workspace sessions. Titles, default
+agents, parentlessness and structural manifests do not assign lanes or roles.
+Native parent IDs and directories remain unchanged, including cross-project
+children. Missing-parent sessions remain visible and cyclic lineage has a
+deterministic display root without rewriting the native relation.
+
+Workspace dispatch attribution is the typed `{ status: 'unsupported' }` seam.
+External workspaces remain at project level until a sanitized native dispatch
+projection is available. No dispatch endpoint, raw snapshot reader, Catalog,
+store or roster participates. Actual dispatched role, item and phase are not
+displayed without that producer. Workspace-local launcher titles are displayed
+as native titles, never parsed as attribution.
+
+`canonical-sidebar-preferences` persists manual, alphabetical or optional recent
+workspace order. Move-up operates within workspace siblings; project ordering
+controls retain their own preference. There are no duplicate Pinned, In-work or
+time-group session placements in this projection. Lane/workspace groups fold;
+explicit `loom.finished: true` leads, root sessions and direct lane children enter a
+separate folded Finished group. Idle does not imply finished. Native row
+components retain title, status and actions; `LocationSessionFacts` adds last
+activity and navigation only for an explicit native `loom.predecessor` session
+ID resolved in the current source. Source-qualified row/group keys prevent
+presentation-key aliasing; simultaneous multi-source navigation is not supplied.
+
+The VS Code archive toggle selects archive-only rows using native archive
+timestamp semantics. Desktop/web and mobile retain their separate Archive
+surface. Archives are not mixed into active workspace buckets.
+
+Expanded workspace composition reads require the current source and an exact
+match with the selected native session directory. Checkout children do not cause
+an ancestor read. The committed Location manifest reader supplies structural
+members and pins only; missing manifests add nothing, and failed, invalid or
+unsupported reads do not become lane attribution.
+
+The remaining sections describe shared native collection/row machinery and the
+legacy grouping model retained by `buildSessionSidebarRowModel`; its zone/folder
+placement rules do not control the canonical Location projection.
+
 Sidebar code is organized by the business object it owns. Shared contracts are
 kept at this root in `types.ts` and `utils.tsx`.
 

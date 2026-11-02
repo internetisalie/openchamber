@@ -57,7 +57,9 @@ import { isVSCodeWithoutWorkspace } from '@/lib/vscodeBootstrap';
 import { isCapacitorApp } from '@/lib/platform';
 import { deriveTimelineActivityItems, matchZoneSessionsForSidebarQuery, pruneSessionTreeForSidebarQuery } from '../recent/activitySections';
 import { resolveSidebarSessionLocations } from '../recent/sessionLocation';
-import { buildSessionSidebarRowModel, type SessionSidebarWorkEntry } from '../sessionSidebarRowModel';
+import type { SessionSidebarWorkEntry } from '../sessionSidebarRowModel';
+import { buildCanonicalLocationRows } from '../canonical-location-model';
+import { useCanonicalSidebarPreferences } from '../canonical-sidebar-preferences';
 import { useRemovingWorktreePaths } from '@/lib/worktrees/worktreeRemovalState';
 import { buildSessionRootIndex, buildSidebarWorkIndex, buildWorktreeArchiveAnchors, isGroupWork, orderInWorkWorks, orderSidebarWorks, type SidebarWorkRef } from '../works/sidebarWorks';
 import { getSessionLifecycleOrderValue } from '@/sync/session-ordering';
@@ -1101,7 +1103,10 @@ const VisibleSessionProjects: React.FC<SessionProjectCollectionProps> = ({ topol
     ...visibleSessionCountByGroup,
     ...visibleActivityCountByKey,
   ]), [visibleActivityCountByKey, visibleSessionCountByGroup]);
-  const sidebarRowModel = React.useMemo(() => buildSessionSidebarRowModel({
+  const locationWorkspaceOrder = useCanonicalSidebarPreferences((state) => state.workspaceOrder);
+  const locationManualOrder = useCanonicalSidebarPreferences((state) => state.manualOrder);
+  const locationSource = getRuntimeKey();
+  const sidebarRowModel = React.useMemo(() => buildCanonicalLocationRows({
     mode: view.hasSessionSearchQuery ? 'search' : 'normal',
     sections: orderedSectionsForRender,
     authoritativeSections: projectSections,
@@ -1142,7 +1147,9 @@ const VisibleSessionProjects: React.FC<SessionProjectCollectionProps> = ({ topol
     projectsCaption: !view.hideDirectoryControls,
     sessionBatchSize: singleProjectMode && !view.useGroupedSections ? 20 : undefined,
     runIndex,
-  }), [runIndex, archivedChatGroup, chatGroup, globalGroup, showChatsSection, projectView.collapsedActivities, pinnedItems, pinnedWorktreeEntries, workEntries, timeEntries, draftPlacement, movedSessionIds, movedGroupKeys, zoneSessionIds, detailedZoneRows, collapsedFolderIds, collection.pinnedSessionIds, expandedParents, folderAuthorityByOwner, foldersMap, groupSearchDataByGroup, groupStatusByKey, orderedSectionsForRender, ownership.bySessionId, projectSections, collapsedGroups, projectView.collapsedProjects, selectedSingleProjectId, sessionOrderIndex, singleProjectMode, view.activeProjectId, view.hasSessionSearchQuery, view.hideDirectoryControls, view.normalizedSessionSearchQuery, view.showOnlyMainWorkspace, view.useGroupedSections, visibleCountByContainer, worktreeArchiveAnchors, liveSpaceIds]);
+  }, { source: locationSource, sessions: topology.isVSCode && view.showInlineArchived ? collection.archivedSessions : collection.orderedSessions,
+    archiveOnly: topology.isVSCode && view.showInlineArchived, workspaceOrder: locationWorkspaceOrder,
+    manualOrder: locationManualOrder, dispatchAttribution: { status: 'unsupported' } }), [locationSource, locationWorkspaceOrder, locationManualOrder, collection.orderedSessions, collection.archivedSessions, topology.isVSCode, view.showInlineArchived, runIndex, archivedChatGroup, chatGroup, globalGroup, showChatsSection, projectView.collapsedActivities, pinnedItems, pinnedWorktreeEntries, workEntries, timeEntries, draftPlacement, movedSessionIds, movedGroupKeys, zoneSessionIds, detailedZoneRows, collapsedFolderIds, collection.pinnedSessionIds, expandedParents, folderAuthorityByOwner, foldersMap, groupSearchDataByGroup, groupStatusByKey, orderedSectionsForRender, ownership.bySessionId, projectSections, collapsedGroups, projectView.collapsedProjects, selectedSingleProjectId, sessionOrderIndex, singleProjectMode, view.activeProjectId, view.hasSessionSearchQuery, view.hideDirectoryControls, view.normalizedSessionSearchQuery, view.showOnlyMainWorkspace, view.useGroupedSections, visibleCountByContainer, worktreeArchiveAnchors, liveSpaceIds]);
   React.useEffect(() => {
     onSearchMatchCountChange(sidebarRowModel.searchMatchCount);
   }, [onSearchMatchCountChange, sidebarRowModel.searchMatchCount]);
