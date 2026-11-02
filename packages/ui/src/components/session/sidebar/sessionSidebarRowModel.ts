@@ -14,6 +14,7 @@ import { EMPTY_MULTI_RUN_INDEX, type MultiRunIndex, type MultiRunSummary } from 
 import { isGroupWork, worktreeFolderMemberId } from './works/sidebarWorks';
 import type { SessionDraft } from '@/stores/useSessionDraftsStore';
 import type { DirectoryOwner } from './sessions/sessionOwnership';
+import type { CanonicalLocationGroup } from './canonical-location-model';
 
 export type SessionSidebarActivityItem = {
   node: SessionNode;
@@ -69,9 +70,11 @@ export type SessionSidebarOwnerAuthority = {
 
 // `treeGuides`: the guide lines a Tree row draws over itself, framing the
 // children of an open worktree, folder, session or run.
-type RowBase = { key: string; estimateSize: number; treeGuides?: readonly SessionTreeGuide[] };
+type RowBase = { key: string; estimateSize: number; treeGuides?: readonly SessionTreeGuide[];
+  locationFacts?: { source: string; predecessor: Session | null } };
 
 export type SessionSidebarRow =
+  | CanonicalLocationGroup
   | (RowBase & { kind: 'activity-header'; activityKey: SessionSidebarActivityKey; collapsed: boolean; forceExpanded: boolean })
   | (RowBase & { kind: 'project-header'; section: ProjectSection; collapsed: boolean; forceExpanded: boolean })
   // The caption over the projects, as each zone has its own (desktop only);

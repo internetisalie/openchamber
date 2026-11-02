@@ -1,4 +1,5 @@
 import React from 'react';
+import { CanonicalLocationRow, LocationSessionFacts } from '../canonical-location-row';
 import {
   DndContext,
   KeyboardSensor,
@@ -297,6 +298,17 @@ function SessionProjectScrollerComponent({ model, view, actions }: SessionProjec
         />
       </CrossfadeZoneHeader>;
     }
+    if (row.kind === 'location-group') {
+      return <CanonicalLocationRow row={row} onToggle={() => model.groupProps.toggleParent(row.expansionKey)}>
+        {row.lead ? <>
+          <SessionTreeItem {...model.groupProps} node={row.lead} depth={row.depth} ownsWork={false}
+            groupDirectory={row.lead.session.directory} projectId={row.projectId} renderChildren={false}
+            editingId={model.state.editingId} openSidebarMenuKey={model.state.openSidebarMenuKey}
+            setOpenSidebarMenuKey={model.state.setOpenSidebarMenuKey} rowKey={row.key} />
+          <LocationSessionFacts session={row.lead.session} source={row.source} predecessor={row.predecessor ?? null} />
+        </> : null}
+      </CanonicalLocationRow>;
+    }
     if (row.kind === 'project-header') {
       const project = row.section.project;
       const label = getProjectLabel(project, view.homeDirectory);
@@ -425,6 +437,7 @@ function SessionProjectScrollerComponent({ model, view, actions }: SessionProjec
             blockingBadgeSessionScopes: row.blockingBadgeSessionScopes,
           }}
         />
+        {row.locationFacts ? <LocationSessionFacts session={row.node.session} {...row.locationFacts} /> : null}
       </div>;
     }
     if (row.kind === 'draft') {
