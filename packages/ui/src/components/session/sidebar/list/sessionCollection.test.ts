@@ -1,6 +1,7 @@
 import { ensureChatsRootDirectory } from '@/lib/chatDirectories';
 import { opencodeClient } from '@/lib/opencode/client';
-import { describe, expect, test } from 'bun:test';
+import { afterAll, beforeAll, describe, expect, spyOn, test } from 'bun:test';
+import * as runtime from '@/lib/runtime-switch';
 import type { Session } from '@/lib/opencode/model';
 import {
   buildActiveSessionNode,
@@ -480,11 +481,15 @@ describe('buildActiveSessionNode', () => {
   });
 });
 
-const originalHomeInfo = opencodeClient.getFilesystemHomeInfo;
-opencodeClient.getFilesystemHomeInfo = async () => ({
-  home: '/home',
-  canonicalChatsRoot: '/HOME/.config/openchamber/chats',
-  canonicalLegacyChatsRoot: '/HOME/.config/openchamber/chats',
+let restoreRuntimeKey = () => {};
+beforeAll(async () => {
+  const key = spyOn(runtime, 'getRuntimeKey').mockReturnValue('test:sidebar-collection');
+  restoreRuntimeKey = () => key.mockRestore();
+  const home = spyOn(opencodeClient, 'getFilesystemHomeInfo').mockResolvedValue({
+    home: '/home',
+    canonicalChatsRoot: '/HOME/.config/openchamber/chats',
+    canonicalLegacyChatsRoot: '/HOME/.config/openchamber/chats',
+  });
+  try { await ensureChatsRootDirectory(); } finally { home.mockRestore(); }
 });
-await ensureChatsRootDirectory();
-opencodeClient.getFilesystemHomeInfo = originalHomeInfo;
+afterAll(() => restoreRuntimeKey());

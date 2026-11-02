@@ -5,9 +5,9 @@ import type { SessionNode } from './types';
 import type { SessionTreeGuide } from './sessions/sessionTreeGeometry';
 import type { SessionSidebarRow, SessionSidebarRowModel, SessionSidebarRowModelArgs } from './sessionSidebarRowModel';
 import { getAuthoritativeSessionFolderOwnerKey } from './sessions/sessionFolderIdentity';
+import { sessionProjection, workspaceProjection, type DispatchProjectionState, type WorkspaceDispatchAttribution } from './dispatch-projection';
 
 export type WorkspaceOrder = 'manual' | 'a-z' | 'recent';
-export type WorkspaceDispatchAttribution = { status: 'unsupported' };
 export const nativeLocationKey = (source: string, kind: string, value: string): string => JSON.stringify([source, kind, value]);
 
 const annotations = z.object({ loom: z.object({
@@ -25,7 +25,10 @@ export type CanonicalLocationGroup = {
   treeGuides?: readonly SessionTreeGuide[];
   groupKind: 'lane' | 'workspace' | 'finished'; label: string; depth: number;
   directory: string | null; projectId: string | null; expansionKey: string; source: string;
-  expanded: boolean; lead?: SessionNode; predecessor?: Session | null; previousWorkspaceKey?: string; workspaceSiblingKeys?: string[]; dispatchAttribution: WorkspaceDispatchAttribution;
+  expanded: boolean; lead?: SessionNode; predecessor?: Session | null; previousWorkspaceKey?: string; workspaceSiblingKeys?: string[];
+  dispatchAttribution: DispatchProjectionState;
+  placementConflict?: boolean;
+  leadDispatch?: DispatchProjectionState;
 };
 
 type Options = {
@@ -96,6 +99,8 @@ export function buildCanonicalLocationRows(args: SessionSidebarRowModelArgs, opt
       ownsWork: false, projectId, ownerProjectId: owner?.projectId ?? null, groupDirectory: session.directory,
       ownerKey, selectionScopeKey: ownerKey, archived: options.archiveOnly, renderContext: 'project',
       secondaryMeta: null, locationFacts: { source: options.source,
+        dispatch: sessionProjection(options.dispatchAttribution, options.source, session.directory, session.id),
+        placementConflict: conflictingDirectories.has(session.directory),
         predecessor: sessionById.get(locationAnnotations(session)?.predecessor ?? '') ?? null },
       expanded: includeChildren && node.children.length > 0 ? isExpanded(`project:${options.archiveOnly ? 'archived' : 'active'}:${session.id}`) : undefined,
     });
@@ -111,7 +116,9 @@ export function buildCanonicalLocationRows(args: SessionSidebarRowModelArgs, opt
       estimateSize: lead ? 86 : 34, groupKind, label, directory, depth, projectId,
       expanded: isExpanded(expansionKey), lead: lead ? { session: lead, children: [], worktree: null } : undefined, previousWorkspaceKey,
       predecessor: lead ? sessionById.get(locationAnnotations(lead)?.predecessor ?? '') ?? null : null,
-      dispatchAttribution: options.dispatchAttribution };
+      dispatchAttribution: directory ? workspaceProjection(options.dispatchAttribution, options.source, directory) : { status: 'unrequested' },
+      placementConflict: directory ? conflictingDirectories.has(directory) : false,
+      leadDispatch: lead ? sessionProjection(options.dispatchAttribution, options.source, lead.directory, lead.id) : undefined };
     rows.push(row);
     if (lead) {
       emitted.add(lead.id);
@@ -128,6 +135,14 @@ export function buildCanonicalLocationRows(args: SessionSidebarRowModelArgs, opt
   const knownLeads = candidates.filter((session) => candidates.filter((other) =>
     locationAnnotations(other)?.laneLead === locationAnnotations(session)?.laneLead).length === 1);
   const allLeadIds = new Set(knownLeads.map((session) => session.id));
+  const conflictingDirectories = new Set<string>();
+  for (const session of all) {
+    const workspace = workspaceProjection(options.dispatchAttribution, options.source, session.directory);
+    const historical = sessionProjection(options.dispatchAttribution, options.source, session.directory, session.id);
+    const markedLane = allLeadIds.has(session.id) ? locationAnnotations(session)?.laneLead : undefined;
+    if (workspace.status === 'known' && ((historical.status === 'known' && historical.context.lane !== workspace.context.lane)
+      || (markedLane && markedLane !== workspace.context.lane))) conflictingDirectories.add(session.directory);
+  }
   const belowLead = new Set<string>();
   for (const session of all) {
     let current = session;
@@ -158,9 +173,16 @@ export function buildCanonicalLocationRows(args: SessionSidebarRowModelArgs, opt
       if (!search && !args.singleProjectMode && args.collapsedProjects.has(projectId)) continue;
     }
     const lanes = sessions.filter((session) => allLeadIds.has(session.id));
-    const laneWorkspace = new Map<string, Session>();
+    const laneWorkspace = new Map<string, string>();
+    for (const session of sessions) {
+      const workspace = workspaceProjection(options.dispatchAttribution, options.source, session.directory);
+      if (workspace.status === 'known' && !conflictingDirectories.has(session.directory)) laneWorkspace.set(session.directory, workspace.context.lane);
+    }
     for (const lead of lanes) {
-      if (lanes.filter((other) => other.directory === lead.directory).length === 1) laneWorkspace.set(lead.directory, lead);
+      if (!conflictingDirectories.has(lead.directory) && lanes.filter((other) => other.directory === lead.directory).length === 1) {
+        const lane = locationAnnotations(lead)?.laneLead;
+        if (lane) laneWorkspace.set(lead.directory, lane);
+      }
     }
     const topologyDirectories = args.authoritativeSections.find((section) => section.project.id === projectId)?.groups
       .flatMap((group) => group.directory ? [group.directory] : []) ?? [];
@@ -176,7 +198,7 @@ export function buildCanonicalLocationRows(args: SessionSidebarRowModelArgs, opt
     const appendWorkspace = (directory: string, depth: number) => {
       const members = sessions.filter((session) => session.directory === directory && !allLeadIds.has(session.id) && !belowLead.has(session.id));
       if (search && !members.some((session) => containsMatch(nodeFor(session))) && !lanes.some((lead) => lead.directory === directory && matches(lead))) return;
-      const siblings = workspaceDirectories.filter((path) => laneWorkspace.get(path)?.id === laneWorkspace.get(directory)?.id);
+      const siblings = workspaceDirectories.filter((path) => laneWorkspace.get(path) === laneWorkspace.get(directory));
       const previous = siblings[siblings.indexOf(directory) - 1];
       const expanded = group('workspace', directory, directory, directory, depth, projectId, undefined, previous ? key('workspace', previous) : undefined);
       const workspaceRow = rows[rows.length - 1];
@@ -203,24 +225,25 @@ export function buildCanonicalLocationRows(args: SessionSidebarRowModelArgs, opt
           projectId, mixed: false, detailed: false });
       }
     };
-    for (const lead of lanes) {
-      const lane = locationAnnotations(lead)?.laneLead;
-      if (!lane) continue;
-      if (search && !containsMatch(nodeFor(lead)) && !sessions.some((session) => session.directory === lead.directory && matches(session))) continue;
-      const finishedLead = locationAnnotations(lead)?.finished === true;
-      if (finishedLead && !group('finished', `lead:${lead.id}`, '', lead.directory, 0, projectId)) continue;
+    const laneNames = [...new Set([...lanes.flatMap((lead) => locationAnnotations(lead)?.laneLead ?? []), ...laneWorkspace.values()])];
+    for (const lane of laneNames) {
+      const lead = lanes.find((entry) => locationAnnotations(entry)?.laneLead === lane);
+      const directories = workspaceDirectories.filter((directory) => laneWorkspace.get(directory) === lane);
+      if (search && !(lead && containsMatch(nodeFor(lead))) && !sessions.some((session) => directories.includes(session.directory) && containsMatch(nodeFor(session)))) continue;
+      const finishedLead = lead !== undefined && locationAnnotations(lead)?.finished === true;
+      if (lead && finishedLead && !group('finished', `lead:${lead.id}`, '', lead.directory, 0, projectId)) continue;
       const laneDepth = finishedLead ? 1 : 0;
-      const expanded = group('lane', lead.id, lane, lead.directory, laneDepth, projectId, lead);
+      const expanded = group('lane', lead?.id ?? `dispatch:${JSON.stringify([projectId, lane])}`, lane, lead?.directory ?? null, laneDepth, projectId, lead);
       if (!expanded) continue;
-      const directChildren = children.get(lead.id) ?? [];
+      const directChildren = lead ? children.get(lead.id) ?? [] : [];
       for (const child of directChildren.filter((entry) => locationAnnotations(entry)?.finished !== true)) {
         if (!allLeadIds.has(child.id)) appendSession(child, laneDepth + 1, projectId);
       }
       const finishedChildren = directChildren.filter((entry) => !allLeadIds.has(entry.id) && locationAnnotations(entry)?.finished === true);
-      if (finishedChildren.length && group('finished', `lane:${lead.id}`, '', lead.directory, laneDepth + 1, projectId)) {
+      if (lead && finishedChildren.length && group('finished', `lane:${lead.id}`, '', lead.directory, laneDepth + 1, projectId)) {
         for (const child of finishedChildren) appendSession(child, laneDepth + 2, projectId);
       }
-      if (laneWorkspace.has(lead.directory)) appendWorkspace(lead.directory, laneDepth + 1);
+      for (const directory of directories) appendWorkspace(directory, laneDepth + 1);
     }
     for (const directory of workspaceDirectories) if (!laneWorkspace.has(directory)) appendWorkspace(directory, 0);
   }

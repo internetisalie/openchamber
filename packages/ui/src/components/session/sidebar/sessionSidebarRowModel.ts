@@ -15,6 +15,7 @@ import { isGroupWork, worktreeFolderMemberId } from './works/sidebarWorks';
 import type { SessionDraft } from '@/stores/useSessionDraftsStore';
 import type { DirectoryOwner } from './sessions/sessionOwnership';
 import type { CanonicalLocationGroup } from './canonical-location-model';
+import type { DispatchProjectionState } from './dispatch-projection';
 
 export type SessionSidebarActivityItem = {
   node: SessionNode;
@@ -71,7 +72,7 @@ export type SessionSidebarOwnerAuthority = {
 // `treeGuides`: the guide lines a Tree row draws over itself, framing the
 // children of an open worktree, folder, session or run.
 type RowBase = { key: string; estimateSize: number; treeGuides?: readonly SessionTreeGuide[];
-  locationFacts?: { source: string; predecessor: Session | null } };
+  locationFacts?: { source: string; predecessor: Session | null; dispatch?: DispatchProjectionState; placementConflict?: boolean } };
 
 export type SessionSidebarRow =
   | CanonicalLocationGroup

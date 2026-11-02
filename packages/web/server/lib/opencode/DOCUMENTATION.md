@@ -3,6 +3,11 @@
 ## Purpose
 This module provides OpenCode server integration utilities for the web server runtime, including configuration management and provider authentication.
 
+Native workspace file forwarding preserves Agent's `dispatch-invalid` HTTP 400
+refusal alongside `excluded-path`. Sanitized dispatch projections use the existing
+native text-read route and source-generation checks. Refusals never become
+not-found success or a host-filesystem fallback.
+
 Diagnostic logging for the timeline export (`proxy.js` error lines, the lifecycle journal, the local diagnostics route in `core-routes.js`) is described in `../diagnostics/DOCUMENTATION.md`.
 
 ## Entrypoints and structure

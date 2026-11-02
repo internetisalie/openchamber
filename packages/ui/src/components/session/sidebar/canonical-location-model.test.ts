@@ -2,6 +2,8 @@ import { expect, test } from 'bun:test';
 import type { Session } from '@/lib/opencode/model';
 import type { SessionSidebarRowModelArgs, SessionSidebarRowModel } from './sessionSidebarRowModel';
 import { buildCanonicalLocationRows, nativeLocationKey, locationAnnotations } from './canonical-location-model';
+import { dispatchSessionKey, parseDispatchProjection, type WorkspaceDispatchAttribution } from './dispatch-projection';
+import { loadDispatchProjections, planDispatchProjectionReads } from './dispatch-projection-loader';
 
 const source = 'native-source-a';
 const session = (id: string, directory = '/work/main', extra: Partial<Session> = {}): Session => ({
@@ -23,6 +25,95 @@ const build = (sessions: readonly Session[], extra: Partial<SessionSidebarRowMod
 const sessionIds = (model: SessionSidebarRowModel) => model.rows.flatMap((row) => row.kind === 'session'
   ? [row.node.session.id] : row.kind === 'location-group' && row.lead ? [row.lead.session.id] : []);
 const expanded = (...values: [string, string][]) => new Set(values.map(([kind, value]) => nativeLocationKey(source, kind, value)));
+
+const projectionText = (workspace: string, sessionID: string | undefined, lane = 'loom.location') => JSON.stringify({
+  schema: 'loom.dispatch-projection.v1', status: 'known', workspace, sessionID,
+  ...(sessionID ? { agent: 'implementer' } : {}),
+  context: { container: '/runtime/container', lane, item: { repository: 'forge.example/loom', subPath: 'register/tasks', id: 'TASK-1' },
+    phase: { selector: 'phase 2: sidebar' } },
+});
+const projected = (sessions: readonly Session[], attribution: WorkspaceDispatchAttribution, extra: Partial<SessionSidebarRowModelArgs> = {}) =>
+  buildCanonicalLocationRows(args(sessions, { mode: 'search', normalizedQuery: '', ...extra }), { sessions, source,
+    workspaceOrder: 'a-z', manualOrder: [], archiveOnly: false, dispatchAttribution: attribution });
+
+test('generated native projection input flows through scoped reads into marked lead and external seat workspace placement', async () => {
+  const values = [session('lead', '/work/main', { metadata: { loom: { laneLead: 'loom.location' } } }),
+    session('child', '/work/main', { parentID: 'lead' }), session('seat', '/work/external', { title: 'implementer 1', agent: 'coder' })];
+  const attribution = await loadDispatchProjections({ source, targets: planDispatchProjectionReads(values), signal: new AbortController().signal,
+    isCurrent: () => true, files: { readNativeFile: async (path, options) => {
+      const selected = path.includes('session-projection/') ? path.split('/').pop()!.slice(0, -5) : undefined;
+      return { status: 'read', content: projectionText(options.directory, selected) };
+    } } });
+  if (!attribution) throw new Error('Projection load must complete');
+  const model = projected(values, attribution);
+  expect(sessionIds(model)).toEqual(['lead', 'child', 'seat']);
+  expect(model.rows.filter((row) => row.kind === 'location-group' && row.groupKind === 'lane')).toHaveLength(1);
+  expect(model.rows.find((row) => row.kind === 'location-group' && row.directory === '/work/external')).toMatchObject({ depth: 1, lead: undefined });
+  expect(model.rows.find((row) => row.kind === 'session' && row.node.session.id === 'seat')).toMatchObject({
+    node: { session: { title: 'implementer 1', agent: 'coder', directory: '/work/external' } },
+    locationFacts: { dispatch: { status: 'known', agent: 'implementer', context: { lane: 'loom.location',
+      item: { repository: 'forge.example/loom', subPath: 'register/tasks', id: 'TASK-1' }, phase: { selector: 'phase 2: sidebar' } } } },
+  });
+  expect(new Set(sessionIds(model)).size).toBe(values.length);
+});
+
+test('known default creates a lane without inventing a lead or historical attribution', () => {
+  const values = [session('old', '/work/external'), session('absent', '/work/external')];
+  const attribution: WorkspaceDispatchAttribution = { status: 'scoped', source,
+    workspaces: new Map([['/work/external', parseDispatchProjection(projectionText('/work/external', undefined), '/work/external')]]),
+    sessions: new Map([
+      [dispatchSessionKey('/work/external', 'old'), { schema: 'loom.dispatch-projection.v1', status: 'legacy-unknown', workspace: '/work/external', sessionID: 'old', agent: 'planner' }],
+      [dispatchSessionKey('/work/external', 'absent'), { schema: 'loom.dispatch-projection.v1', status: 'missing', workspace: '/work/external', sessionID: 'absent' }],
+    ]) };
+  const model = projected(values, attribution);
+  expect(model.rows.find((row) => row.kind === 'location-group' && row.groupKind === 'lane')).toMatchObject({ label: 'loom.location', lead: undefined });
+  expect(sessionIds(model)).toEqual(['old', 'absent']);
+  expect(model.rows.find((row) => row.kind === 'session' && row.node.session.id === 'old')).toMatchObject({
+    locationFacts: { dispatch: { status: 'legacy-unknown', agent: 'planner' } } });
+  const historical = model.rows.find((row) => row.kind === 'session' && row.node.session.id === 'old');
+  if (historical?.kind !== 'session') throw new Error('Historical row required');
+  expect(historical.locationFacts?.dispatch).not.toHaveProperty('context');
+});
+
+test('conflicting historical lane leaves workspace at project root and retains both records', () => {
+  const value = session('seat', '/work/external');
+  const attribution: WorkspaceDispatchAttribution = { status: 'scoped', source,
+    workspaces: new Map([['/work/external', parseDispatchProjection(projectionText('/work/external', undefined), '/work/external')]]),
+    sessions: new Map([[dispatchSessionKey('/work/external', 'seat'), parseDispatchProjection(projectionText('/work/external', 'seat', 'loom.other'), '/work/external', 'seat')]]) };
+  const model = projected([value], attribution);
+  expect(model.rows.some((row) => row.kind === 'location-group' && row.groupKind === 'lane')).toBe(false);
+  expect(model.rows.find((row) => row.kind === 'location-group')).toMatchObject({ depth: 0, placementConflict: true,
+    dispatchAttribution: { status: 'known', context: { lane: 'loom.location' } } });
+  expect(model.rows.find((row) => row.kind === 'session')).toMatchObject({ locationFacts: { placementConflict: true,
+    dispatch: { status: 'known', context: { lane: 'loom.other' } } } });
+});
+
+test('foreign-source projections cannot group equal native IDs or directories in the current source', () => {
+  const value = session('seat', '/work/external');
+  const model = projected([value], { status: 'scoped', source: 'another-source',
+    workspaces: new Map([['/work/external', parseDispatchProjection(projectionText('/work/external', undefined), '/work/external')]]),
+    sessions: new Map([[dispatchSessionKey('/work/external', 'seat'), parseDispatchProjection(projectionText('/work/external', 'seat'), '/work/external', 'seat')]]) });
+  expect(model.rows.some((row) => row.kind === 'location-group' && row.groupKind === 'lane')).toBe(false);
+  expect(sessionIds(model)).toEqual(['seat']);
+  expect(model.rows.find((row) => row.kind === 'session')).toMatchObject({ locationFacts: { dispatch: { status: 'unsupported' } } });
+});
+
+test('default-only lanes retain project-qualified group identity across native projects', () => {
+  const values = [session('one', '/project-one'), session('two', '/project-two')];
+  const attribution: WorkspaceDispatchAttribution = { status: 'scoped', source, sessions: new Map(),
+    workspaces: new Map(values.map((value) => [value.directory, parseDispatchProjection(projectionText(value.directory, undefined), value.directory)])) };
+  const model = projected(values, attribution, {
+    sections: [{ project: { id: 'p1', normalizedPath: '/project-one' }, groups: [] },
+      { project: { id: 'p2', normalizedPath: '/project-two' }, groups: [] }],
+    sessionOwnerById: new Map(values.map((value, n) => [value.id, { projectId: `p${n + 1}`, projectRoot: value.directory,
+      scopeDirectory: value.directory, kind: 'project' as const }])),
+  });
+  const laneRows = model.rows.filter((row) => row.kind === 'location-group' && row.groupKind === 'lane');
+  expect(laneRows).toHaveLength(2);
+  expect(new Set(model.rows.map((row) => row.key)).size).toBe(model.rows.length);
+  expect(sessionIds(model)).toEqual(['one', 'two']);
+  expect(model.sessionById.get('one')?.projectID).toBe('native-project');
+});
 
 test('ambiguous lead markers remain ordinary sessions and native cycles are not dropped', () => {
   const values = [session('a', '/work/main', { parentID: 'b' }), session('b', '/work/main', { parentID: 'a' }),

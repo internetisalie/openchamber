@@ -1472,7 +1472,7 @@ interface FileReadOptions {
 
 export interface FilesAPI {
   /** Native backend read relative to the selected container. Never falls back to host files. Failures throw. */
-  readNativeFile?(relativePath: string, options: { directory: string; signal?: AbortSignal }): Promise<
+  readNativeFile?(relativePath: string, options: { directory: string; signal?: AbortSignal; maxBytes?: number }): Promise<
     | { status: 'read'; content: string }
     | { status: 'missing' }
     | { status: 'unsupported' }

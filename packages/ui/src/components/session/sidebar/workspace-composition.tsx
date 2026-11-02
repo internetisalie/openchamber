@@ -5,9 +5,7 @@ import { useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
 import { getRuntimeKey } from '@/lib/runtime-switch';
 import { useI18n } from '@/lib/i18n';
 import { readLocationManifest, type LocationManifestState } from '@/components/chat/work-status/location-manifest';
-
-export const canReadWorkspaceComposition = (source: string, activeSource: string, directory: string, sessionDirectory: string | undefined) =>
-  source === activeSource && directory === sessionDirectory;
+import { canReadWorkspaceComposition } from './workspace-composition-access';
 
 export function WorkspaceComposition({ directory, source }: { directory: string; source: string }) {
   const { files } = useRuntimeAPIs();

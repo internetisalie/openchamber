@@ -110,7 +110,8 @@ export const MobileSessionList: React.FC<SessionProjectListProps> = ({ model, vi
         const leadRow = locationLeadSessionRow(row);
         return <CanonicalLocationRow row={row} onToggle={() => model.groupProps.toggleParent(row.expansionKey)}>
           {leadRow ? <><MobileSessionRow row={leadRow} geometry={geometry} toggleParent={model.groupProps.toggleParent} />
-            <LocationSessionFacts session={leadRow.node.session} source={row.source} predecessor={row.predecessor ?? null} /></> : null}
+            <LocationSessionFacts session={leadRow.node.session} source={row.source} predecessor={row.predecessor ?? null}
+              dispatch={row.leadDispatch} placementConflict={row.placementConflict} /></> : null}
         </CanonicalLocationRow>;
       }
       case 'activity-header':
