@@ -30,7 +30,7 @@ export const dispatchSessionKey = (directory: string, sessionID: string): string
 
 function hasAmbiguousKeys(text: string): boolean {
   const stack: (Set<string> | null)[] = [];
-  for (const token of text.matchAll(/"(?:[^"\\]|\\.)*"|[{}\[\]]/g)) {
+  for (const token of text.matchAll(/"(?:[^"\\]|\\.)*"|[{}[\]]/g)) {
     const value = token[0];
     if (value === '{' || value === '[') {
       stack.push(value === '{' ? new Set() : null);
