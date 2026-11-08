@@ -74,13 +74,13 @@ for (const action of ['save', 'cancel'] as const) {
       const icon = button?.querySelector('svg use');
       expect(form?.getAttribute('data-session-rename-form')).toBe(rowKey);
       expect(icon).toBeInstanceOf(win.SVGElement);
-      expect(icon).not.toBeInstanceOf(win.HTMLElement);
-      await act(async () => { icon!.dispatchEvent(new win.MouseEvent('mousedown', { bubbles: true })); });
+      expect(icon instanceof win.HTMLElement).toBe(false);
+      await act(async () => { icon!.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); });
       expect(saves).toEqual([]);
       expect(cancels).toBe(0);
       await act(async () => {
-        if (action === 'save') form!.dispatchEvent(new win.Event('submit', { bubbles: true, cancelable: true }));
-        else icon!.dispatchEvent(new win.MouseEvent('click', { bubbles: true }));
+        if (action === 'save') form!.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+        else icon!.dispatchEvent(new MouseEvent('click', { bubbles: true }));
       });
       expect(saves).toEqual(action === 'save' ? ['New title'] : []);
       expect(cancels).toBe(action === 'cancel' ? 1 : 0);
@@ -90,7 +90,7 @@ for (const action of ['save', 'cancel'] as const) {
       const otherIcon = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       otherForm.appendChild(otherIcon);
       document.body.appendChild(otherForm);
-      await act(async () => { otherIcon.dispatchEvent(new win.MouseEvent('mousedown', { bubbles: true })); });
+      await act(async () => { otherIcon.dispatchEvent(new MouseEvent('mousedown', { bubbles: true })); });
       expect(saves).toEqual(action === 'save' ? ['New title', 'New title'] : ['New title']);
     } finally {
       await act(async () => root.unmount());
