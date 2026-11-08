@@ -19,6 +19,81 @@ const session = (id: string): Session => ({
 });
 
 describe('explicit session row behavior', () => {
+  test('sends one rename while the first update is pending and allows the next edit', async () => {
+    const dom = installHookTestDom();
+    const root = createRoot(dom.container);
+    const original = useSessionUIStore.getState();
+    const updates: Array<{ id: string; title: string }> = [];
+    let finishUpdate: () => void = () => undefined;
+    const pendingUpdate = new Promise<void>((resolve) => { finishUpdate = resolve; });
+    useSessionUIStore.setState({
+      updateSessionTitle: async (id, title) => {
+        updates.push({ id, title });
+        await pendingUpdate;
+      },
+    });
+    const capture: {
+      actions?: ReturnType<typeof useSessionActions>;
+      editingId?: string | null;
+      editingRowKey?: string | null;
+      editTitle?: string;
+    } = {};
+    const Harness = () => {
+      const [editingId, setEditingId] = React.useState<string | null>('owner');
+      const [editingRowKey, setEditingRowKey] = React.useState<string | null>('project:session:owner');
+      const [editTitle, setEditTitle] = React.useState('  Renamed title  ');
+      capture.actions = useSessionActions({
+        mobileVariant: false,
+        allowReselect: false,
+        resetSessionSearch: () => undefined,
+        descendantIds: [],
+        showDeletionDialog: false,
+        setDeleteSessionConfirm: () => undefined,
+        deleteSessionConfirm: null,
+        editingId,
+        setEditingId,
+        setEditingRowKey,
+        editingSessionId: 'owner',
+        editingOccurrenceKey: 'project:session:owner',
+        editTitle,
+        setEditTitle,
+      });
+      Object.assign(capture, { editingId, editingRowKey, editTitle });
+      return null;
+    };
+    let firstSave: Promise<void> | undefined;
+    let secondSave: Promise<void> | undefined;
+    try {
+      await act(async () => root.render(<I18nProvider><Harness /></I18nProvider>));
+      await act(async () => {
+        firstSave = capture.actions!.handleSaveEdit();
+        secondSave = capture.actions!.handleSaveEdit('Second dispatch');
+      });
+      expect(updates).toEqual([{ id: 'owner', title: 'Renamed title' }]);
+      expect(capture.editingId).toBe('owner');
+      expect(capture.editingRowKey).toBe('project:session:owner');
+      await act(async () => {
+        finishUpdate();
+        await Promise.all([firstSave, secondSave]);
+      });
+      expect(capture.editingId).toBeNull();
+      expect(capture.editingRowKey).toBeNull();
+      expect(capture.editTitle).toBe('');
+      await act(async () => capture.actions!.handleSessionDoubleClick('owner', 'Next edit'));
+      await act(async () => capture.actions!.handleSaveEdit());
+      expect(updates).toEqual([
+        { id: 'owner', title: 'Renamed title' },
+        { id: 'owner', title: 'Next edit' },
+      ]);
+    } finally {
+      finishUpdate();
+      await Promise.all([firstSave, secondSave]);
+      await act(async () => root.unmount());
+      useSessionUIStore.setState({ updateSessionTitle: original.updateSessionTitle });
+      dom.restore();
+    }
+  });
+
   test('shares edit and menu state across project and Recent render contexts', async () => {
     const dom = installHookTestDom();
     const root = createRoot(dom.container);

@@ -45,6 +45,7 @@ export const useSessionActions = (args: Args) => {
   const { t } = useI18n();
   const editingIdRef = React.useRef(args.editingId);
   const editTitleRef = React.useRef(args.editTitle);
+  const saveEditInFlightRef = React.useRef(false);
   const deleteSessionConfirmRef = React.useRef(args.deleteSessionConfirm);
   editingIdRef.current = args.editingId;
   editTitleRef.current = args.editTitle;
@@ -107,7 +108,8 @@ export const useSessionActions = (args: Args) => {
 
   const handleSaveEdit = React.useCallback(async (titleOverride?: string) => {
     const editingId = editingIdRef.current;
-    if (!editingId) return;
+    if (!editingId || saveEditInFlightRef.current) return;
+    saveEditInFlightRef.current = true;
     const trimmed = (titleOverride ?? editTitleRef.current).trim();
     if (trimmed) {
       try {
@@ -125,6 +127,7 @@ export const useSessionActions = (args: Args) => {
     setEditingId(null);
     setEditingRowKey(null);
     setEditTitle('');
+    saveEditInFlightRef.current = false;
   }, [editingSessionId, setEditTitle, setEditingId, setEditingRowKey, t, updateSessionTitle]);
 
   const handleCancelEdit = React.useCallback(() => {

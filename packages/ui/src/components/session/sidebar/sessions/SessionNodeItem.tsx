@@ -755,7 +755,7 @@ function SessionNodeItemComponent(props: SessionNodeItemProps): React.ReactNode 
       // Rename ownership is occurrence-keyed, so only this row's form keeps
       // the edit open when duplicate session rows exist elsewhere.
       // SAFETY: DOM mousedown targets are Nodes; closest is used only when the target is an Element.
-      const target = e.target instanceof HTMLElement ? e.target : null;
+      const target = e.target instanceof Element ? e.target : null;
       const withinRenameForm = target?.closest?.(`[data-session-rename-form="${CSS.escape(sessionRowKey)}"]`);
       if (formRef.current && !withinRenameForm) {
         handleSaveEditRef.current(renameDraftRef.current);
