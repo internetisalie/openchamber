@@ -23,8 +23,8 @@ test('checks only the fork without arming electron-updater or a cached payload',
   if (webPackage.forkRelease === `${webPackage.version}-internetisalie.dev`) {
     assert.equal(result.available, null);
   } else {
-    assert.match(webPackage.forkRelease, /^\d+\.\d+\.\d+-internetisalie\.[1-9]\d*$/);
-    assert.equal(result.available, true);
+    assert.match(webPackage.forkRelease, /^\d+\.\d+\.\d+-internetisalie\.[1-9]\d*(-poc\.[1-9]\d*)?$/);
+    assert.equal(result.available, webPackage.forkRelease.includes('-poc.') ? null : true);
   }
   assert.equal(result.installBlocked, 'manual-install');
   assert.equal(calls[0][0], 'https://api.github.com/repos/internetisalie/openchamber/releases/latest');
