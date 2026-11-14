@@ -51,7 +51,7 @@ jobs:
           if [ "$GITHUB_REF_TYPE" = tag ]; then
             [[ "$GITHUB_REF_NAME" == v* ]]
             FORK_RELEASE="${GITHUB_REF_NAME#v}"
-            [[ "$FORK_RELEASE" =~ ^[0-9]+\.[0-9]+\.[0-9]+-internetisalie\.[1-9][0-9]*$ ]]
+            [[ "$FORK_RELEASE" =~ ^[0-9]+\.[0-9]+\.[0-9]+-internetisalie\.[1-9][0-9]*(-poc\.[1-9][0-9]*)?$ ]]
             test "${FORK_RELEASE%-internetisalie.*}" = "$APP_VERSION"
           else
             FORK_RELEASE="${APP_VERSION}-internetisalie.dev"

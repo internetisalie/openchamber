@@ -37,7 +37,7 @@ jobs:
           IMAGE_TAG="$GITHUB_SHA"
           if [ "$GITHUB_REF_TYPE" = tag ] && [[ "$GITHUB_REF_NAME" == v* ]]; then
             FORK_RELEASE="${GITHUB_REF_NAME#v}"
-            [[ "$FORK_RELEASE" =~ ^[0-9]+\.[0-9]+\.[0-9]+-internetisalie\.[1-9][0-9]*$ ]]
+            [[ "$FORK_RELEASE" =~ ^[0-9]+\.[0-9]+\.[0-9]+-internetisalie\.[1-9][0-9]*(-poc\.[1-9][0-9]*)?$ ]]
             test "${FORK_RELEASE%-internetisalie.*}" = "$APP_VERSION"
             IMAGE_TAG="$GITHUB_REF_NAME"
           else
