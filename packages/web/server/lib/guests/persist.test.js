@@ -311,11 +311,23 @@ describe('concurrent store changes', () => {
     };
     try {
       await writeExtensionStore(file, { paths: ['/a'] });
-      await setCapabilityGrants('alpha', file, ['opencode'], scope);
+      await setCapabilityGrants('alpha', file, ['opencode-plugin'], scope);
       expect(await readExtensionStore(file)).toMatchObject({
-        capabilityGrants: { alpha: ['opencode'] },
+        capabilityGrants: { alpha: ['opencode-plugin'] },
         capabilityScopes: { alpha: scope },
       });
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('migrates only scoped legacy plugin approvals', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'oc-guest-persist-'));
+    const file = extensionsPersistPath(dir);
+    try {
+      await fs.writeFile(file, JSON.stringify({ paths: [], capabilityGrants: { scoped: ['opencode'], ambiguous: ['opencode'] },
+        capabilityScopes: { scoped: { opencode: [{ id: 'sample', methods: ['GET'] }] } } }));
+      expect((await readExtensionStore(file)).capabilityGrants).toEqual({ scoped: ['opencode-plugin'], ambiguous: [] });
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }

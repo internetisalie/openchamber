@@ -145,7 +145,7 @@ export const effectiveGrants = (granted, stored, current) => granted.filter((cap
       && sameSessionEvents(stored.service.sessionEvents, current.service?.sessionEvents)
       && sameNotifications(stored.service.notifications, current.service?.notifications);
   }
-  if (capability === 'opencode') {
+  if (capability === 'opencode-plugin') {
     return Boolean(stored?.opencode) && sameOpenCode(stored.opencode, current.opencode ?? []);
   }
   return true;

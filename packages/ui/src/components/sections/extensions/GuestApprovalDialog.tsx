@@ -26,7 +26,7 @@ const CAPABILITY_ROWS = {
   filesystem: { icon: 'hard-drive-2', titleKey: 'settings.extensions.capability.filesystem', detailKey: 'settings.extensions.capability.filesystem.detail' },
   service: { icon: 'terminal', titleKey: 'settings.extensions.capability.service', detailKey: 'settings.extensions.capability.service.detail' },
   network: { icon: 'plug', titleKey: 'settings.extensions.capability.network', detailKey: 'settings.extensions.capability.network.detail' },
-  opencode: { icon: 'code-box', titleKey: 'settings.extensions.capability.opencode', detailKey: 'settings.extensions.capability.opencode.detail' },
+  'opencode-plugin': { icon: 'code-box', titleKey: 'settings.extensions.capability.opencode-plugin', detailKey: 'settings.extensions.capability.opencode-plugin.detail' },
   origins: { icon: 'global', titleKey: 'settings.extensions.capability.origins', detailKey: 'settings.extensions.capability.origins.detail' },
   transcript: { icon: 'history', titleKey: 'settings.extensions.capability.transcript', detailKey: 'settings.extensions.capability.transcript.detail' },
 } satisfies Record<GuestCapability, { icon: IconName; titleKey: I18nKey; detailKey: I18nKey }>;
@@ -106,7 +106,7 @@ export const GuestApprovalDialog: React.FC<GuestApprovalDialogProps> = ({ guest,
                       <span className="break-all font-mono">{apiOrigin}</span>
                     </p>
                   ) : null}
-                  {capability === 'opencode' && openCodePlugins.length > 0 ? (
+                  {capability === 'opencode-plugin' && openCodePlugins.length > 0 ? (
                     <ul className="mt-1 space-y-0.5">
                       {openCodePlugins.map((plugin) => (
                         <li key={plugin.id} className="typography-meta break-all font-mono text-foreground">

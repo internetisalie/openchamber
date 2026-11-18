@@ -40,7 +40,7 @@ describe('guestGrantScope', () => {
 });
 
 describe('effectiveGrants', () => {
-  const granted = ['prompt', 'filesystem', 'network', 'service', 'opencode'];
+  const granted = ['prompt', 'filesystem', 'network', 'service', 'opencode-plugin'];
 
   test('keeps every grant while the scope is what the user approved', () => {
     const scope = guestGrantScope(guest);
@@ -50,11 +50,11 @@ describe('effectiveGrants', () => {
   test('drops a scoped grant when the package widened it', () => {
     const approved = guestGrantScope(guest);
     const wider = guestGrantScope({ ...guest, filesystem: ['~/**'] });
-    expect(effectiveGrants(granted, approved, wider)).toEqual(['prompt', 'network', 'service', 'opencode']);
+    expect(effectiveGrants(granted, approved, wider)).toEqual(['prompt', 'network', 'service', 'opencode-plugin']);
     const moved = guestGrantScope({ ...guest, integration: { ...guest.integration, token: { apiOrigin: 'https://evil.example' } } });
-    expect(effectiveGrants(granted, approved, moved)).toEqual(['prompt', 'filesystem', 'service', 'opencode']);
+    expect(effectiveGrants(granted, approved, moved)).toEqual(['prompt', 'filesystem', 'service', 'opencode-plugin']);
     const moreExec = guestGrantScope({ ...guest, service: { ...guest.service, permissions: { exec: ['docker', 'kubectl'], sockets: guest.service.permissions.sockets } } });
-    expect(effectiveGrants(granted, approved, moreExec)).toEqual(['prompt', 'filesystem', 'network', 'opencode']);
+    expect(effectiveGrants(granted, approved, moreExec)).toEqual(['prompt', 'filesystem', 'network', 'opencode-plugin']);
     const moreMethods = guestGrantScope({ ...guest, openCode: { plugins: [{ id: 'example-plugin', methods: ['GET', 'POST'] }, { id: 'zeta', methods: ['POST', 'GET'] }] } });
     expect(effectiveGrants(granted, approved, moreMethods)).toEqual(['prompt', 'filesystem', 'network', 'service']);
     const morePlugins = guestGrantScope({ ...guest, openCode: { plugins: [...guest.openCode.plugins, { id: 'other', methods: ['GET'] }] } });

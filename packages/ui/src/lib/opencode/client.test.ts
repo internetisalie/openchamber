@@ -190,15 +190,6 @@ describe("request fidelity", () => {
     expect(page.cursor).toEqual({ next: "c2" })
   })
 
-  test("a mirror detail read ignores the currently selected directory", async () => {
-    opencodeClient.setDirectory("/repo/other")
-    responses.push(json({ data: sessionInfo }))
-    const info = await opencodeClient.getSessionUnscoped("ses_1")
-    expect(requests[0].url.pathname).toBe("/api/session/ses_1")
-    expect(requests[0].headers.has("x-opencode-directory")).toBe(false)
-    expect(info.directory).toBe("/repo/app")
-  })
-
   test("a session created on an explicit Default thinking level is created without a variant", async () => {
     responses.push(json({ data: sessionInfo }))
     await opencodeClient.createSession({ model: { id: "gpt-5.6-luna", providerID: "openai", variant: null } }, "/repo/app")

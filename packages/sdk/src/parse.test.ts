@@ -28,7 +28,7 @@ describe('parseManifest', () => {
     const result = parseManifestJson(JSON.stringify({ ...validBlock, contributes }));
     expect(result).toMatchObject({ ok: true, manifest: { contributes } });
     if (!result.ok) throw new Error(result.code);
-    expect(requestedGuestCapabilities(result.manifest.contributes)).toEqual(['origins', 'opencode']);
+    expect(requestedGuestCapabilities(result.manifest.contributes)).toEqual(['origins', 'opencode-plugin']);
   });
 
   test('preserves background action mode without changing legacy actions', () => {
@@ -251,7 +251,7 @@ describe('parseManifest', () => {
         { id: 'zeta-tools', methods: ['POST', 'GET'] },
         { id: 'example-plugin', methods: ['GET'] },
       ]);
-      expect(requestedGuestCapabilities(result.manifest.contributes)).toEqual(['opencode']);
+      expect(requestedGuestCapabilities(result.manifest.contributes)).toEqual(['opencode-plugin']);
     }
   });
 

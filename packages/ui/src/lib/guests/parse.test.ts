@@ -290,7 +290,7 @@ describe('parseGuestCatalogJson', () => {
     const openCode = { plugins: [{ id: 'example-plugin', methods: ['GET', 'POST'] }] };
     const guest = {
       id: 'hello', name: 'Hello', icon: 'window', entry: 'panel/index.html',
-      capabilities: { requested: ['opencode'], granted: ['opencode'] }, openCode,
+      capabilities: { requested: ['opencode-plugin'], granted: ['opencode-plugin'] }, openCode,
     };
     expect(readGuests(JSON.stringify({ guests: [guest] }))).toEqual([guest]);
     expect(readGuests(JSON.stringify({ guests: [{ ...guest, openCode: { plugins: [{ ...openCode.plugins[0], token: 'secret' }] } }] }))).toBeNull();

@@ -111,7 +111,7 @@ Drawing a panel and reading the current session need no permission. Anything tha
 | `model` | one-off text generation with the user's Small Model (`generate`), outside any session |
 | `shells` | watch the shell commands your agents run in the background, read their output, and stop them (`onRunningShells`, `readShellOutput`, `stopShell`) |
 
-Seven more are added for you: `network` when you declare an `integration`, `service` when you declare a `service`, `filesystem` when you declare `filesystem` patterns, `origins` when you declare `origins`, `opencode` when you declare OpenCode plugin routes, `conversation` when a session action asks for the messages (see [Actions, commands, and the badge](#actions-commands-and-the-badge)), and `transcript` when `sessionEvents` asks for `content` (see [Session events](/sdk/host/#session-events)).
+Seven more are added for you: `network` when you declare an `integration`, `service` when you declare a `service`, `filesystem` when you declare `filesystem` patterns, `origins` when you declare `origins`, `opencode-plugin` when you declare OpenCode plugin routes, `conversation` when a session action asks for the messages (see [Actions, commands, and the badge](#actions-commands-and-the-badge)), and `transcript` when `sessionEvents` asks for `content` (see [Session events](/sdk/host/#session-events)).
 
 The user sees the full list once, when they install the extension, and approves it or removes the extension. If a new version asks for more, the dialog appears again. A call that needs a capability the user has not approved fails with `NOT_GRANTED`.
 

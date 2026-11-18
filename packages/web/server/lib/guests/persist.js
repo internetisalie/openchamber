@@ -9,6 +9,7 @@ import { GUEST_CAPABILITIES } from '@openchamber/sdk';
 const GUEST_SOURCES = ['path', 'zip', 'git'];
 
 const storeSchema = z.object({
+  grantNamesVersion: z.literal(2).optional(),
   paths: z.array(z.string().min(1).refine((entry) => !entry.includes('\0'))),
   sources: z.record(z.string(), z.enum(GUEST_SOURCES)).optional(),
   // Where a git install came from, keyed by install path. Entries are checked
@@ -164,12 +165,21 @@ export const readExtensionStore = async (persistPath) => {
     if (!parsed) {
       throw new Error('Invalid extensions store');
     }
+    const scopes = knownScopesOnly(parsed.capabilityScopes ?? {});
+    const grants = parsed.capabilityGrants ?? {};
+    // Before v2 this fork used "opencode" only for explicitly scoped plugin routes.
+    if (!parsed.grantNamesVersion) {
+      for (const [id, list] of Object.entries(grants)) {
+        grants[id] = list.flatMap((name) => name !== 'opencode' ? [name]
+          : scopes[id]?.opencode?.length ? ['opencode-plugin'] : []);
+      }
+    }
     const store = {
       paths: parsed.paths,
       sources: parsed.sources ?? {},
       gitOrigins: knownGitOriginsOnly(parsed.gitOrigins ?? {}),
-      capabilityGrants: knownGrantsOnly(parsed.capabilityGrants ?? {}),
-      capabilityScopes: knownScopesOnly(parsed.capabilityScopes ?? {}),
+      capabilityGrants: knownGrantsOnly(grants),
+      capabilityScopes: scopes,
       disabledGuests: parsed.disabledGuests ?? {},
       serviceSocketOverrides: parsed.serviceSocketOverrides ?? {},
     };
@@ -244,7 +254,7 @@ const writeExtensionStoreUnlocked = async (
       socketOverrides[guestId] = cleanedSockets;
     }
   }
-  const payload = { paths };
+  const payload = { paths, grantNamesVersion: 2 };
   if (Object.keys(cleaned).length > 0) {
     payload.sources = cleaned;
   }

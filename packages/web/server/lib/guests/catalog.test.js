@@ -417,7 +417,7 @@ describe('actions and commands on the public row', () => {
       expect(row.commands).toEqual(pkg.openchamber.contributes.commands);
       expect(row.tools).toEqual(pkg.openchamber.contributes.tools);
       expect(row.openCode).toEqual(pkg.openchamber.contributes.openCode);
-      expect(row.capabilities).toEqual({ requested: ['conversation', 'opencode'], granted: [] });
+      expect(row.capabilities).toEqual({ requested: ['conversation', 'opencode-plugin'], granted: [] });
     }
 
     pkg.openchamber.contributes.actions = [{ id: 'x', label: 'X', where: 'message', payload: ['messages'] }];

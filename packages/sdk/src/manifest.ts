@@ -589,7 +589,7 @@ export const serviceProvides = (
  * follows from `contributes.sessionEvents.content`: the service receives what
  * the agent said or asked, not only that it did.
  */
-export const GUEST_CAPABILITIES = ['prompt', 'sessions', 'files', 'model', 'shells', 'conversation', 'service', 'network', 'filesystem', 'origins', 'opencode', 'transcript'] as const;
+export const GUEST_CAPABILITIES = ['prompt', 'sessions', 'files', 'model', 'shells', 'conversation', 'service', 'network', 'filesystem', 'origins', 'opencode-plugin', 'transcript'] as const;
 
 export type GuestCapability = (typeof GUEST_CAPABILITIES)[number];
 
@@ -690,7 +690,7 @@ export const requestedGuestCapabilities = (
   if (contributes.service) declared.add('service');
   if (contributes.integration) declared.add('network');
   if (contributes.filesystem && contributes.filesystem.length > 0) declared.add('filesystem');
-  if (contributes.openCode?.plugins.length) declared.add('opencode');
+  if (contributes.openCode?.plugins.length) declared.add('opencode-plugin');
   if (contributes.origins && contributes.origins.length > 0) declared.add('origins');
   if (contributes.sessionEvents?.content) declared.add('transcript');
   return GUEST_CAPABILITIES.filter((capability) => declared.has(capability));

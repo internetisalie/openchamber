@@ -259,13 +259,6 @@ const openchamberLeftForUserSchema = z.object({
 // The wire event contract is generated from the server; the stream is trusted
 // once its shape matches. Only the discriminator and location are checked here
 // because the translator narrows on `type` for everything else.
-const mirrorUpdatedSchema = z.object({
-  id: z.string(),
-  type: z.literal("session.mirror.updated"),
-  data: z.object({ sessionID: z.string().min(1) }),
-  location: z.object({ directory: z.string() }).partial().optional(),
-})
-
 const wireEventSchema = z.object({
   id: z.string(),
   type: z.string(),
@@ -387,13 +380,6 @@ export function classifyStreamPayload(payload: unknown, frameDirectory: string |
   const typed = payloadTypeSchema.safeParse(payload)
   if (!typed.success) return NO_EVENTS
   const { type } = typed.data
-  if (type === "session.mirror.updated") {
-    const mirror = mirrorUpdatedSchema.safeParse(payload)
-    return mirror.success ? { kind: "events", events: [{
-      directory: mirror.data.location?.directory || frameDirectory || GLOBAL_EVENT_DIRECTORY,
-      event: { type: "session.mirror.updated", properties: { sessionID: mirror.data.data.sessionID } },
-    }] } : NO_EVENTS
-  }
   if (!type.startsWith(OPENCHAMBER_TYPE_PREFIX)) return { kind: "events", events: translateWirePayload(payload, frameDirectory) }
 
   switch (type) {
@@ -464,8 +450,6 @@ function coalesceKey(event: SyncEvent): string | undefined {
   switch (event.type) {
     case "session.status":
       return `session.status:${event.properties.sessionID}`
-    case "session.mirror.updated":
-      return `session.mirror.updated:${event.properties.sessionID}`
     case "session.patched":
       return `session.patched:${event.properties.sessionID}`
     case "message.patched":
