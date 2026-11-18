@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - 'v*-internetisalie.*'
+      - '!v*-internetisalie.*-poc.*'
   workflow_dispatch:
 
 permissions:
