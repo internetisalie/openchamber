@@ -11,7 +11,7 @@ const bootstrapFetch: typeof fetch = async () => Response.json({
 });
 Object.assign(globalThis, {
   window: dom,
-  document: dom.document,
+  document: dom.document, Event: dom.Event, CustomEvent: dom.CustomEvent,
   HTMLElement: dom.HTMLElement,
   Element: dom.Element,
   Node: dom.Node,
@@ -98,6 +98,18 @@ test('tables, math, mermaid and file links read from what the renderer kept', ()
     'Within $\\pm 5\\%$ of src/app.ts.',
     '```mermaid\ngraph TD; A-->B\n```',
   ].join('\n\n'));
+});
+
+test('an svg figure copies as its fence source, not its data URL', () => {
+  const source = '<svg xmlns="http://www.w3.org/2000/svg"><text>a&b</text></svg>';
+  const html = `<div data-streamdown="svg-block" data-oc-svg-source="${source.replace(/&/g, '&amp;').replace(/"/g, '&quot;')}"><img alt="svg" src="data:image/svg+xml;charset=utf-8,x"></div>`;
+  expect(serializeRenderedMarkdown(render(html))).toBe('```svg\n' + source + '\n```');
+  expect(serializeRenderedMarkdown(render(html), 'plain')).toBe(source);
+  const copy = document.createElement('div');
+  copy.innerHTML = html;
+  normalizeMarkdownCopyContent(copy);
+  expect(copy.querySelector('pre code')?.textContent).toBe(source);
+  expect(copy.querySelector('img')).toBeNull();
 });
 
 test('a selection across list items stays a list', () => {
@@ -461,4 +473,24 @@ test('rich native strong markup keeps emphasis without application styles', () =
   copy.innerHTML = '<p><span data-streamdown="strong" class="font-semibold">Bold</span> text</p>';
   normalizeMarkdownCopyContent(copy);
   expect(copy.querySelector('strong')?.textContent).toBe('Bold');
+});
+
+test('a selection across the rows of one long answer copies each row\'s part, in order', () => {
+  const row = (html: string) => {
+    const wrapper = document.createElement('div');
+    wrapper.setAttribute('data-answer-part', 'message:part');
+    wrapper.appendChild(render(html));
+    document.body.appendChild(wrapper);
+    return wrapper;
+  };
+  const first = row('<p>Start of the <strong>answer</strong> ends.</p>');
+  const second = row('<p>Next row <em>goes</em> on.</p>');
+  const range = selectionOf(textIn(first, 'strong'), 0, textIn(second, 'em'), 4);
+  expect(getMarkdownSelectionText(range)).toBe('**answer** ends.\n\nNext row *goes*');
+});
+
+test('a selection across two separate documents stays native', () => {
+  const first = render('<p>One document.</p>');
+  const second = render('<p>Another one.</p>');
+  expect(getMarkdownSelectionText(selectionOf(textIn(first, 'p'), 0, textIn(second, 'p'), 3))).toBeNull();
 });

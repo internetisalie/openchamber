@@ -305,18 +305,17 @@ const SkillsInstalledPage: React.FC = () => {
   const supportingFileEditorExtensions = React.useMemo<Extension[]>(() => {
     const filePath = newFileName.trim() || 'supporting-file.md';
     // File-view token colors for code supporting files; markdown stays on lezer.
-    const shikiLanguage = getLanguageFromExtension(filePath);
-    const useShiki = Boolean(shikiLanguage) && shikiLanguage !== 'markdown';
-    const extensions: Extension[] = [createFlexokiCodeMirrorTheme(currentTheme, useShiki ? { syntaxColors: false, fontSize: editorFontSize } : { fontSize: editorFontSize })];
+    const highlightLanguage = getLanguageFromExtension(filePath);
+    const useHighlight = Boolean(highlightLanguage) && highlightLanguage !== 'markdown';
+    const extensions: Extension[] = [createFlexokiCodeMirrorTheme(currentTheme, useHighlight ? { syntaxColors: false, fontSize: editorFontSize } : { fontSize: editorFontSize })];
     const languageExtension = languageByExtension(filePath);
     if (languageExtension) {
       extensions.push(languageExtension);
     }
-    if (useShiki && shikiLanguage) {
+    if (useHighlight && highlightLanguage) {
       extensions.push(codeHighlightExtension({
-        language: shikiLanguage,
-        themeName: currentTheme.metadata.id,
-        theme: getCodeTokenTheme(currentTheme),
+        language: highlightLanguage,
+        theme: getCodeTokenTheme(currentTheme).zed,
       }));
     }
     extensions.push(EditorView.lineWrapping);
@@ -616,7 +615,6 @@ const SkillsInstalledPage: React.FC = () => {
 
         <SettingsSection
           title={t('settings.skills.page.section.basicInformation')}
-          divider={false}
           settingsItem="skills.basic-information"
           contentClassName="space-y-0"
         >

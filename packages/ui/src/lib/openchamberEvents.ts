@@ -10,7 +10,11 @@ import { canDriveBrowserPage } from './browser/hostCapability';
 import { messageQueueUpdatedEventSchema, type MessageQueueUpdatedEvent } from '@/stores/messageQueueStore';
 import { autoReviewUpdatedEventSchema, type AutoReviewUpdatedEvent } from '@/stores/useAutoReviewStore';
 import { prWatchUpdatedEventSchema, type PrWatchUpdatedEvent } from '@/sync/pr-watch';
+import { extensionWaitsUpdatedEventSchema, type ExtensionWaitsUpdatedEvent } from '@/sync/extension-waits';
+import { laterPagesUpdatedEventSchema, type LaterPagesUpdatedEvent } from '@/sync/later-pages';
 import { sessionWarmingSnapshotSchema, type SessionWarmingSnapshot } from '@/stores/useSessionWarmingStore';
+import { sessionTodosEventSchema, type SessionTodosEvent } from '@/stores/useSessionTodosStore';
+import { isJsonValue, type JsonValue } from '@openchamber/sdk';
 import { z } from 'zod';
 import { trackedItemRecordsSchema } from './trackedItems/model';
 import type { SyncEvent } from './opencode/events';
@@ -72,7 +76,8 @@ const UNKNOWN_BROWSER_CONTROL_CONTEXT: BrowserControlRequestContext = { director
 
 /**
  * The agent asked for a file to be shown in the user's file panel. Every
- * client receives it; one showing that project opens the file.
+ * client receives it; the desktop file panel opens the file, and the mobile
+ * shell opens it only for the session on screen and announces the others.
  */
 const fileOpenRequestSchema = z.object({
   path: z.string().min(1),
@@ -135,6 +140,42 @@ type BrowserProviderResetEvent = { type: 'browser-provider-reset' } & z.infer<ty
  * event cannot go stale between being sent and being handled.
  */
 type SourceControlProvidersChangedEvent = { type: 'source-control-providers-changed' };
+
+/**
+ * The set of trackers the server serves changed: an extension that acts as a
+ * tracker was approved, enabled, updated, paused or removed, or connected its
+ * server. Carries nothing; listeners re-read the tracker list.
+ */
+type TrackerProvidersChangedEvent = { type: 'tracker-providers-changed' };
+
+/**
+ * The set of usage providers the server serves changed: an extension that
+ * reports usage was approved, enabled, updated, paused or removed. Carries
+ * nothing; listeners re-read the provider list.
+ */
+type QuotaProvidersChangedEvent = { type: 'quota-providers-changed' };
+
+/**
+ * The extension catalog changed: an extension was installed, updated, approved,
+ * paused, enabled or removed, or a folder install's files changed. Carries
+ * nothing; listeners re-read the catalog.
+ */
+type GuestsChangedEvent = { type: 'guests-changed' };
+
+/**
+ * The marks extensions put on sidebar rows changed (`marks.set`, or a service
+ * ended). Carries nothing; listeners re-read the marks.
+ */
+type GuestMarksChangedEvent = { type: 'guest-marks-changed' };
+
+/** An extension's service sent its open frames something (`emit`). */
+type GuestServiceEvent = { type: 'guest-service-event'; guestId: string; topic: string; data: JsonValue };
+
+/**
+ * A theme file in the server's custom themes folder was added, removed or
+ * rewritten. Carries nothing; listeners re-read the custom themes.
+ */
+type ThemesChangedEvent = { type: 'themes-changed' };
 
 /**
  * A usage limit stopped a session and the server moved on: the provider to
@@ -211,6 +252,44 @@ type RoutingSafetySkippedEvent = { type: 'routing-safety-skipped' } & z.infer<ty
 export type PermissionPolicySyncEvent = Extract<SyncEvent, { type: 'openchamber.permission-auto-accept' | 'openchamber.permission-left-for-user' }>;
 type PermissionPolicyEvent = { type: 'permission-policy'; event: PermissionPolicySyncEvent };
 
+/**
+ * OpenChamber's own session announcements the sync layer applies: a page
+ * waiting for an answer, a pending recap, a workflow run, an archive. The main
+ * event stream carries them only over the WebSocket; over SSE it is OpenCode's
+ * own stream, so this stream is where every transport hears them.
+ */
+const CONTROL_STREAM_SYNC_TYPES = new Set([
+  'openchamber:page-waiting',
+  'openchamber:page-settled',
+  'openchamber:session-assist',
+  'openchamber:session-archived',
+  'openchamber:workflow-run',
+  'openchamber:workflow-run-removed',
+]);
+export type ControlStreamSyncEvent = Extract<SyncEvent, {
+  type: 'openchamber.page-waiting' | 'openchamber.page-settled' | 'openchamber.session-assist' | 'session.patched'
+    | 'openchamber.workflow-run' | 'openchamber.workflow-run-removed';
+}>;
+type ControlStreamSyncEnvelope = { type: 'control-sync'; event: ControlStreamSyncEvent };
+
+const isControlStreamSyncEvent = (event: SyncEvent): event is ControlStreamSyncEvent => (
+  event.type === 'openchamber.page-waiting' || event.type === 'openchamber.page-settled'
+  || event.type === 'openchamber.session-assist' || event.type === 'session.patched'
+  || event.type === 'openchamber.workflow-run' || event.type === 'openchamber.workflow-run-removed'
+);
+
+/**
+ * A page the agent shared with other people changed on the server (uploaded,
+ * opened, answered, expired, cancelled). Carries only which call; the card
+ * reads the group again, so the event cannot go stale.
+ */
+const sharePageChangedSchema = z.object({ sessionId: z.string().min(1), callId: z.string().min(1) });
+type SharePageChangedEvent = { type: 'share-page-changed' } & z.infer<typeof sharePageChangedSchema>;
+
+/** A page someone else shared, opened in this app, changed (opened, answered, its status read). */
+const receivedPageChangedSchema = z.object({ receivedId: z.string().min(1) });
+type ReceivedPageChangedEvent = { type: 'received-page-changed' } & z.infer<typeof receivedPageChangedSchema>;
+
 /** Followed pull requests, merge requests or issues whose state the server saw move. */
 type TrackedItemsChangedEvent = { type: 'tracked-items-changed'; records: z.infer<typeof trackedItemRecordsSchema> };
 
@@ -228,9 +307,11 @@ const notificationPropertiesSchema = z.object({
   directory: z.string().optional(),
   requireHidden: z.boolean().optional(),
   showWhenFocused: z.boolean().optional(),
+  toastOnly: z.boolean().optional(),
 });
 
 type OpenChamberEvent =
+  | { type: 'terminal-sessions-changed' }
   | { type: 'notification'; payload: z.infer<typeof notificationPropertiesSchema> }
   /** `connectionId` names this connection on the server; absent from servers before tracked items. */
   | { type: 'event-stream-ready'; connectionId: string | null }
@@ -244,9 +325,14 @@ type OpenChamberEvent =
   | MessageQueueUpdatedEvent
   | AutoReviewUpdatedEvent
   | PrWatchUpdatedEvent
+  | ExtensionWaitsUpdatedEvent
+  | LaterPagesUpdatedEvent
   | PermissionPolicyEvent
+  | ControlStreamSyncEnvelope
   /** Which sessions the server keeps warm, as a full snapshot. */
   | { type: 'session-warming'; snapshot: SessionWarmingSnapshot }
+  /** A session's todo list changed, or has to be read again (`todos` null); `sessionId` null for a whole directory. */
+  | { type: 'session-todos'; event: SessionTodosEvent }
   /** The host follows this space's queue again; what changed in a gap is read from the space. */
   | { type: 'space-queue-stream'; spaceId: string }
   /** The host follows this space's permission modes again; what changed in a gap is read from the space. */
@@ -259,8 +345,16 @@ type OpenChamberEvent =
   | PlanOpenRequestEvent
   | BrowserProviderResetEvent
   | SourceControlProvidersChangedEvent
+  | TrackerProvidersChangedEvent
+  | QuotaProvidersChangedEvent
+  | GuestsChangedEvent
+  | GuestMarksChangedEvent
+  | GuestServiceEvent
+  | ThemesChangedEvent
   | LimitFailoverEvent
   | ProjectContextChangedEvent
+  | SharePageChangedEvent
+  | ReceivedPageChangedEvent
   | SessionFoldersChangedEvent
   | SessionDraftsChangedEvent
   | AgentMemoryChangedEvent;
@@ -279,6 +373,10 @@ let heartbeatTimer: ReturnType<typeof setTimeout> | null = null;
 let reconnectAttempt = 0;
 let runtimeChangeUnsubscribe: (() => void) | null = null;
 const listeners = new Set<Listener>();
+// The ready event of the open connection. A listener that subscribes after it
+// arrived gets it replayed, since the server sends it once per connection and
+// some listeners (tracked-items interest) cannot act until they have it.
+let readyEvent: Extract<OpenChamberEvent, { type: 'event-stream-ready' }> | null = null;
 
 const MAX_RECONNECT_DELAY_MS = 30_000;
 const HEARTBEAT_TIMEOUT_MS = 45_000;
@@ -322,6 +420,7 @@ const scheduleReconnect = () => {
 };
 
 const cleanupSource = () => {
+  readyEvent = null;
   clearHeartbeatTimer();
   streamAbortController?.abort();
   streamAbortController = null;
@@ -425,7 +524,13 @@ const getEventProperties = (properties: unknown): Record<string, unknown> | null
   return properties as Record<string, unknown>;
 };
 
+const guestServiceEventSchema = z.object({ guestId: z.string().min(1), topic: z.string().min(1), data: z.json() });
+
 const dispatchFromEnvelope = (envelope: { type: string; properties: unknown }) => {
+  if (envelope.type === 'openchamber:terminal-sessions-changed') {
+    for (const listener of listeners) listener({ type: 'terminal-sessions-changed' });
+    return;
+  }
   if (envelope.type === 'openchamber:notification') {
     const parsed = notificationPropertiesSchema.safeParse(envelope.properties);
     if (parsed.success) {
@@ -438,7 +543,9 @@ const dispatchFromEnvelope = (envelope: { type: string; properties: unknown }) =
     reconnectAttempt = 0;
     const ready = eventStreamReadySchema.safeParse(envelope.properties);
     const connectionId = ready.success ? ready.data.connectionId ?? null : null;
-    for (const listener of listeners) listener({ type: 'event-stream-ready', connectionId });
+    const event = { type: 'event-stream-ready', connectionId } as const;
+    readyEvent = event;
+    for (const listener of listeners) listener(event);
     return;
   }
 
@@ -470,6 +577,22 @@ const dispatchFromEnvelope = (envelope: { type: string; properties: unknown }) =
     return;
   }
 
+  if (envelope.type === 'openchamber:extension-waits.updated') {
+    const parsed = extensionWaitsUpdatedEventSchema.safeParse(envelope);
+    if (parsed.success) {
+      for (const listener of listeners) listener(parsed.data);
+    }
+    return;
+  }
+
+  if (envelope.type === 'openchamber:render-later.updated') {
+    const parsed = laterPagesUpdatedEventSchema.safeParse(envelope);
+    if (parsed.success) {
+      for (const listener of listeners) listener(parsed.data);
+    }
+    return;
+  }
+
   if (envelope.type === 'openchamber:auto-review.updated') {
     const parsed = autoReviewUpdatedEventSchema.safeParse(envelope);
     if (parsed.success) {
@@ -488,9 +611,25 @@ const dispatchFromEnvelope = (envelope: { type: string; properties: unknown }) =
     return;
   }
 
+  if (CONTROL_STREAM_SYNC_TYPES.has(envelope.type)) {
+    const classified = classifyStreamPayload(envelope, undefined);
+    if (classified.kind !== 'events') return;
+    for (const { event } of classified.events) {
+      if (!isControlStreamSyncEvent(event)) continue;
+      for (const listener of listeners) listener({ type: 'control-sync', event });
+    }
+    return;
+  }
+
   if (envelope.type === 'openchamber:session-warming') {
     const parsed = sessionWarmingSnapshotSchema.safeParse(envelope.properties);
     if (parsed.success) for (const listener of listeners) listener({ type: 'session-warming', snapshot: parsed.data });
+    return;
+  }
+
+  if (envelope.type === 'openchamber:session-todos') {
+    const parsed = sessionTodosEventSchema.safeParse(envelope.properties);
+    if (parsed.success) for (const listener of listeners) listener({ type: 'session-todos', event: parsed.data });
     return;
   }
 
@@ -557,6 +696,38 @@ const dispatchFromEnvelope = (envelope: { type: string; properties: unknown }) =
     return;
   }
 
+  if (envelope.type === 'openchamber:tracker-providers-changed') {
+    for (const listener of listeners) listener({ type: 'tracker-providers-changed' });
+    return;
+  }
+
+  if (envelope.type === 'openchamber:quota-providers-changed') {
+    for (const listener of listeners) listener({ type: 'quota-providers-changed' });
+    return;
+  }
+
+  if (envelope.type === 'openchamber:guests-changed') {
+    for (const listener of listeners) listener({ type: 'guests-changed' });
+    return;
+  }
+
+  if (envelope.type === 'openchamber:guest-marks-changed') {
+    for (const listener of listeners) listener({ type: 'guest-marks-changed' });
+    return;
+  }
+
+  if (envelope.type === 'openchamber:guest-service-event') {
+    const parsed = guestServiceEventSchema.safeParse(envelope.properties);
+    if (!parsed.success || !isJsonValue(parsed.data.data)) return;
+    for (const listener of listeners) listener({ type: 'guest-service-event', ...parsed.data });
+    return;
+  }
+
+  if (envelope.type === 'openchamber:themes-changed') {
+    for (const listener of listeners) listener({ type: 'themes-changed' });
+    return;
+  }
+
   if (envelope.type === 'openchamber:limit-failover') {
     const parsed = limitFailoverSchema.safeParse(envelope.properties);
     if (parsed.success) for (const listener of listeners) listener({ type: 'limit-failover', failover: parsed.data });
@@ -566,6 +737,18 @@ const dispatchFromEnvelope = (envelope: { type: string; properties: unknown }) =
   if (envelope.type === 'openchamber:project-context-changed') {
     const parsed = projectContextChangedSchema.safeParse(envelope.properties);
     if (parsed.success) for (const listener of listeners) listener({ type: 'project-context-changed', ...parsed.data });
+    return;
+  }
+
+  if (envelope.type === 'openchamber:share-page') {
+    const parsed = sharePageChangedSchema.safeParse(envelope.properties);
+    if (parsed.success) for (const listener of listeners) listener({ type: 'share-page-changed', ...parsed.data });
+    return;
+  }
+
+  if (envelope.type === 'openchamber:received-page') {
+    const parsed = receivedPageChangedSchema.safeParse(envelope.properties);
+    if (parsed.success) for (const listener of listeners) listener({ type: 'received-page-changed', ...parsed.data });
     return;
   }
 
@@ -759,6 +942,12 @@ export const subscribeOpenchamberEvents = (listener: Listener): (() => void) => 
   listeners.add(listener);
   ensureRuntimeChangeSubscription();
   connect();
+  if (readyEvent) {
+    const event = readyEvent;
+    queueMicrotask(() => {
+      if (readyEvent === event && listeners.has(listener)) listener(event);
+    });
+  }
 
   return () => {
     listeners.delete(listener);

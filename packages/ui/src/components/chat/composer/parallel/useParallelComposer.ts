@@ -7,8 +7,10 @@ import { useInputStore } from '@/sync/input-store';
 import { attachmentWireName } from '@/lib/attachmentIdentity';
 import { useMultiRunStore } from '@/stores/useMultiRunStore';
 import { useProjectsStore } from '@/stores/useProjectsStore';
+import { useSessionGoalArmStore } from '@/stores/useSessionGoalArmStore';
 import { useUIStore } from '@/stores/useUIStore';
 import type { CreateMultiRunParams } from '@/types/multirun';
+import type { ComposerText } from '../state/composerText';
 
 export type ParallelModel = {
   providerID: string;
@@ -59,15 +61,13 @@ export function useParallelComposer(input: {
   enabled: boolean;
   draftOpen: boolean;
   draftProjectId: string | null;
-  message: string;
+  text: ComposerText;
   setMessage: (text: string) => void;
 }) {
   const { t } = useI18n();
-  const { enabled, draftOpen, draftProjectId, message, setMessage } = input;
+  const { enabled, draftOpen, draftProjectId, text: composerText, setMessage } = input;
   const [state, setState] = React.useState<ParallelComposerState | null>(null);
   const [isLaunching, setIsLaunching] = React.useState(false);
-  const messageRef = React.useRef(message);
-  messageRef.current = message;
 
   const enter = React.useCallback((text = '') => {
     const config = useConfigStore.getState();
@@ -141,30 +141,30 @@ export function useParallelComposer(input: {
 
   const addVariant = React.useCallback(() => {
     update((current) => {
-      const variants = current.variants.map((variant, index) => (index === current.active ? { ...variant, text: messageRef.current } : variant));
+      const variants = current.variants.map((variant, index) => (index === current.active ? { ...variant, text: composerText.get() } : variant));
       const source = variants[current.active];
       const next: ParallelVariant = { id: variantId(variants.length), text: source.text, models: source.models.map((model) => ({ ...model })) };
       return { ...current, variants: [...variants, next], active: variants.length };
     });
-  }, [update]);
+  }, [composerText, update]);
 
   const switchVariant = React.useCallback((target: number) => {
     const current = state;
     if (!current || target === current.active || !current.variants[target]) return;
-    const variants = current.variants.map((variant, index) => (index === current.active ? { ...variant, text: messageRef.current } : variant));
+    const variants = current.variants.map((variant, index) => (index === current.active ? { ...variant, text: composerText.get() } : variant));
     setState({ ...current, variants, active: target });
     setMessage(variants[target].text);
-  }, [setMessage, state]);
+  }, [composerText, setMessage, state]);
 
   const removeVariant = React.useCallback((target: number) => {
     const current = state;
     if (!current || current.variants.length <= 1) return;
-    const withText = current.variants.map((variant, index) => (index === current.active ? { ...variant, text: messageRef.current } : variant));
+    const withText = current.variants.map((variant, index) => (index === current.active ? { ...variant, text: composerText.get() } : variant));
     const variants = withText.filter((_, index) => index !== target).map((variant, index) => ({ ...variant, id: variantId(index) }));
     const active = Math.min(target <= current.active && current.active > 0 ? current.active - 1 : current.active, variants.length - 1);
     setState({ ...current, variants, active });
     setMessage(variants[active].text);
-  }, [setMessage, state]);
+  }, [composerText, setMessage, state]);
 
   const setIsolate = React.useCallback((isolate: boolean) => update((current) => ({ ...current, isolate })), [update]);
   const setBaseBranch = React.useCallback((baseBranch: string) => update((current) => ({ ...current, baseBranch })), [update]);
@@ -174,7 +174,7 @@ export function useParallelComposer(input: {
   const launch = React.useCallback(async () => {
     const current = state;
     if (!current || isLaunching) return;
-    const variants = current.variants.map((variant, index) => (index === current.active ? { ...variant, text: messageRef.current } : variant));
+    const variants = current.variants.map((variant, index) => (index === current.active ? { ...variant, text: composerText.get() } : variant));
     const ready = variants.filter((variant) => variant.text.trim() && variant.models.length > 0);
     if (ready.length !== variants.length) {
       toast.error(t('chat.parallel.toast.incomplete'));
@@ -191,6 +191,7 @@ export function useParallelComposer(input: {
     const title = runTitleFrom(variants[0].text) || t('chat.parallel.defaultTitle');
     const attachments = useInputStore.getState().attachedFiles;
     const config = useConfigStore.getState();
+    const ui = useUIStore.getState();
     const params: CreateMultiRunParams = {
       name: title,
       title,
@@ -213,6 +214,9 @@ export function useParallelComposer(input: {
       autoFusion: current.fuse
         ? { providerID: current.fuse.providerID, modelID: current.fuse.modelID, variant: current.fuse.variant, agent: config.currentAgentName || undefined }
         : undefined,
+      goal: useSessionGoalArmStore.getState().armed
+        ? { tokenBudget: ui.sessionGoalDefaultBudgetEnabled ? ui.sessionGoalDefaultBudget : null }
+        : undefined,
     };
 
     setIsLaunching(true);
@@ -226,11 +230,13 @@ export function useParallelComposer(input: {
       setMessage('');
       useInputStore.getState().clearAttachedFiles();
       setState(null);
+      // A launch that made no sessions keeps the arm, with the prompt, for the retry.
+      if (params.goal) useSessionGoalArmStore.getState().setArmed(false);
       useUIStore.getState().setRunOverviewKey(result.groupKey);
     } finally {
       setIsLaunching(false);
     }
-  }, [draftProjectId, isLaunching, setMessage, state, t]);
+  }, [composerText, draftProjectId, isLaunching, setMessage, state, t]);
 
   return {
     state,

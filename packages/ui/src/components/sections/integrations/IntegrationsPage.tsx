@@ -11,9 +11,9 @@ import { isMobileSurfaceRuntime } from '@/lib/runtimeSurface';
 import { useEnterpriseMode } from '@/stores/useEnterprisePolicyStore';
 import { useSourceControlProviders } from '@/lib/source-control/providers/registry';
 import { useTrackerDescriptors } from '@/lib/trackers/registry';
+import { isExtensionTrackerId } from '@/lib/trackers/extension';
 import { SourceControlProviderCard } from './SourceControlProviderCard';
 import { TrackerSettings } from './TrackerSettings';
-import { ThirdPartyIntegrationsSection } from './ThirdPartyIntegrationsSection';
 import { CatalogExtensionsSection } from './CatalogExtensionsSection';
 import { Button } from '@/components/ui/button';
 import { Icon } from '@/components/icon/Icon';
@@ -26,20 +26,17 @@ export const IntegrationsPage: React.FC = () => {
   // editor's own Git and GitHub integration instead.
   const sourceControlProviders = useSourceControlProviders();
   const servedSourceControl = isVSCodeRuntime() ? [] : sourceControlProviders;
-  // Trackers exist where the runtime has the API; the server says which.
+  // Trackers exist where the runtime has the API; the server says which. An
+  // extension's tracker (`ext-<id>`) is drawn under Extension accounts instead.
   const trackerDescriptors = useTrackerDescriptors();
-  const servedTrackers = getRegisteredRuntimeAPIs()?.trackers ? trackerDescriptors : [];
+  const servedTrackers = getRegisteredRuntimeAPIs()?.trackers ? trackerDescriptors.filter((descriptor) => !isExtensionTrackerId(descriptor.id)) : [];
   const guests = useGuestsStore((state) => state.guests);
   const runtimeKey = useGuestsStore((state) => state.runtimeKey);
-  const builtInGuests = !isVSCodeRuntime() && !isMobileSurfaceRuntime()
+  const builtInGuests = !isVSCodeRuntime()
     ? guests.filter((guest) => guest.source === 'bundled' && guest.integration && isGuestActive(guest))
     : [];
   const hasBuiltIn = servedSourceControl.length > 0 || servedTrackers.length > 0 || builtInGuests.length > 0;
-  // Each card here installs a plugin that adds a model provider. In enterprise
-  // mode providers come from the administrator's OpenCode config, whose
-  // `provider.use` policy also governs plugin providers, so none is offered.
   const enterpriseMode = useEnterpriseMode();
-  const hasThirdParty = !enterpriseMode;
   // The catalog is a main-window page, opened the way the sidebar opens it;
   // enterprise mode hides it until administrators can curate its sources.
   const { isMobile } = useDeviceInfo();
@@ -53,7 +50,7 @@ export const IntegrationsPage: React.FC = () => {
   return (
     <SettingsPageLayout
       title={t('settings.page.integrations.title')}
-      description={t('settings.page.integrations.description')}
+      namedBySidebar
       showSaveStatus
       headerEnd={canBrowseCatalog ? (
         <Button
@@ -74,7 +71,6 @@ export const IntegrationsPage: React.FC = () => {
         <SettingsSection
           title={t('settings.integrations.firstParty.title')}
           info={t('settings.integrations.firstParty.info')}
-          divider={false}
           settingsItem="integrations.first-party"
           contentClassName="space-y-3"
         >
@@ -87,8 +83,7 @@ export const IntegrationsPage: React.FC = () => {
           {builtInGuests.map((guest) => <GuestIntegrationCard key={`${runtimeKey}:${guest.id}`} guest={guest} />)}
         </SettingsSection>
       ) : null}
-      {hasThirdParty ? <ThirdPartyIntegrationsSection divider={hasBuiltIn} /> : null}
-      <CatalogExtensionsSection divider={hasBuiltIn || hasThirdParty} />
+      <CatalogExtensionsSection />
       <GuestIntegrationsSection />
     </SettingsPageLayout>
   );

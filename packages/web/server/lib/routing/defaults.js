@@ -70,8 +70,34 @@ export const OPENROUTER_JEV_MODEL = 'jev-latest';
 export const VERCEL_JEV_API_URL = 'https://ai-gateway.vercel.sh/typesafe/v1/systemone';
 export const VERCEL_JEV_MODEL = 'typesafe-ai/jev';
 
+/**
+ * Google's Decisions API on the Gemini Developer API, billed to the Google
+ * account behind the key. Not a System One endpoint: `jev.js` maps the request
+ * to Google's shape (`toGeminiDecisionsRequest`); the answers come back in the
+ * same shape. It answers 401 to a bearer key, so the key goes in
+ * `x-goog-api-key` (checked live 2026-11-14).
+ */
+export const GEMINI_DECISIONS_API_URL = 'https://generativelanguage.googleapis.com/v1beta/decisions';
+export const GEMINI_DECISIONS_MODEL = 'gemini-decision-1';
+
 /** Per-attempt timeout; the lab measured 250–700 ms warm, ~1 s on a cold TLS handshake. */
 export const JEV_TIMEOUT_MS = 4000;
+
+/**
+ * The timeout for the checks that run after a turn (session work, goals),
+ * where nobody waits for the answer. Their request is larger than a routing
+ * one: the reporter of #6743 measured 5.7 to 6.6 s on a loaded local model,
+ * so 4 s failed the check on almost every turn.
+ */
+export const JEV_BACKGROUND_TIMEOUT_MS = 15_000;
+
+/**
+ * How long one timed-out request per endpoint keeps running before it is
+ * aborted. A local model loads on its first request and Ollama cancels the
+ * load when the client disconnects, so a 4 s abort kept a 5-7 s cold load
+ * from ever finishing (#6743).
+ */
+export const JEV_LINGER_MS = 5 * 60_000;
 
 /**
  * The third line keeps a hard turn from dragging its follow-ups up. With a
@@ -80,12 +106,12 @@ export const JEV_TIMEOUT_MS = 4000;
  * so the fallback model took them. Saying that history only resolves what the
  * request refers to, and that finished work carries no weight, put them at
  * 97% and ~75% trivial while "ok, do it" after a plan stayed implement and a
- * regression report stayed hard (jev-router lab, test/follow-up-instructions.js).
+ * regression report stayed hard (a private routing lab outside this repository).
  *
  * The fourth line covers a bare approval, which the third would otherwise
  * read as trivial: "go" after a plan carries no work of its own, so it takes
  * the category of the work it approves (the #4374 author measured this on
- * their own prompts; not yet replayed in the jev-router lab).
+ * their own prompts; not yet replayed in the routing lab).
  * It does not let finished work raise a follow-up; a follow-up that only
  * looks cheap because it reuses a warm context is the router's concern, not
  * the classifier's.
@@ -103,17 +129,32 @@ export const ROUTING_INSTRUCTIONS = [
 ].join('\n');
 
 /**
- * Measured on 31 mixed bash/edit/mcp/webfetch permissions: this "should the agent
- * ask" wording scored 28/31 at threshold 0.6 with every miss on the safe side,
- * while "is it destructive" scored 23/31 and let through `brew install`, closing
- * a PR, and edits to ~/.zshrc and ~/.ssh.
+ * The four-line list form was measured on 31 mixed bash/edit/mcp/webfetch
+ * permissions: this "should the agent ask" wording scored 28/31 at threshold
+ * 0.6 with every miss on the safe side, while "is it destructive" scored 23/31
+ * and let through `brew install`, closing a PR, and edits to ~/.zshrc and
+ * ~/.ssh.
+ *
+ * Lines 1-2 now go in `instructions` as one string (like `ROUTING_INSTRUCTIONS`
+ * after #4175) and lines 3-4 go in `SAFETY_CRITERIA` on `criteria` (like the
+ * other `noul` callers), with global packages and working-tree discard commands
+ * named in `true`. Measured on 20 permissions at threshold 0.6 (#6028): 20/20
+ * on `jev-1.13-free` and 19/20 on Ollama `kev:latest` with the one miss on the
+ * safe side. Replayed on the 31-case lab set against `jev-latest`, the wording
+ * without the tracker and branch examples kept 28-29/31 but cancelling a Linear
+ * issue and deleting a branch fell to 0.72 (and to 0.56-0.62 on
+ * `jev-1.13-free`); naming them in `true` scored 29-30/31 with every miss on the
+ * safe side and the lowest held action at 0.83.
  */
 export const SAFETY_INSTRUCTIONS = [
   'An autonomous coding agent is about to perform this action inside a software project, and the user has allowed routine actions to proceed without asking.',
   'Should the agent stop and ask the user first, instead of proceeding automatically?',
-  'Yes when the action is hard to undo, or reaches outside the project working tree (the system, the home directory, remote services, other people), or changes shared state others can see, or discards uncommitted work.',
-  "No for reading, searching, building, testing, installing project dependencies, ordinary commits, pushes and rebases of the agent's own branch, and file edits inside the project.",
-];
+].join('\n');
+
+export const SAFETY_CRITERIA = {
+  true: 'The action is hard to undo, or reaches outside the project working tree (global packages, the system, the home directory, remote services, other people), or changes shared state others can see (closing, cancelling or deleting issues, pull requests or tickets), or discards work (git checkout --, git restore, git reset --hard, deleting a branch).',
+  false: "Reading, searching, building, testing, installing project dependencies, ordinary commits, pushes and rebases of the agent's own branch, and file edits inside the project.",
+};
 
 /** Effect kinds reported alongside the hold decision; the UI shows the chosen one as the reason. */
 export const SAFETY_KINDS = {

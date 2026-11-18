@@ -81,7 +81,7 @@ export interface ProjectActionsRunner {
   available: boolean;
   /** The project's own actions, then auto-discovery where it is offered. */
   actions: OpenChamberProjectAction[];
-  /** The action the Work Status row shows: a running one wins over the stored pick. */
+  /** The action the header button shows: a running one wins over the stored pick. */
   shown: OpenChamberProjectAction | null;
   isLoading: boolean;
   /**
@@ -791,7 +791,9 @@ export const useProjectActionsRunner = ({
       if (!discovered) return;
 
       const hasCustomOpenUrl = discovered.autoOpenUrl === true && (discovered.openUrl || '').trim().length > 0;
-      const revealTerminal = !hasCustomOpenUrl && action.id !== AUTO_DISCOVER_ACTION_ID;
+      const revealTerminal = !hasCustomOpenUrl
+        && action.id !== AUTO_DISCOVER_ACTION_ID
+        && useUIStore.getState().terminalOpenOnProjectAction;
       const launchContextHostDirectory = contextHostDirectoryRef.current || normalizedDirectory;
       const { executionDirectory, key, tabId } = await getOrCreateActionTab(discovered);
       const normalizedCommand = normalizeProjectActionCommand(discovered.command);
@@ -1082,7 +1084,7 @@ export const useProjectActionsRunner = ({
     await runAction(action);
   }, [runAction, stableProjectRef]);
 
-  // A running action wins over an idle pick: the row is where it gets stopped,
+  // A running action wins over an idle pick: the button is where it gets stopped,
   // so it must not hide behind whichever action was chosen last.
   const runOf = React.useCallback((entry: OpenChamberProjectAction): ProjectActionRun | null => (
     projectActionRuns[toProjectActionRunKey(executionDirectoryFor(entry), entry.id)] ?? null

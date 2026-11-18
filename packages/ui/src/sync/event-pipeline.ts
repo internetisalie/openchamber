@@ -25,7 +25,7 @@ import { useAuthSessionStore, waitForAuthSession } from "@/lib/runtime-auth-expi
 import { type RelayTunnelWebSocket } from "@/lib/relay/tunnel-client"
 import { openRuntimeWebSocket } from "@/lib/relay/runtime-socket"
 import { isVSCodeRuntime } from "@/lib/desktop"
-import { spaceCreationStepSchema } from "@/lib/spaces/spaces-api"
+import { spaceCreationStepSchema, spaceTaskTitleSchema, type SpaceTaskTitle } from "@/lib/spaces/spaces-api"
 import { workflowRunSchema } from "@/lib/workflows/model"
 import { syncDebug } from "./debug"
 import { countSyncPerformance } from "./performance-diagnostics"
@@ -43,6 +43,7 @@ const STREAM_YIELD_MS = 8
 const DEFAULT_RECONNECT_DELAY_MS = 250
 const DEFAULT_HEARTBEAT_TIMEOUT_MS = 30_000
 const WS_FALLBACK_WINDOW_MS = 60_000
+const WS_PROVEN_OPEN_FAILURES_BEFORE_FALLBACK = 3
 const DEFAULT_WS_READY_TIMEOUT_MS = 2_000
 // Retry pacing. Visible+online tabs probe quickly so the user sees connection
 // recovery in under a second of real outage; hidden/offline tabs back off
@@ -67,7 +68,11 @@ export type EventPipelineInput = {
   sdk: OpenCodeClient
   routeDirectory?: (directory: string, payload: SyncEvent) => string
   /** Called after stream reconnects (visibility restore or heartbeat timeout). */
-  onReconnect?: (details: { replayReset: boolean }) => void
+  /**
+   * `replayed`: the server found the cursor of the previous connection and
+   * sends every event after it, so the stream has no gap.
+   */
+  onReconnect?: (details: { replayReset: boolean; replayed: boolean }) => void
   /** Called when the stream disconnects (heartbeat timeout, network error, or transport failure). */
   onDisconnect?: (reason: string) => void
   /** Called when transport switches (e.g. WS timeout → SSE fallback) without actual disconnection. */
@@ -83,6 +88,7 @@ export type EventPipelineInput = {
    * failure of the step that stopped it.
    */
   onSpaceProgress?: (details: SpaceProgress) => void
+  onSpaceTaskTitle?: (spaceId: string, taskTitle: SpaceTaskTitle | null) => void
   /** Called when the setup commands of an isolated space moved on: began, the next one, or ended. */
   onSpaceSetup?: (spaceId: string) => void
   /** Called when the host follows an isolated space's permission modes again, after a gap or at first. */
@@ -108,6 +114,8 @@ export type EventPipeline = {
 const wsFrameSchema = z.object({
   type: z.enum(["ready", "event", "error", "backpressure"]),
   replayReset: z.boolean().optional(),
+  replayed: z.boolean().optional(),
+  cursor: z.string().optional(),
   payload: z.unknown().optional(),
   eventId: z.string().optional(),
   directory: z.string().optional(),
@@ -153,6 +161,7 @@ const openchamberNotificationSchema = z.object({
       tag: z.string(),
       requireHidden: z.boolean(),
       showWhenFocused: z.boolean(),
+      toastOnly: z.boolean(),
       desktopNotificationDelivered: z.boolean(),
       desktopStdoutActive: z.boolean(),
     })
@@ -217,6 +226,11 @@ const openchamberSpaceProgressSchema = z.object({
     step: z.union([spaceCreationStepSchema, z.literal("failed")]),
     failure: z.object({ code: z.string(), message: z.string() }).nullable(),
   }),
+})
+
+const openchamberSpaceTaskTitleSchema = z.object({
+  type: z.literal("openchamber:space-task-title.updated"),
+  properties: z.object({ spaceId: z.string().regex(/^[0-9a-f]{12}$/), taskTitle: spaceTaskTitleSchema.nullable() }),
 })
 
 export type SpaceProgress = z.infer<typeof openchamberSpaceProgressSchema>["properties"]
@@ -365,6 +379,7 @@ function translateWirePayload(payload: unknown, frameDirectory: string | undefin
 type ClassifiedStreamPayload =
   | { kind: "space-stream"; properties: z.infer<typeof openchamberSpaceStreamSchema>["properties"] }
   | { kind: "space-progress"; properties: SpaceProgress }
+  | { kind: "space-task-title"; properties: z.infer<typeof openchamberSpaceTaskTitleSchema>["properties"] }
   | { kind: "space-setup"; spaceId: string }
   | { kind: "space-permission-stream"; spaceId: string }
   | { kind: "events"; events: Array<{ directory: string; event: SyncEvent }> }
@@ -390,6 +405,10 @@ export function classifyStreamPayload(payload: unknown, frameDirectory: string |
     case "openchamber:space-progress": {
       const parsed = openchamberSpaceProgressSchema.safeParse(payload)
       return parsed.success ? { kind: "space-progress", properties: parsed.data.properties } : NO_EVENTS
+    }
+    case "openchamber:space-task-title.updated": {
+      const parsed = openchamberSpaceTaskTitleSchema.safeParse(payload)
+      return parsed.success ? { kind: "space-task-title", properties: parsed.data.properties } : NO_EVENTS
     }
     case "openchamber:space-setup": {
       const parsed = openchamberSpaceSetupSchema.safeParse(payload)
@@ -501,6 +520,7 @@ export function createEventPipeline(input: EventPipelineInput): EventPipeline {
     onTransportSwitch,
     onSpaceStream,
     onSpaceProgress,
+    onSpaceTaskTitle,
     onSpaceSetup,
     onSpacePermissionStream,
     onStreamActivity,
@@ -514,6 +534,8 @@ export function createEventPipeline(input: EventPipelineInput): EventPipeline {
   let disconnected = false
   let lastEventId: string | undefined
   let wsFallbackUntil = 0
+  let wsEverReady = false
+  let wsOpenFailuresSinceReady = 0
 
   const directories = new Map<string, DirectoryQueue>()
 
@@ -690,7 +712,7 @@ export function createEventPipeline(input: EventPipelineInput): EventPipeline {
     onDisconnect?.(reason)
   }
 
-  const markConnected = (replayReset = false) => {
+  const markConnected = (replayReset = false, replayed = false) => {
     disconnected = false
     consecutiveFailures = 0
     // Fire onReconnect on every successful connect — including the very
@@ -698,7 +720,7 @@ export function createEventPipeline(input: EventPipelineInput): EventPipeline {
     // to be flipped positively; without this the send button throws
     // "Connection lost" until something else (HTTP health check) happens
     // to race a setState({isConnected: true}) through.
-    onReconnect?.({ replayReset })
+    onReconnect?.({ replayReset, replayed })
   }
 
   const enqueueEvent = (directory: string, event: SyncEvent) => {
@@ -759,6 +781,10 @@ export function createEventPipeline(input: EventPipelineInput): EventPipeline {
       onSpaceProgress?.(classified.properties)
       return
     }
+    if (classified.kind === "space-task-title") {
+      onSpaceTaskTitle?.(classified.properties.spaceId, classified.properties.taskTitle)
+      return
+    }
     if (classified.kind === "space-setup") {
       onSpaceSetup?.(classified.spaceId)
       return
@@ -817,6 +843,20 @@ export function createEventPipeline(input: EventPipelineInput): EventPipeline {
     }
   }
 
+  /**
+   * Whether a WebSocket attempt that failed before `ready` moves the stream to
+   * SSE. A route that already carried the stream has no proxy refusing
+   * WebSockets: the network or the server is away. Retrying it keeps the
+   * replay cursor, which the SSE stream lacks, so SSE waits for failures that
+   * outlast an outage.
+   */
+  const wsOpenFailureFallsBack = (): boolean => {
+    if (!wsEverReady) return true
+    if (isOffline()) return false
+    wsOpenFailuresSinceReady += 1
+    return wsOpenFailuresSinceReady >= WS_PROVEN_OPEN_FAILURES_BEFORE_FALLBACK
+  }
+
   const runWsAttempt = async (signal: AbortSignal) => {
     // A WebSocket upgrade can't carry an Authorization header, so it
     // authenticates purely via the oc_url_token query param. The sync token
@@ -830,7 +870,7 @@ export function createEventPipeline(input: EventPipelineInput): EventPipeline {
       await refreshRuntimeUrlAuthToken()
     } catch (error) {
       const wrapped = error instanceof Error ? error : new Error("Message stream WebSocket auth token unavailable")
-      if (transport === "auto") {
+      if (transport === "auto" && wsOpenFailureFallsBack()) {
         wsFallbackUntil = Date.now() + WS_FALLBACK_WINDOW_MS
         ;(wrapped as Error & { code?: string }).code = "WS_FALLBACK"
       }
@@ -845,11 +885,15 @@ export function createEventPipeline(input: EventPipelineInput): EventPipeline {
       let opened = false
       let readyAt = 0
       const socket: RelayTunnelWebSocket = openGlobalEventSocket(lastEventId)
+      let openFailureFallsBack: boolean | undefined
       const setFallbackCode = (error: Error, force = false) => {
-        if ((force || !opened) && transport === "auto") {
-          wsFallbackUntil = Date.now() + WS_FALLBACK_WINDOW_MS
-          ;(error as Error & { code?: string }).code = "WS_FALLBACK"
+        if ((!force && opened) || transport !== "auto") return
+        if (!force) {
+          openFailureFallsBack ??= wsOpenFailureFallsBack()
+          if (!openFailureFallsBack) return
         }
+        wsFallbackUntil = Date.now() + WS_FALLBACK_WINDOW_MS
+        ;(error as Error & { code?: string }).code = "WS_FALLBACK"
       }
 
       let readyTimer: ReturnType<typeof setTimeout> | undefined = setTimeout(() => {
@@ -926,14 +970,20 @@ export function createEventPipeline(input: EventPipelineInput): EventPipeline {
           // The retained suffix no longer covers our cursor. The normal
           // reconnect callback repairs authoritative state; retire that cursor.
           if (frame.replayReset === true) lastEventId = undefined
+          // No replay follows this frame, so the stream continues from the
+          // server's cursor: the next reconnect can resume even when no event
+          // arrives before it.
+          if (frame.replayed !== true && frame.cursor) lastEventId = frame.cursor
           opened = true
+          wsEverReady = true
+          wsOpenFailuresSinceReady = 0
           readyAt = Date.now()
           if (readyTimer) {
             clearTimeout(readyTimer)
             readyTimer = undefined
           }
           streamErrorLogged = false
-          markConnected(frame.replayReset === true)
+          markConnected(frame.replayReset === true, frame.replayed === true)
           return
         }
 

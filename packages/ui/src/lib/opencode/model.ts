@@ -188,7 +188,12 @@ export type AssistantMessage = MessageBase & {
   role: "assistant"
   time: {
     created: number
-    /** First streamed token. */
+    /**
+     * The provider's first output of any kind: text, reasoning or a tool call
+     * (OpenCode 2.3.0+). Absent on older steps.
+     */
+    firstToken?: number
+    /** The provider's response body ended, before tool calls settled. */
     streamed?: number
     /** Whole step finished (text and every tool call). */
     completed?: number
@@ -217,6 +222,8 @@ export type SyntheticMessage = MessageBase & {
   time: { created: number }
   text: string
   description?: string
+  /** Still in OpenCode's inbox: the agent reads it at its next step. Delivery removes this. */
+  pending?: true
 }
 
 /** Text OpenCode itself added (instruction updates, notices). */
@@ -253,6 +260,8 @@ export type CompactionMessage = MessageBase & {
   status: "running" | "completed" | "failed"
   reason: "auto" | "manual"
   summary: string
+  /** The model that wrote this summary, not the session's current model. */
+  model?: ModelRef
   error?: StructuredError
   cost?: number
   tokens?: TokenUsageInfo

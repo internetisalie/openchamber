@@ -2,8 +2,10 @@ import { registerPlugin } from '@capacitor/core';
 import React from 'react';
 
 import { observeNativeKeyboardHeight, resetHardwareKeyboardDetection, startHardwareKeyboardBridge } from '@/lib/hardwareKeyboard';
+import { hasOpenBackLayer, subscribeBackLayers } from '@/lib/mobileBackLayers';
 import { KEYBOARD_EASING_CSS, KEYBOARD_HIDE_MS, KEYBOARD_SHOW_MS, keyboardKeyframes } from '@/lib/mobileKeyboardTiming';
 import { writeMobileKeyboardVar } from '@/lib/mobileKeyboardInsets';
+import { isBackGuardEntry, pushBackGuard } from '@/lib/router/backGuard';
 
 /** True when running inside the native Capacitor shell (iOS/Android app). */
 export const isCapacitorMobileApp = (): boolean => {
@@ -280,10 +282,31 @@ export const useNativeMobileChrome = (): void => {
       };
 
       const showHandle = await Keyboard.addListener('keyboardWillShow', (info) => {
-        clearSettle();
-        dropRevealRoom();
         observeNativeKeyboardHeight(info.keyboardHeight);
         const inShell = document.activeElement?.closest('.oc-mobile-app-shell') != null;
+        // Focus moved to another field on the same side with the keyboard up
+        // and landed (the comment composer handing back to the composer): iOS
+        // announces the keyboard again, but the layout already takes it in.
+        // Sliding the movers would lift them a second keyboard height until
+        // the settle cleared them. Only a changed height is applied, in place.
+        // A slide still in flight (its settle pending) takes the full path
+        // below; the reveal room already reserved stays for the new field.
+        if (keyboardOpen && layoutApplied && settleTimer === null && inShell === keyboardInShell) {
+          if (Math.abs(info.keyboardHeight - keyboardHeight) >= 1) {
+            keyboardHeight = info.keyboardHeight;
+            setInset(keyboardHeight);
+            setVar('--oc-kb-surface', keyboardHeight);
+            if (keyboardInShell) {
+              setVar('--oc-kb-layout', keyboardHeight);
+              setVar('--oc-kb-scroll-inset', Math.max(0, keyboardHeight - safeBottomPx));
+            }
+            dispatchKb('oc:keyboard-settled', { open: true });
+          }
+          revealFocusedField('landed');
+          return;
+        }
+        clearSettle();
+        dropRevealRoom();
         // Focus moved between the shell and a surface over it with the
         // keyboard up: the shell gives back what it took for the old field,
         // its movers first (they are found under the old owner).
@@ -487,10 +510,19 @@ export const useNativeMobileChrome = (): void => {
         }, 0);
       };
       document.addEventListener('focusout', handleFocusOut, true);
+      // The keyboard can leave without either signal: when a foldable switches
+      // screens, it goes with the one it was on. The WebView resizes only for
+      // a rotation or a fold here (resize: 'none' keeps it whole under the
+      // keyboard), so a resize with no field holding focus closes it out.
+      const handleResize = () => {
+        if (keyboardOpen && !isTextInput(document.activeElement)) runHide();
+      };
+      window.addEventListener('resize', handleResize);
 
       if (disposed) {
         clearSettle();
         document.removeEventListener('focusout', handleFocusOut, true);
+        window.removeEventListener('resize', handleResize);
         void showHandle.remove();
         void hideHandle.remove();
         return;
@@ -505,6 +537,7 @@ export const useNativeMobileChrome = (): void => {
           }
         },
         () => document.removeEventListener('focusout', handleFocusOut, true),
+        () => window.removeEventListener('resize', handleResize),
         () => void showHandle.remove(),
         () => void hideHandle.remove(),
       );
@@ -602,4 +635,64 @@ export const useNativeAndroidBackButton = (onBack: () => boolean): void => {
       remove?.();
     };
   }, [onBack]);
+};
+
+/**
+ * Mobile web (PWA) has no back button event, only `popstate`, which fires after
+ * the browser has already left the entry. While any layer can be closed, one
+ * guard entry sits on top of the history, so Back lands in the app. Each Back
+ * off the guard runs one step of `handleBack` and puts the guard back; once
+ * nothing is open the guard leaves the stack.
+ *
+ * Only the top of the stack can hold the guard, so the one traversal off it
+ * that is not ours is Back. Forward and route traversals never run `handleBack`.
+ */
+export const useMobileWebBackButton = (
+  handleBack: () => boolean,
+  shellLayerOpen: boolean,
+): void => {
+  const shellLayerOpenRef = React.useRef(shellLayerOpen);
+  const onGuardRef = React.useRef(false);
+  // The guard's own removal, already asked of the browser.
+  const retiringGuardRef = React.useRef(false);
+
+  const reconcileGuard = React.useCallback(() => {
+    if (retiringGuardRef.current) return;
+    const onGuard = isBackGuardEntry();
+    const layerOpen = shellLayerOpenRef.current || hasOpenBackLayer();
+    onGuardRef.current = onGuard || layerOpen;
+    if (layerOpen && !onGuard) {
+      pushBackGuard();
+    } else if (!layerOpen && onGuard) {
+      retiringGuardRef.current = true;
+      window.history.back();
+    }
+  }, []);
+
+  React.useEffect(() => {
+    if (isCapacitorMobileApp()) return;
+    shellLayerOpenRef.current = shellLayerOpen;
+    reconcileGuard();
+    return subscribeBackLayers(reconcileGuard);
+  }, [reconcileGuard, shellLayerOpen]);
+
+  React.useEffect(() => {
+    if (isCapacitorMobileApp()) return;
+
+    const handlePopState = () => {
+      const pressedBack = onGuardRef.current && !retiringGuardRef.current && !isBackGuardEntry();
+      retiringGuardRef.current = false;
+      // Nothing left to close: this press leaves the guard for good.
+      if (pressedBack && !handleBack()) {
+        onGuardRef.current = false;
+        return;
+      }
+      reconcileGuard();
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => {
+      window.removeEventListener('popstate', handlePopState);
+    };
+  }, [handleBack, reconcileGuard]);
 };

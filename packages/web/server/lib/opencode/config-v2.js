@@ -801,18 +801,21 @@ function writeWarmingDuration(config, minutes) {
 
 // ============== COMPACTION ==============
 
-const compactionTokens = z.number().int().min(0).max(10_000_000).nullable().optional();
+const tokenCount = z.number().int().min(0).max(10_000_000);
+const compactionTokens = tokenCount.nullable().optional();
+/** OpenCode's `Config.Compaction.Percent`: a share of the window from "1%" up to but not including "100%". */
+const compactionPercent = z.string().regex(/^([1-9]\d?(\.\d+)?)%$/u);
 
 /**
  * A `PUT /api/config/compaction` body: `auto` sets `compaction.auto`,
- * `buffer` and `keepTokens` set `compaction.buffer` and
- * `compaction.keep.tokens` (`null` removes the key, so OpenCode's default
- * applies), `background` sets `experimental.background_compaction`. An
- * omitted field is left as it is.
+ * `buffer` and `keepTokens` set `compaction.buffer` (a share such as `"20%"`
+ * or a token count) and `compaction.keep.tokens` (`null` removes the key, so
+ * OpenCode's default applies), `background` sets
+ * `experimental.background_compaction`. An omitted field is left as it is.
  */
 const compactionUpdateSchema = z.object({
   auto: z.boolean().optional(),
-  buffer: compactionTokens,
+  buffer: z.union([compactionPercent, tokenCount]).nullable().optional(),
   keepTokens: compactionTokens,
   background: z.boolean().optional(),
 }).strict();
@@ -889,19 +892,40 @@ const skillSwitchRequestSchema = z.object({
   scope: z.enum(['user', 'project']),
 });
 
+/**
+ * An exact deny for the skill in either spelling OpenCode reads: `skill.use`
+ * with the bare id, or the legacy `integration.use` with `skill:<id>`, which
+ * OpenCode decodes into the first and an older OpenChamber wrote.
+ */
 const isSkillDeny = (statement, id) => isRecord(statement)
-  && statement.action === 'integration.use'
-  && statement.resource === `skill:${id}`
-  && statement.effect === 'deny';
+  && statement.effect === 'deny'
+  && ((statement.action === 'skill.use' && statement.resource === id)
+    || (statement.action === 'integration.use' && statement.resource === `skill:${id}`));
+
+// OpenCode reads `integration.use` with `skill:<id>` as `skill.use` with `<id>`.
+const isSkillAllow = (statement, id) => isRecord(statement)
+  && statement.effect === 'allow'
+  && ((statement.action === 'skill.use' && statement.resource === id)
+    || (statement.action === 'integration.use' && statement.resource === `skill:${id}`));
+
+// The last matching statement wins in OpenCode, so an exact deny keeps the
+// skill off only when no exact allow for it comes later.
+const endsWithSkillDeny = (statements, id) => {
+  for (let index = statements.length - 1; index >= 0; index -= 1) {
+    if (isSkillDeny(statements[index], id)) return true;
+    if (isSkillAllow(statements[index], id)) return false;
+  }
+  return false;
+};
 
 /**
  * Turns a skill off or back on in one config object, in place, through
- * OpenCode's `integration.use` policy. Off appends an exact deny to the
- * top-level `policies` unless the file already has one; on removes every
- * exact deny for that id, from `policies` and the deprecated
- * `experimental.policies`, and nothing else: wildcards, allows and other
- * statements stay. A list it empties is removed. Returns whether the config
- * changed.
+ * OpenCode's `skill.use` policy. Off appends an exact deny to the top-level
+ * `policies` unless the file already ends its exact statements for the id
+ * with a deny in either spelling; on removes every exact deny for that id, in
+ * either spelling, from `policies` and the deprecated `experimental.policies`,
+ * and nothing else: wildcards, allows and other statements stay. A list it
+ * empties is removed. Returns whether the config changed.
  */
 function writeSkillDisabled(config, id, disabled) {
   const lists = [
@@ -910,9 +934,11 @@ function writeSkillDisabled(config, id, disabled) {
   ].filter(({ owner, key }) => Array.isArray(owner[key]));
 
   if (disabled) {
-    if (lists.some(({ owner, key }) => owner[key].some((statement) => isSkillDeny(statement, id)))) return false;
+    // OpenCode reads the deprecated `experimental.policies` before `policies`.
+    const statements = [...lists].reverse().flatMap(({ owner, key }) => owner[key]);
+    if (endsWithSkillDeny(statements, id)) return false;
     const policies = Array.isArray(config.policies) ? config.policies : [];
-    config.policies = [...policies, { action: 'integration.use', resource: `skill:${id}`, effect: 'deny' }];
+    config.policies = [...policies, { action: 'skill.use', resource: id, effect: 'deny' }];
     return true;
   }
 

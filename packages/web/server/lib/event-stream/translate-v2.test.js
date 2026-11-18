@@ -80,6 +80,15 @@ describe('translateWireEvent', () => {
     expect(event).toMatchObject({ type: 'session.deleted', properties: { sessionID: 's1', info: { id: 's1' } } });
   });
 
+  test('an archive and a restore are their own events, never a session update', () => {
+    expect(translateWireEvent(wire('session.archived', { sessionID: 's1' }))).toEqual([
+      { type: 'session.archived', id: 'evt_1', created: 1000, properties: { sessionID: 's1', directory: '/repo' } },
+    ]);
+    expect(translateWireEvent(wire('session.unarchived', { sessionID: 's1' }))).toEqual([
+      { type: 'session.unarchived', id: 'evt_1', created: 1000, properties: { sessionID: 's1', directory: '/repo' } },
+    ]);
+  });
+
   test('execution events synthesize the status vocabulary v2 no longer emits', () => {
     const started = translateWireEvent(wire('session.execution.started', { sessionID: 's1' }));
     expect(started).toMatchObject([{ type: 'session.status', properties: { sessionID: 's1', status: { type: 'busy' } } }]);

@@ -7,7 +7,7 @@ import { parseOpenCodeCliVersion } from './opencode-cli-version.mjs';
 // The fork publishes the accepted Linux glibc binary as a GitHub release asset.
 // Its source-pinned hash also applies to cached and already-staged copies.
 export const prepareForkOpenCodeCli = async ({ version, sha256, platform, architecture, outputBinary, cacheRoot }) => {
-  if (!/^\d+\.\d+\.\d+-internetisalie\.[0-9A-Za-z.]+$/.test(version)) {
+  if (!/^\d+\.\d+\.\d+-internetisalie\.[1-9]\d*(?:-poc\.[1-9]\d*)?$/.test(version)) {
     throw new Error(`Invalid fork OpenCode version: ${version}`);
   }
   if (platform !== 'linux' || architecture !== 'x64') {

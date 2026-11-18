@@ -7,13 +7,27 @@ import { useConfigStore } from '@/stores/useConfigStore';
 import { cycleThinkingVariant } from '@/lib/cycleThinkingVariant';
 import { useUIStore } from '@/stores/useUIStore';
 import { useSessionUIStore } from '@/sync/session-ui-store';
+import { useSelectionStore } from '@/sync/selection-store';
 import { useKeybinds } from './useKeybind';
-import { hasActiveBtwComposer, isEditableEventTarget } from './keyboard-shortcut-dom';
+import { hasActiveBtwComposer, hasOpenDropdown, isEditableEventTarget } from './keyboard-shortcut-dom';
+import { useComposerAbortEscape } from './useComposerAbortEscape';
+import { useCurrentSessionActivity } from './useSessionActivity';
+import * as sessionActions from '@/sync/session-actions';
 import { dispatchPromptHistorySearch } from '@/components/chat/composer/state/promptHistorySearchRoute';
 
 export const useMiniChatKeyboardShortcuts = () => {
   const openNewSessionDraft = useSessionUIStore((state) => state.openNewSessionDraft);
   const dispatcherRef = React.useRef<ShortcutDispatcher | null>(null);
+  const currentSessionId = useSessionUIStore((state) => state.currentSessionId);
+  const { phase: sessionPhase } = useCurrentSessionActivity();
+  // Double Escape from Mini Chat's composer stops its own session's run, as
+  // in the main window, so its composer can keep one disc while a draft is
+  // typed during a run (ComposerActionButtons).
+  const { handleKeyDown: handleAbortEscapeKeyDown } = useComposerAbortEscape({
+    isBlocked: () => hasOpenDropdown() || Boolean(document.querySelector('[role="dialog"], [role="alertdialog"]')),
+    resolveTarget: () => ({ sessionId: currentSessionId, working: sessionPhase !== 'idle' }),
+    abort: (sessionId) => { void sessionActions.abortCurrentOperation(sessionId); },
+  });
 
   if (!dispatcherRef.current) {
     dispatcherRef.current = new ShortcutDispatcher({
@@ -46,6 +60,8 @@ export const useMiniChatKeyboardShortcuts = () => {
     if (!next) return false;
     setProvider(next.providerID);
     setModel(next.modelID);
+    const sessionId = useSessionUIStore.getState().currentSessionId;
+    if (sessionId) useSelectionStore.getState().pickSessionModel(sessionId, next.providerID, next.modelID);
     addRecentModel(next.providerID, next.modelID);
     setLastSelectedModel(next.providerID, next.modelID);
   };
@@ -117,11 +133,13 @@ export const useMiniChatKeyboardShortcuts = () => {
 
     window.addEventListener('keydown', handleActivePrefixKeyDownCapture, true);
     window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('keydown', handleAbortEscapeKeyDown);
     window.addEventListener('blur', handleBlur);
     return () => {
       window.removeEventListener('keydown', handleActivePrefixKeyDownCapture, true);
       window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('keydown', handleAbortEscapeKeyDown);
       window.removeEventListener('blur', handleBlur);
     };
-  }, [dispatcher]);
+  }, [dispatcher, handleAbortEscapeKeyDown]);
 };

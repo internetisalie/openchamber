@@ -1,6 +1,6 @@
 {
   "name": "@openchamber/electron",
-  "version": "2.5.3",
+  "version": "2.7.2",
   "private": true,
   "description": "Electron desktop runtime for OpenChamber",
   "author": "OpenChamber",
@@ -8,8 +8,8 @@
   "type": "module",
   "main": "./dist-bundle/entry.mjs",
   "opencodeCli": {
-    "version": "2.2.3-internetisalie.1",
-    "sha256": "07b76069e32ecd28063d302c074e4b70a774930b68c97bf0061c27a44f83be5a"
+    "version": "2.3.2-internetisalie.1-poc.1",
+    "sha256": "0c9a9730acc78701e3c7d91eda4bd66fbd1218e553f1cd1d76b44d403bc9f0c3"
   },
   "dependencies": {
     "@openchamber/web": "workspace:*",
@@ -20,9 +20,9 @@
   },
   "devDependencies": {
     "@electron/rebuild": "^4.2.0",
-    "electron": "^44.10.0",
+    "electron": "^45.0.0",
     "electron-builder": "^26.0.0",
-    "node-abi": "^4.33.0"
+    "node-abi": "^4.40.0"
   },
   "trustedDependencies": [
     "electron"
@@ -128,7 +128,8 @@
       "artifactName": "${productName}-${version}-mac-${arch}.${ext}",
       "extendInfo": {
         "CFBundleIconName": "AppIcon",
-        "NSLocalNetworkUsageDescription": "OpenChamber needs access to devices and services on your local network."
+        "NSLocalNetworkUsageDescription": "OpenChamber needs access to devices and services on your local network.",
+        "NSAppleEventsUsageDescription": "Lets commands that you or an agent run in OpenChamber control other apps."
       },
       "hardenedRuntime": true,
       "gatekeeperAssess": false,

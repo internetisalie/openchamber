@@ -4,6 +4,7 @@ import { Icon } from '@/components/icon/Icon';
 import { Button } from '@/components/ui/button';
 import { SettingsChipGroup } from '@/components/sections/shared/SettingsSection';
 import { ProviderLogo } from '@/components/ui/ProviderLogo';
+import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { getCurrentIntlLocale, useI18n } from '@/lib/i18n';
@@ -33,7 +34,7 @@ import {
   type TokenSegmentKey,
   type UsageRange,
 } from './usageStatsModel';
-import { selectUsageStatsEntry, selectUsageToolsEntry, useUsageStatsStore, type UsageToolsEntry } from './usageStatsStore';
+import { selectUsageStatsEntry, selectUsageToolsEntry, useTodayRollover, useUsageStatsStore, type UsageToolsEntry } from './usageStatsStore';
 
 /** Select value for the unfiltered report; project values are OpenChamber project ids. */
 const ALL_PROJECTS = '__all__';
@@ -54,6 +55,7 @@ const TOKEN_SEGMENT_LABEL_KEYS = {
 } as const satisfies Record<TokenSegmentKey, I18nKey>;
 
 const RANGE_LABEL_KEYS = {
+  '1d': 'usageStats.range.1d',
   '7d': 'usageStats.range.7d',
   '30d': 'usageStats.range.30d',
   '90d': 'usageStats.range.90d',
@@ -63,7 +65,7 @@ const RANGE_LABEL_KEYS = {
 /**
  * The cached report for the chosen range and project (by directory). A key
  * with nothing cached loads on first view; a cached key never refetches on
- * its own. See `usageStatsStore.ts`.
+ * its own, except Today once the local day changes. See `usageStatsStore.ts`.
  */
 function useUsageStats(range: UsageRange, projectDirectory: string | null) {
   const request = React.useMemo(() => ({ range, projectDirectory }), [range, projectDirectory]);
@@ -71,9 +73,13 @@ function useUsageStats(range: UsageRange, projectDirectory: string | null) {
   const load = useUsageStatsStore((store) => store.load);
 
   // `entry` in the deps re-runs this after a runtime reset empties the cache.
-  React.useEffect(() => {
+  // A layout effect, so an expired Today report is gone before the first paint.
+  React.useLayoutEffect(() => {
     void load(request);
   }, [load, request, entry]);
+
+  const reload = React.useCallback(() => void load(request), [load, request]);
+  useTodayRollover(range === '1d', reload);
 
   const refresh = React.useCallback(() => void load(request, { force: true }), [load, request]);
 
@@ -121,7 +127,7 @@ export function UsageStatsView({ className }: { className?: string }): React.Rea
   }, [intlLocale]);
 
   return (
-    <div className={cn('h-full overflow-y-auto', className)}>
+    <ScrollableOverlay outerClassName={cn('h-full', className)} disableHorizontal>
       <div className="mx-auto flex w-full max-w-4xl flex-col gap-5 px-4 py-4 sm:px-6">
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
           <SettingsChipGroup
@@ -183,7 +189,7 @@ export function UsageStatsView({ className }: { className?: string }): React.Rea
               <p className="typography-micro text-muted-foreground">{t('usageStats.empty.description')}</p>
             </div>
           ) : (
-            <UsageReport stats={stats} formats={formats} tools={tools} />
+            <UsageReport stats={stats} range={range} formats={formats} tools={tools} />
           )
         ) : loading ? (
           <div className="flex items-center justify-center gap-2 py-16 text-muted-foreground" role="status">
@@ -200,7 +206,7 @@ export function UsageStatsView({ className }: { className?: string }): React.Rea
           </div>
         )}
       </div>
-    </div>
+    </ScrollableOverlay>
   );
 }
 
@@ -225,12 +231,15 @@ type Formats = {
 
 type ToolsState = { entry: UsageToolsEntry | undefined; load: () => void };
 
-function UsageReport({ stats, formats, tools }: { stats: UsageStats; formats: Formats; tools: ToolsState }): React.ReactNode {
+function UsageReport({ stats, range, formats, tools }: { stats: UsageStats; range: UsageRange; formats: Formats; tools: ToolsState }): React.ReactNode {
   const { t } = useI18n();
   const cache = stats.tokens.cacheRead + stats.tokens.cacheWrite;
+  // A one-day report makes the daily chart a single bar and leaves active days
+  // and the streak at 0 or 1, so today shows the totals without them.
+  const today = range === '1d';
   return (
     <>
-      <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+      <div className={cn('grid grid-cols-2 gap-2', today ? 'sm:grid-cols-2' : 'sm:grid-cols-3')}>
         <StatTile
           label={t('usageStats.metric.sessions')}
           value={formats.integer.format(stats.sessions)}
@@ -247,11 +256,15 @@ function UsageReport({ stats, formats, tools }: { stats: UsageStats; formats: Fo
           })}
         />
         <StatTile label={t('usageStats.metric.cost')} value={formats.cost.format(stats.cost)} />
-        <StatTile label={t('usageStats.metric.activeDays')} value={formats.integer.format(stats.activeDays)} />
-        <StatTile label={t('usageStats.metric.streak')} value={formats.integer.format(stats.streak)} />
+        {today ? null : (
+          <>
+            <StatTile label={t('usageStats.metric.activeDays')} value={formats.integer.format(stats.activeDays)} />
+            <StatTile label={t('usageStats.metric.streak')} value={formats.integer.format(stats.streak)} />
+          </>
+        )}
       </div>
 
-      <ActivityChart stats={stats} formats={formats} />
+      {today ? null : <ActivityChart stats={stats} formats={formats} />}
 
       <TokenComposition stats={stats} formats={formats} />
 
@@ -485,7 +498,7 @@ function ToolsSection({ state, formats }: { state: ToolsState; formats: Formats 
         {error && !loading ? (
           <div className="flex flex-col items-start gap-2" role="alert">
             <p className="typography-micro text-foreground">{t('usageStats.tools.loadFailed')}</p>
-            <p className="max-w-md break-words typography-micro text-muted-foreground">{error}</p>
+            <p dir="auto" className="max-w-md break-words typography-micro text-muted-foreground">{error}</p>
             <Button type="button" variant="outline" size="sm" onClick={state.load}>
               {t('usageStats.error.retry')}
             </Button>

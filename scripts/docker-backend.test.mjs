@@ -14,7 +14,7 @@ const verification = /^RUN ([\s\S]+)$/m.exec(verificationStage ?? '')?.[1].repla
 
 test('Docker uses one concrete numbered fork version and SHA-256 matching Electron', () => {
   assert.ok(pin, 'Missing authoritative Docker backend pin');
-  assert.match(pin[1], /^\d+\.\d+\.\d+-internetisalie\.[1-9]\d*$/);
+  assert.match(pin[1], /^\d+\.\d+\.\d+-internetisalie\.[1-9]\d*(?:-poc\.[1-9]\d*)?$/);
   assert.match(pin[2], /^[a-f0-9]{64}$/);
   assert.notEqual(pin[2], '0'.repeat(64));
   assert.equal(pin[1], electron.opencodeCli.version);

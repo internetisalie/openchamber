@@ -30,6 +30,8 @@ Apply every matching category. Do not escalate local work into workspace-wide ri
 ## Structural Discipline
 
 - Preserve behavior established by callers and tests unless the request replaces it. Keep the diff scoped to the complete requested behavior.
+- A migration or port (an API cutover, a library swap, a rewrite) keeps product behavior identical. Diff behavior, not types: for every fallback chain, heuristic, cost rule and refusal the old code had, show that the new code reproduces it. Where it cannot, stop and hand the maintainer "old did X, new cannot, options are…" before building; a reshaped behavior otherwise has to be re-verified by hand, feature by feature. "Upstream owns this now" holds only after checking that the upstream route does the same thing.
+- A new bare import is listed in the importing workspace's `package.json` `dependencies`. A stale link in `node_modules` lets tests pass without it, while the packaged desktop app fails at start with `ERR_MODULE_NOT_FOUND` (in `~/Library/Logs/OpenChamber/main.log`); the dead-code check does not report unlisted dependencies.
 - Make the normal use-case path read top to bottom in domain terms. Keep orchestration entrypoints thin and move mechanics or domain logic behind focused, intention-revealing boundaries.
 - Pull complexity downward only when a boundary hides meaningful mechanics, owns an invariant, isolates a proven integration, or captures stable repetition. Do not spread obvious code across pass-through layers.
 - Prefer explicit dependencies and dependency injection over hidden module coupling.
@@ -98,6 +100,8 @@ For type-only shared contracts, validate compile-time consumers. Add runtime ser
 
 A test is proof when it is deterministic and fails without the change: a pure function, a page script, a reducer. Behavior that lives in a runtime is proven by running that runtime and watching the scenario; a test there that only mirrors the implementation through mocks or races real timers adds upkeep and flakes, and the run already shows more.
 
+Pick the scenarios before counting them. First run the plain path a user takes, end to end in the running app; then break it the ordinary ways it breaks: a credential the server stops accepting, a server that is down, a sign-in the user cancels or that fails, an empty or slow answer. Look at what the user sees each time. These ordinary breaks are where shipped bugs sit, so they come before rare races and exotic inputs, which earn coverage only with a concrete reason. Tests then pin what the runs found.
+
 ## Where to run it
 
 Run the scenario in the runtime that executes the changed code. Every route below starts its own instance on free ports, beside the user's own app and dev servers.
@@ -112,6 +116,8 @@ Run the scenario in the runtime that executes the changed code. Every route belo
 | Behavior only the packaged app has: client auth headers, the updater | The installed app over CDP (`desktop-shell`, *Validation*) |
 | Capacitor shell | The iOS Simulator (`serve-sim`); timing, motion and keyboard latency on a device (`performance-engineering`, `references/ios-webkit.md`) |
 | Pure logic | A deterministic test that fails without the change |
+
+A scenario with real sessions, OpenCode turns or extensions runs in an isolated dev instance, set up and driven as `references/live-dev-instance.md` describes: a plain `bun run dev` writes the user's own settings and sessions.
 
 Use `localhost`, never `127.0.0.1`, for the web server: the desktop app lifts Chromium's connection cap for `127.0.0.1`, and the panel then overruns Vite and resets connections. Build the desktop app only for a change that lives in its shell. Stop each instance by its own process id or process group, never by a name pattern that would stop someone else's.
 

@@ -322,21 +322,27 @@ export function materializeSessionSnapshots(
   const currentMessages = existingMessages ?? []
   const incomingByID = new Map(nextMessages.map((message) => [message.id, message] as const))
   let reconciledCurrentMessages = currentMessages
+  let deliveredWhileAway = false
   for (let index = 0; index < currentMessages.length; index += 1) {
     const existing = currentMessages[index]
     const incoming = incomingByID.get(existing.id)
+    // History holds only delivered messages, so a record there supersedes the
+    // pending one a missed `session.inbox.delivered` left behind, at its
+    // delivery time.
+    const delivered = existing.role === "synthetic" && existing.pending === true && incoming?.role === "synthetic"
     // A completion the server reports supersedes a turn this client still
     // holds open, and the local interruption mark (`interruptedTurnToolParts`)
     // it may have put on it. Any other existing record wins over the snapshot.
-    if (
-      existing.role !== "assistant"
-      || incoming?.role !== "assistant"
-      || incoming.time.completed === undefined
-      || (existing.time.completed !== undefined && !existing.closedLocally)
-    ) continue
+    const completed = existing.role === "assistant"
+      && incoming?.role === "assistant"
+      && incoming.time.completed !== undefined
+      && (existing.time.completed === undefined || existing.closedLocally === true)
+    if (!incoming || (!delivered && !completed)) continue
+    deliveredWhileAway ||= delivered
     if (reconciledCurrentMessages === currentMessages) reconciledCurrentMessages = [...currentMessages]
     reconciledCurrentMessages[index] = incoming
   }
+  if (deliveredWhileAway) reconciledCurrentMessages = sortMessagesChronologically(reconciledCurrentMessages)
   const messages = mergeMessages(reconciledCurrentMessages, nextMessages)
   const messagesChanged = messages !== currentMessages || (existingMessages === undefined && snapshots.length === 0)
 
@@ -388,9 +394,19 @@ export function materializeSessionSnapshots(
   }
 }
 
+export type SessionMaterializationStatusOptions = {
+  /**
+   * The message loader holds this session's history (read from the server,
+   * not evicted since). Then an assistant message still running with no parts
+   * is a step whose parts are on their way, not a gap.
+   */
+  historyCovered?: boolean
+}
+
 export function getSessionMaterializationStatus(
   state: MaterializedState,
   sessionID: string,
+  options: SessionMaterializationStatusOptions = {},
 ): SessionMaterializationStatus {
   const messages = state.message[sessionID]
   if (!messages) {
@@ -405,9 +421,13 @@ export function getSessionMaterializationStatus(
     // as renderable — otherwise sessions containing such a message can never
     // reach renderable state and ensure-renderable callers loop forever.
     const parts = state.part[message.id]
-    if (!parts) {
-      missingPartMessageIDs.push(message.id)
-    }
+    if (parts) continue
+    // OpenCode 2.x opens every step of a turn as a new assistant message and
+    // sends its parts once the model answers, seconds later. In a transcript
+    // the loader holds, that wait is expected: a lost part shows as an orphan
+    // delta, and a step that ends without parts is repaired on its completion.
+    if (options.historyCovered && message.time.completed === undefined) continue
+    missingPartMessageIDs.push(message.id)
   }
 
   return {

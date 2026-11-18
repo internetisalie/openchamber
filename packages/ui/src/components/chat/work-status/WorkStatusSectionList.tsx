@@ -7,6 +7,8 @@ import { WorkStatusTelemetrySection } from './WorkStatusTelemetrySection';
 import { WorkStatusSubagentsSection } from './WorkStatusSubagentsSection';
 import { WorkStatusPtySection } from './WorkStatusPtySection';
 import { WorkStatusWorkflowsSection } from './WorkStatusWorkflowsSection';
+import { WorkStatusTasksSection } from './WorkStatusTasksSection';
+import { useLoadSessionTodos } from './useLoadSessionTodos';
 import { WorkStatusMcpSection } from './WorkStatusMcpSection';
 import { WorkStatusPinnedSection } from './WorkStatusPinnedSection';
 import { WorkStatusContextSection } from './WorkStatusContextSection';
@@ -24,17 +26,22 @@ export const WorkStatusSectionList: React.FC<{
   repositoryEnabled: boolean;
   layout: WorkStatusSectionLayout;
   ptyActive?: boolean;
-}> = ({ sessionId, directory, repositoryEnabled, layout, ptyActive = false }) => {
+  visible?: boolean;
+}> = ({ sessionId, directory, repositoryEnabled, layout, visible = true, ptyActive = false }) => {
   const { extensionSections, sectionOrder, hiddenSections } = layout;
   const sectionVisible = (id: Parameters<typeof isWorkStatusSectionVisible>[1]) => isWorkStatusSectionVisible(hiddenSections, id);
+  // Read here, not in the section: the section is listed only once the server
+  // says the tool is on in this directory.
+  useLoadSessionTodos(sessionId, directory);
 
   // Keep these elements owned here so primary readout updates do not rerender
   // unrelated sections through the composition callback.
   const secondarySections = {
-    usage: <WorkStatusUsageSection />,
+    usage: <WorkStatusUsageSection visible={visible} />,
     telemetry: <WorkStatusTelemetrySection sessionId={sessionId} directory={directory} />,
     subagents: <WorkStatusSubagentsSection sessionId={sessionId} directory={directory} />,
     ptys: ptyActive ? <WorkStatusPtySection sessionId={sessionId} active={ptyActive} /> : null,
+    tasks: <WorkStatusTasksSection sessionId={sessionId} />,
     workflows: <WorkStatusWorkflowsSection sessionId={sessionId} directory={directory} />,
     mcp: <WorkStatusMcpSection sessionId={sessionId} directory={directory} />,
     pinned: <WorkStatusPinnedSection sessionId={sessionId} directory={directory} />,

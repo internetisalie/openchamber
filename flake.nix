@@ -8,7 +8,11 @@
     # OpenCode CLI, pinned to the tag matching OpenChamber's OpenCode 2.x
     # requirement. Keep in sync with packages/electron/package.json
     # (opencodeCli.version) and the @opencode/client pin. Bump all together.
-    opencode.url = "github:anomalyco/opencode/v2.2.1";
+    # OpenCode 2.3.0 targets Bun 1.4.4. Built with nixpkgs' Bun 1.4.2 it
+    # compiles, then exits on start with "Export named 'extension' not found
+    # in module 'ws'" (its ws workaround, anomalyco/opencode#61518), so keep
+    # nixpkgs on Bun 1.4.4 or newer.
+    opencode.url = "github:anomalyco/opencode/v2.3.0";
   };
 
   outputs =
@@ -40,14 +44,14 @@
         let
           pkgs = nixpkgs.legacyPackages.${system};
           # The desktop's Electron: the major is read from packages/electron
-          # devDependencies ("electron": "^44.9.0") at eval time, the same
+          # devDependencies ("electron": "^45.0.0") at eval time, the same
           # file that pins the bundled CLI, so an upstream bump fails
           # evaluation with the next step named instead of reaching the
           # runtime as a startup crash (2.4.0 shipped while the flake still
           # built electron_43, and every desktop launch died on "setZoomMode
           # is not a function"). Only the major is asserted: nixpkgs' minor
-          # is allowed to trail the caret range, the 44.x headers still carry
-          # every 44.0 API the app's code uses, and they drive the node-pty
+          # is allowed to trail the caret range, the same-major headers carry
+          # the major's APIs the app's code uses, and they drive the node-pty
           # rebuild either way.
           electronSpec =
             (builtins.fromJSON (builtins.readFile ./packages/electron/package.json)).devDependencies.electron;
@@ -62,7 +66,21 @@
                 (pkgs.callPackage "${opencode}/nix/opencode.nix" {
                   node_modules = pkgs.callPackage "${opencode}/nix/node_modules.nix" {
                     rev = opencode.rev or "dirty";
-                    hash = (builtins.fromJSON (builtins.readFile "${opencode}/nix/hashes.json")).nodeModules.${system};
+                    # A tag can carry stale hashes: OpenCode's bot refreshes
+                    # nix/hashes.json on dev after the release, and v2.2.5
+                    # through v2.3.0 all changed dependencies after the last
+                    # refresh. Keyed by tag and system; a missing entry falls
+                    # back to upstream's. The hash also follows nixpkgs' Bun,
+                    # so a nixpkgs update in flake.lock can change it.
+                    hash =
+                      {
+                        "v2.3.0" = {
+                          "x86_64-linux" = "sha256-PYcpyYP/i0e6ZIt27u1tFYbjU4Cl848w77dU1NiIEls=";
+                          "aarch64-linux" = "sha256-95R+aINaP8helQQKdiLTTVm9qYBxqklIc6w8G7F3t6k=";
+                          "aarch64-darwin" = "sha256-ewGKM0UKTv+97MLpscGMDbx7qsGZXxloRfmJNfY5MMo=";
+                        };
+                      }.${opencodeTag}.${system}
+                        or (builtins.fromJSON (builtins.readFile "${opencode}/nix/hashes.json")).nodeModules.${system};
                   };
                 }).overrideAttrs
                   (old: {

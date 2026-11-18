@@ -32,6 +32,7 @@ export const createBootstrapRuntime = (dependencies) => {
       clientPairingRuntime,
       getRelayPairingCandidate,
       reconcileRelay,
+      removeClientPushDevices,
       getPairingTransports,
       getDirectCandidateUrls,
       getServerId,
@@ -50,6 +51,7 @@ export const createBootstrapRuntime = (dependencies) => {
       removeApnsToken,
       updateUiVisibility,
       clearPendingPushBadge,
+      clearSessionPushNotifications,
       isUiVisible,
       getUiNotificationClients,
       writeSseEvent,
@@ -70,6 +72,7 @@ export const createBootstrapRuntime = (dependencies) => {
       limitFailoverRuntime,
       pluginNotificationEmitter,
       desktopUpdater,
+      getOpenCodeCompatibility,
       skipBodyParsing,
     } = options;
 
@@ -120,6 +123,7 @@ export const createBootstrapRuntime = (dependencies) => {
       clientPairingRuntime,
       getRelayPairingCandidate,
       reconcileRelay,
+      removeClientPushDevices,
       getPairingTransports,
       getDirectCandidateUrls,
       getServerId,
@@ -146,12 +150,14 @@ export const createBootstrapRuntime = (dependencies) => {
       removeApnsToken,
       updateUiVisibility,
       clearPendingPushBadge,
+      clearSessionPushNotifications,
       isUiVisible,
       getUiNotificationClients,
       writeSseEvent,
       getSessionActivitySnapshot: sessionRuntime.getSessionActivitySnapshot,
       getSessionStateSnapshot: sessionRuntime.getSessionStateSnapshot,
       getPendingBlockingRequestsSnapshot: sessionRuntime.getPendingBlockingRequestsSnapshot,
+      getSessionContextSnapshot: sessionRuntime.getSessionContextSnapshot,
       getSessionState: sessionRuntime.getSessionState,
       setPushInitialized,
       setAutoAcceptSession,
@@ -171,6 +177,7 @@ export const createBootstrapRuntime = (dependencies) => {
       fetchFreeZenModels,
       getCachedZenModels,
       desktopUpdater,
+      getOpenCodeCompatibility,
     });
 
     return {

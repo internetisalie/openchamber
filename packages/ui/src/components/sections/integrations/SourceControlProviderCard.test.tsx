@@ -3,7 +3,7 @@ import React, { act } from 'react';
 import type { Root } from 'react-dom/client';
 import { Window } from 'happy-dom';
 import { registerRuntimeAPIs } from '@/contexts/runtimeAPIRegistry';
-import { SourceControlInstanceOtherProviderError } from '@/lib/api/types';
+import { SourceControlInstanceAliasError, SourceControlInstanceOtherProviderError } from '@/lib/api/types';
 import type {
   RuntimeAPIs,
   SourceControlAPI,
@@ -78,6 +78,12 @@ describe('SourceControlProviderCard', () => {
   const globals = new Map<string, PropertyDescriptor | undefined>();
   const savedInstances = new Set<string>();
   const savedTokens: Array<[string, string]> = [];
+  const savedSshUrls: Array<[string, string | null]> = [];
+  // What the server holds for each instance's SSH address; null is no address.
+  const storedSshUrls = new Map<string, string | null>();
+  // What the server holds for each instance's aliases, and an address it refuses as taken.
+  const storedAliases = new Map<string, string[]>();
+  let takenAlias: string | null = null;
   let instanceReads = 0;
   let activationFails = false;
   let discoveryFails = false;
@@ -90,6 +96,8 @@ describe('SourceControlProviderCard', () => {
   // Where the listed login came from: the CLI, or a stored token.
   let accountSource: 'cli' | 'pat' = 'cli';
   let cliDisabled = false;
+  // A CLI switch the server keeps while the CLI cannot say whether its login exists.
+  let cliUnanswered = false;
   // The instance the server lists before anything is added (GitLab's default).
   let listedDefault: SourceControlIdentity[] = [];
   // The provider the mounted card is for: the server lists instances per provider.
@@ -100,6 +108,9 @@ describe('SourceControlProviderCard', () => {
     const user = { ...identity, id: 'user-one', username: 'cli-user' };
     if (cliDisabled) {
       return { ...identity, status: 'disconnected', connected: false, accounts: [], cli: { available: true, disabled: true, active: false } };
+    }
+    if (cliUnanswered) {
+      return { ...identity, status: 'disconnected', connected: false, accounts: [], cli: { available: false, disabled: false, active: true } };
     }
     const accounts = !withCliLogin || identity.instance === 'https://gitlab.com' ? [] : [{
       id: `${identity.instance}#cli:user-one`,
@@ -122,7 +133,16 @@ describe('SourceControlProviderCard', () => {
     authInstances: async () => {
       instanceReads += 1;
       if (discoveryFails) throw new Error('Instance discovery failed');
-      return [...listedDefault, ...[...savedInstances].map((instance): SourceControlIdentity => ({ provider: mountedProvider, instance }))];
+      const withSshUrl = (identity: SourceControlIdentity): SourceControlIdentity => {
+        const sshUrl = storedSshUrls.get(identity.instance);
+        const aliases = storedAliases.get(identity.instance);
+        const withSsh = sshUrl ? { ...identity, instanceSshUrl: sshUrl } : identity;
+        return aliases?.length ? { ...withSsh, instanceAliases: aliases } : withSsh;
+      };
+      return [
+        ...listedDefault.map(withSshUrl),
+        ...[...savedInstances].map((instance): SourceControlIdentity => withSshUrl({ provider: mountedProvider, instance })),
+      ];
     },
     capabilities: async (identity) => capabilitiesFor(identity, available),
     authStatus: async (identity) => statusFor(identity),
@@ -138,12 +158,30 @@ describe('SourceControlProviderCard', () => {
       savedTokens.push([identity.instance, token]);
       return statusFor(identity);
     },
+    authSetSshUrl: async (identity, sshUrl) => {
+      savedSshUrls.push([identity.instance, sshUrl]);
+      storedSshUrls.set(identity.instance, sshUrl);
+      return { sshUrl };
+    },
+    setInstanceAliases: async (identity, aliases) => {
+      const stored = aliases.map((alias) => (alias.includes('://') ? alias : `https://${alias}`));
+      const taken = stored.find((alias) => alias === takenAlias);
+      if (taken) throw new SourceControlInstanceAliasError(`${taken} is taken`, 'taken', taken);
+      storedAliases.set(identity.instance, stored);
+      return { aliases: stored };
+    },
     providers: unexpected, repositoryContext: unexpected, repositoryBinding: unexpected, resetRepositoryBinding: unexpected,
     repositoryProviderBindingMutate: unexpected, authStart: unexpected, authComplete: unexpected,
-    authDisconnect: unexpected, authSetCliDisabled: unexpected,
+    authDisconnect: unexpected,
+    authSetCliDisabled: async (_identity, disabled) => {
+      cliDisabled = disabled;
+      return { disabled };
+    },
     changeRequestStatus: unexpected, changeRequestCreate: unexpected, changeRequestUpdate: unexpected,
-    changeRequestMerge: unexpected, changeRequestReady: unexpected, changeRequestComment: unexpected,
+    changeRequestMerge: unexpected, changeRequestReady: unexpected, changeRequestDraft: unexpected, changeRequestComment: unexpected,
     changeRequestStartThread: unexpected, changeRequestReplyToThread: unexpected, changeRequestResolveThread: unexpected,
+    changeRequestReviewState: unexpected, changeRequestReviewComment: unexpected, changeRequestReviewCommentUpdate: unexpected,
+    changeRequestReviewCommentDelete: unexpected, changeRequestReviewDiscard: unexpected,
     changeRequestReview: unexpected, issueComment: unexpected, changeRequestSetState: unexpected,
     issueSetState: unexpected, changeRequestSetLabels: unexpected, issueSetLabels: unexpected,
     discussionComment: unexpected, discussionSetState: unexpected, discussionSetAnswer: unexpected, discussionSetLabels: unexpected,
@@ -156,7 +194,10 @@ describe('SourceControlProviderCard', () => {
   const apis: RuntimeAPIs = {
     runtime: { platform: 'web', isVSCode: false, isDesktop: false }, sourceControl,
     get git() { return unexpected(); }, get terminal() { return unexpected(); },
-    get files() { return unexpected(); }, get settings() { return unexpected(); },
+    get files() { return unexpected(); },
+    // The directory store loads with Settings and may persist the home folder it
+    // resolves; that write is not part of the card under test.
+    settings: { load: unexpected, save: async (changes) => ({ ...changes }) },
     get permissions() { return unexpected(); }, get notifications() { return unexpected(); },
   };
 
@@ -171,7 +212,7 @@ describe('SourceControlProviderCard', () => {
   beforeEach(() => {
     dom = new Window({ url: 'http://localhost/' });
     const values = {
-      window: dom, document: dom.document, navigator: dom.navigator,
+      window: dom, document: dom.document, navigator: dom.navigator, localStorage: dom.localStorage,
       HTMLElement: dom.HTMLElement, Element: dom.Element, Node: dom.Node,
       HTMLInputElement: dom.HTMLInputElement, DocumentFragment: dom.DocumentFragment,
       MutationObserver: dom.MutationObserver, ResizeObserver: dom.ResizeObserver,
@@ -187,6 +228,10 @@ describe('SourceControlProviderCard', () => {
     Object.defineProperty(window, '__OPENCHAMBER_API_BASE_URL__', { configurable: true, value: 'https://runtime-a.example' });
     savedInstances.clear();
     savedTokens.length = 0;
+    savedSshUrls.length = 0;
+    storedSshUrls.clear();
+    storedAliases.clear();
+    takenAlias = null;
     instanceReads = 0;
     activationFails = false;
     discoveryFails = false;
@@ -197,6 +242,7 @@ describe('SourceControlProviderCard', () => {
     withCliLogin = true;
     accountSource = 'cli';
     cliDisabled = false;
+    cliUnanswered = false;
     listedDefault = [{ provider: 'gitlab', instance: 'https://gitlab.com' }];
     useSourceControlAuthStore.getState().resetForRuntimeSwitch();
     registerRuntimeAPIs(apis);
@@ -250,6 +296,13 @@ describe('SourceControlProviderCard', () => {
     });
   };
 
+  // A confirm question renders in a portal, outside the card's own container.
+  const clickInDialog = async (label: string) => {
+    const button = [...document.body.querySelectorAll('button')].find((entry) => entry.textContent?.trim() === label);
+    if (!button || button.disabled) throw new Error(`Dialog button unavailable: ${label}`);
+    await act(async () => { button.click(); });
+  };
+
   const addInstance = async (placeholder: string, instance: string) => {
     await click('Add instance');
     const input = container.querySelector<HTMLInputElement>(`input[placeholder="${placeholder}"]`);
@@ -259,6 +312,28 @@ describe('SourceControlProviderCard', () => {
   };
 
   const passwordInput = () => container.querySelector<HTMLInputElement>('input[type="password"]');
+
+  test('a login-only card shows the service hint or user, with no token or account-switch controls', async () => {
+    const hint = 'Run forge auth login on the OpenChamber server';
+    const descriptor = acmeDescriptor({
+      instances: { ...acme.instances, defaultInstance: 'https://forge.example.com', multiple: false },
+      auth: { methods: ['cli'], cliTransport: false, login: { kind: 'service', hint } },
+      settings: { fields: [{ id: 'instance', kind: 'instance-url', secret: false }] },
+    });
+    withCliLogin = false;
+    await mount(descriptor);
+    expect(container.textContent).toContain(hint);
+    expect(passwordInput()).toBeNull();
+    await act(async () => { root?.unmount(); });
+    withCliLogin = true;
+    savedInstances.add('https://forge.example.com');
+    await mount(descriptor);
+    expect(container.textContent).toContain('cli-user');
+    expect(container.textContent).not.toContain(hint);
+    expect(passwordInput()).toBeNull();
+    expect(buttonLabels()).not.toContain('Add account');
+    expect(buttonLabels().some((label) => label?.includes('CLI'))).toBe(false);
+  });
 
   test('names the provider by its label and draws its served mark', async () => {
     await mount(acme);
@@ -498,6 +573,17 @@ describe('SourceControlProviderCard', () => {
       expect(useSourceControlAuthStore.getState().identities).toEqual([]);
     });
 
+    test('lets the user turn off a kept CLI switch while the CLI cannot answer', async () => {
+      cliUnanswered = true;
+      await mount(gitlab);
+      await addInstance('https://gitlab.example.com', 'https://gitlab.example.com');
+
+      await click('Disable glab');
+
+      expect(cliDisabled).toBe(true);
+      expect(buttonLabels()).toContain('Enable glab');
+    });
+
     test('offers the CLI switch only for a provider whose descriptor names a CLI', async () => {
       cliDisabled = true;
       await mount(gitlab);
@@ -508,5 +594,112 @@ describe('SourceControlProviderCard', () => {
       await mount({ ...gitlab, auth: { ...gitlab.auth, methods: ['device', 'pat'], cliName: undefined } });
       expect(buttonLabels()).not.toContain('Enable glab');
     });
+  });
+
+  test('saves an instance SSH address where the descriptor asks for one', async () => {
+    const base = acmeDescriptor();
+    const descriptor = acmeDescriptor({
+      settings: { fields: [base.settings.fields[0], { id: 'sshUrl', kind: 'instance-url', secret: false }, base.settings.fields[1]] },
+    });
+    await mount(descriptor);
+    await addInstance('https://forge.example.com', 'https://forge.example.com');
+
+    const input = container.querySelector<HTMLInputElement>('input[aria-label="SSH URL"]');
+    if (!input) throw new Error('Missing SSH URL input');
+    await type(input, 'ssh://git@forge-ssh.example.com:2222');
+    await click('Save changes');
+
+    expect(savedSshUrls).toEqual([['https://forge.example.com', 'ssh://git@forge-ssh.example.com:2222']]);
+  });
+
+  test('saves other addresses of an added instance and names one the server refuses', async () => {
+    savedInstances.add('https://forge.example.com');
+    await mount(acmeDescriptor());
+
+    const input = container.querySelector<HTMLInputElement>('input[aria-label="Other addresses"]');
+    if (!input) throw new Error('Missing aliases input');
+    const save = async () => {
+      const button = input.parentElement?.querySelector('button');
+      if (!button || button.disabled) throw new Error('Aliases save unavailable');
+      await act(async () => { button.click(); });
+    };
+
+    takenAlias = 'https://mirror.example.com';
+    await type(input, 'git.example.com, mirror.example.com');
+    await save();
+    expect(container.textContent).toContain('mirror.example.com is already the address of another instance.');
+    expect(storedAliases.size).toBe(0);
+
+    await type(input, 'git.example.com');
+    await save();
+    expect(useSourceControlAuthStore.getState().identities.find((identity) => identity.instance === 'https://forge.example.com'))
+      .toEqual({ provider: 'acme', instance: 'https://forge.example.com', instanceAliases: ['https://git.example.com'] });
+    expect(input.value).toBe('git.example.com');
+    expect(container.textContent).not.toContain('is already the address');
+  });
+
+  test('offers no other addresses for a default instance or one no account made known yet', async () => {
+    await mount(gitlabLikeDescriptor());
+    expect(container.querySelector('input[aria-label="Other addresses"]')).toBeNull();
+
+    await act(async () => { root?.unmount(); });
+    useSourceControlAuthStore.getState().resetForRuntimeSwitch();
+    await mount(acmeDescriptor());
+    await addInstance('https://forge.example.com', 'https://forge.example.com');
+    expect(container.querySelector('input[aria-label="Other addresses"]')).toBeNull();
+
+    // An extension may declare several default instances; the second one takes none either.
+    await act(async () => { root?.unmount(); });
+    useSourceControlAuthStore.getState().resetForRuntimeSwitch();
+    const base = acmeDescriptor();
+    const second = 'https://forge-b.example.com';
+    savedInstances.add(second);
+    await mount(acmeDescriptor({
+      instances: { ...base.instances, defaultInstance: 'https://forge-a.example.com', defaultInstances: ['https://forge-a.example.com', second] },
+    }));
+    expect(container.textContent).toContain('forge-b.example.com');
+    expect(container.querySelector('input[aria-label="Other addresses"]')).toBeNull();
+  });
+
+  test('says the save did not take while the instance list cannot be refreshed', async () => {
+    savedInstances.add('https://forge.example.com');
+    await mount(acmeDescriptor());
+    const input = container.querySelector<HTMLInputElement>('input[aria-label="Other addresses"]');
+    if (!input) throw new Error('Missing aliases input');
+    discoveryFails = true;
+    await type(input, 'git.example.com');
+    await act(async () => { input.parentElement?.querySelector('button')?.click(); });
+    expect(storedAliases.get('https://forge.example.com')).toEqual(['https://git.example.com']);
+    expect(container.textContent).toContain('Operation failed');
+  });
+
+  test('asks before clearing a saved instance SSH address, keeping it when declined and clearing it on confirmation', async () => {
+    const base = gitlabLikeDescriptor();
+    const descriptor: SourceControlProviderDescriptor = {
+      ...base,
+      settings: { fields: [...base.settings.fields, { id: 'sshUrl', kind: 'instance-url', secret: false }] },
+    };
+    const instance = 'https://gitlab.com';
+    const sshUrl = 'ssh://git@gitlab-ssh.example.com:2222';
+    storedSshUrls.set(instance, sshUrl);
+    await mount(descriptor);
+
+    const input = container.querySelector<HTMLInputElement>('input[aria-label="SSH URL"]');
+    if (!input) throw new Error('Missing SSH URL input');
+    expect(input.value).toBe(sshUrl);
+
+    await type(input, '');
+    await click('Save changes');
+    expect(document.body.textContent).toContain('Clear the SSH URL?');
+    expect(savedSshUrls).toEqual([]);
+
+    await clickInDialog('Cancel');
+    expect(savedSshUrls).toEqual([]);
+    expect(useSourceControlAuthStore.getState().identities).toEqual([{ provider: 'gitlab', instance, instanceSshUrl: sshUrl }]);
+
+    await click('Save changes');
+    await clickInDialog('Clear SSH URL');
+    expect(savedSshUrls).toEqual([[instance, null]]);
+    expect(useSourceControlAuthStore.getState().identities).toEqual([{ provider: 'gitlab', instance }]);
   });
 });

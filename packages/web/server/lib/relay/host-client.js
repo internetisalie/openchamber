@@ -13,6 +13,9 @@ import { createDownstreamScheduler, DOWNSTREAM_CHUNK_BYTES } from './downstream-
 import { redactSensitiveText } from '../source-control/url-redaction.js';
 import { z } from 'zod';
 
+// The relay's nudge that a share this host made changed (../share-pages).
+const shareStateMessageSchema = z.object({ type: z.literal('share-state'), shareId: z.string().min(1) });
+
 // The relay asks a peer to close its own socket with this plaintext frame
 // rather than closing it from the relay side, where a close to a peer that is
 // gone holds the relay's handler, billed, until it times out. Mirrors
@@ -63,6 +66,10 @@ const DATA_SOCKET_IDLE_SWEEP_INTERVAL_MS = 30_000;
 // terminates the socket, which drives the normal reconnect + re-registration.
 const CONTROL_PING_INTERVAL_MS = 30_000;
 const CONTROL_PONG_GRACE_MS = 10_000;
+// A control dial whose upgrade request never gets a response stays CONNECTING
+// with no error or close, and the keepalive above only watches an open socket.
+// The host times the open itself because Bun's `ws` ignores `handshakeTimeout`.
+const CONTROL_OPEN_TIMEOUT_MS = 15_000;
 const DEFAULT_BATCH_WINDOW_MS = 150;
 
 // Resolve the frame-batching flush window: explicit option wins, then env, then
@@ -90,7 +97,7 @@ export const describeRelayError = (error) => redactSensitiveText(error?.message 
  *   createSocket?: (url: string) => WebSocket,
  * }} options
  */
-export const startRelayHost = ({ relayUrl, identity, localPort, getLocalPort, onStatus, logger = console, createSocket = (url) => new WebSocket(url), batchWindowMs, batch, flowControl }) => {
+export const startRelayHost = ({ relayUrl, identity, localPort, getLocalPort, onStatus, onShareState, logger = console, createSocket = (url) => new WebSocket(url), batchWindowMs, batch, flowControl }) => {
   const { version } = createRequire(import.meta.url)('../../../package.json');
   const platform = process.env.OPENCHAMBER_RUNTIME || 'web';
   const resolveLocalPort = typeof getLocalPort === 'function' ? getLocalPort : () => localPort;
@@ -231,7 +238,7 @@ export const startRelayHost = ({ relayUrl, identity, localPort, getLocalPort, on
     let channel = null;
     let batchNegotiated = false;
     // Serialize async message handling so encrypted frame order (and the
-    // strictly-increasing decrypt counter) is preserved.
+    // consecutive decrypt counter) is preserved.
     let processing = Promise.resolve();
     // Serialize encrypt+send so the per-direction IV counter reaches the wire in
     // encryption order. One encrypt() == one WS message == one counter tick,
@@ -411,6 +418,17 @@ export const startRelayHost = ({ relayUrl, identity, localPort, getLocalPort, on
     if (message.type === 'disconnected' && typeof message.connectionId === 'string') {
       forgetClient(message.connectionId);
       teardownDataSocket(message.connectionId);
+      return;
+    }
+    // A share this host made was opened or answered (../share-pages): read it
+    // now instead of at the next poll. A listener failure never reaches the socket.
+    const shareState = shareStateMessageSchema.safeParse(message);
+    if (shareState.success) {
+      try {
+        onShareState?.(shareState.data.shareId);
+      } catch (error) {
+        logger.warn?.(`[Relay] share-state listener failed: ${describeRelayError(error)}`);
+      }
     }
   };
 
@@ -442,6 +460,14 @@ export const startRelayHost = ({ relayUrl, identity, localPort, getLocalPort, on
     // The relay retires a control socket with a frame instead of closing it,
     // and the frame's code stands in for the close code: 4001 still holds off.
     let retiredWith = null;
+    let openTimedOut = false;
+    const openTimer = setTimeout(() => {
+      if (controlSocket !== socket) return;
+      openTimedOut = true;
+      lastError = 'control socket open timeout';
+      logger.warn('[Relay] control socket open timeout');
+      socket.terminate();
+    }, CONTROL_OPEN_TIMEOUT_MS);
 
     // Liveness: ping on an interval; any pong (or message) proves the path.
     // A quiet window beyond interval+grace means the connection silently died —
@@ -467,6 +493,7 @@ export const startRelayHost = ({ relayUrl, identity, localPort, getLocalPort, on
     if (typeof pingTimer.unref === 'function') pingTimer.unref();
 
     socket.on('open', () => {
+      clearTimeout(openTimer);
       if (controlSocket !== socket) return;
       consecutiveFailures = 0;
       lastAliveAt = Date.now();
@@ -488,10 +515,12 @@ export const startRelayHost = ({ relayUrl, identity, localPort, getLocalPort, on
       handleControlMessage(raw);
     });
     socket.on('error', (error) => {
-      if (controlSocket !== socket) return;
+      // After an open timeout, keep the timeout as the error over terminate()'s.
+      if (controlSocket !== socket || openTimedOut) return;
       lastError = describeRelayError(error);
     });
     socket.on('close', (closeCode, reasonBuffer) => {
+      clearTimeout(openTimer);
       clearInterval(pingTimer);
       if (controlSocket !== socket) return;
       controlSocket = null;

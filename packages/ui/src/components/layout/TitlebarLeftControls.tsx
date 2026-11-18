@@ -44,6 +44,15 @@ export const TitlebarLeftControls: React.FC = () => {
     useUIStore.getState().closeMainSurfaces();
     useSessionUIStore.getState().openNewSessionDraft();
   }, []);
+  // With header tabs on screen their "+" starts a session, in the folder the
+  // tabs belong to; the button here would be a second one that starts it in
+  // the project root. A full-page surface hides the tabs, so it comes back.
+  const tabsShown = useUIStore((state) => state.sessionTabsEnabled && !(
+    state.isScheduledTasksDialogOpen || state.isArchivePageOpen || state.isIntegrationsCatalogOpen
+    || state.isUsageStatsPageOpen || state.isSourceBoardOpen || state.isOverviewOpen
+    || state.worktreesPageProjectId !== null || (state.isolatedSpacesEnabled && state.spacesPageProjectId !== null)
+    || state.runOverviewKey !== null || state.openGuestPageId !== null
+  ));
   const { usesFramelessChrome, side: windowControlsSide } = useDesktopWindowControlsLayout();
 
   const handleOpenWindowsAppMenu = React.useCallback((event: React.MouseEvent<HTMLButtonElement>) => {
@@ -138,7 +147,8 @@ export const TitlebarLeftControls: React.FC = () => {
               aria-pressed={isSidebarOpen}
               className={cn(ICON_BUTTON_CLASS, 'shrink-0', isSidebarOpen && 'text-foreground')}
             >
-              <Icon name="layout-left" className="h-4 w-4" />
+              {/* The Session card toggle's pair (panel-card): the same rounded frame. */}
+              <Icon name="panel-left" className="h-4 w-4" />
             </button>
           </TooltipTrigger>
           <TooltipContent>
@@ -146,20 +156,7 @@ export const TitlebarLeftControls: React.FC = () => {
           </TooltipContent>
         </Tooltip>
 
-        {/* Labelled while the sidebar is open; collapses to an icon with a
-            tooltip so the cluster stays compact over the header otherwise. */}
-        {isSidebarOpen ? (
-          <button
-            type="button"
-            onClick={handleNewSession}
-            // ps-1 puts the icon where the icon-only button centres it (4px
-            // in), so it stays put when the label folds away.
-            className={cn(ICON_BUTTON_CLASS, '-ms-1 w-auto min-w-0 ps-1 pe-1.5 font-normal')}
-          >
-            <Icon name="chat-new" className="h-4 w-4 shrink-0" />
-            <span className="truncate">{t('sessions.sidebar.header.actions.newSession')}</span>
-          </button>
-        ) : (
+        {tabsShown ? null : (
           <Tooltip>
             <TooltipTrigger asChild>
               <button
@@ -168,7 +165,7 @@ export const TitlebarLeftControls: React.FC = () => {
                 aria-label={t('sessions.sidebar.header.actions.newSession')}
                 className={cn(ICON_BUTTON_CLASS, '-ms-1 shrink-0')}
               >
-                <Icon name="chat-new" className="h-4 w-4" />
+                <Icon name="edit-box" className="h-4 w-4" />
               </button>
             </TooltipTrigger>
             <TooltipContent>

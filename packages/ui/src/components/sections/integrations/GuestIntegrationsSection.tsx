@@ -8,9 +8,9 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { IntegrationCatalogCard } from './IntegrationCatalogCard';
 import { NotificationChannelCard } from './NotificationChannelCard';
+import { TrackerSettings } from './TrackerSettings';
 import { focusDesktopWindow, isDesktopShell, isVSCodeRuntime } from '@/lib/desktop';
 import { loadNotificationChannels, type NotificationChannel } from '@/lib/notifications/channels';
-import { isMobileSurfaceRuntime } from '@/lib/runtimeSurface';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import { useI18n } from '@/lib/i18n';
 import { isGuestActive } from '@/lib/guests/capabilities';
@@ -28,6 +28,8 @@ import {
 import { useGuestOauthStore } from '@/lib/guests/oauth-store';
 import { useGuestsStore } from '@/lib/guests/store';
 import type { InstalledGuest } from '@/lib/guests/types';
+import { extensionTrackerGuest } from '@/lib/trackers/extension';
+import { useTrackerDescriptors } from '@/lib/trackers/registry';
 import { reportSettingsSaveState } from '@/lib/persistence';
 import { guestPackageIconSrc, resolveGuestIconName } from '@/lib/guests/icon';
 import { getRuntimeUrlResolver } from '@/lib/runtime-url';
@@ -368,6 +370,8 @@ export const GuestIntegrationCard: React.FC<GuestIntegrationCardProps> = ({ gues
                 controlClassName="w-full max-w-none"
               >
                 <Input
+                  type={field.secret ? 'password' : undefined}
+                  placeholder={field.secret && status?.secretsSet.includes(field.id) ? t('settings.integrations.guest.secret.saved') : undefined}
                   value={settings[field.id] ?? ''}
                   onChange={(event) => {
                     setSettings((current) => ({ ...current, [field.id]: event.target.value }));
@@ -432,10 +436,16 @@ export const GuestIntegrationCard: React.FC<GuestIntegrationCardProps> = ({ gues
   );
 };
 
-export const GuestIntegrationsSection: React.FC<{ divider?: boolean }> = ({ divider = true }) => {
+export const GuestIntegrationsSection: React.FC = () => {
   const { t } = useI18n();
   const guests = useGuestsStore((state) => state.guests);
   const runtimeKey = useGuestsStore((state) => state.runtimeKey);
+  // The trackers extensions serve: the server lists them beside the built-ins, the catalog says which extension each is.
+  const trackerDescriptors = useTrackerDescriptors();
+  const extensionTrackers = React.useMemo(() => trackerDescriptors.flatMap((descriptor) => {
+    const guest = extensionTrackerGuest(descriptor, guests);
+    return guest?.tracker ? [{ descriptor, extension: { guest, tracker: guest.tracker } }] : [];
+  }), [guests, trackerDescriptors]);
   const [channels, setChannels] = React.useState<NotificationChannel[]>([]);
   const [ownerRuntimeKey] = React.useState(getRuntimeKey);
   // Whether the last channel load failed: the section refreshes on every catalog change, and one failure is told once.
@@ -460,17 +470,17 @@ export const GuestIntegrationsSection: React.FC<{ divider?: boolean }> = ({ divi
   }, []);
 
   React.useEffect(() => {
-    if (isVSCodeRuntime() || isMobileSurfaceRuntime()) return;
+    if (isVSCodeRuntime()) return;
     void refreshChannels();
     // Approving or pausing an extension changes which channels exist.
   }, [refreshChannels, guests]);
 
-  if (isVSCodeRuntime() || isMobileSurfaceRuntime()) {
+  if (isVSCodeRuntime()) {
     return null;
   }
 
   const cards = guests.filter((guest) => guest.source !== 'bundled' && guest.integration && isGuestActive(guest));
-  if (cards.length === 0 && channels.length === 0) {
+  if (cards.length === 0 && channels.length === 0 && extensionTrackers.length === 0) {
     return null;
   }
 
@@ -478,7 +488,6 @@ export const GuestIntegrationsSection: React.FC<{ divider?: boolean }> = ({ divi
     <SettingsSection
       title={t('settings.integrations.guests.title')}
       info={t('settings.integrations.guests.info')}
-      divider={divider}
       settingsItem="integrations.guests"
       contentClassName="space-y-3"
     >
@@ -492,6 +501,9 @@ export const GuestIntegrationsSection: React.FC<{ divider?: boolean }> = ({ divi
           guest={guests.find((guest) => guest.id === channel.guestId) ?? null}
           onChanged={refreshChannels}
         />
+      ))}
+      {extensionTrackers.map(({ descriptor, extension }) => (
+        <TrackerSettings key={`${runtimeKey}:${descriptor.id}`} descriptor={descriptor} extension={extension} />
       ))}
     </SettingsSection>
   );

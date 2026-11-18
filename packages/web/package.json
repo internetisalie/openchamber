@@ -1,7 +1,7 @@
 {
   "name": "@openchamber/web",
-  "version": "2.5.3",
-  "forkRelease": "2.5.3-internetisalie.1",
+  "version": "2.7.2",
+  "forkRelease": "2.7.2-internetisalie.1",
   "private": false,
   "type": "module",
   "main": "./server/index.js",
@@ -13,7 +13,8 @@
     "access": "public"
   },
   "engines": {
-    "node": ">=24.14.0"
+    "node": ">=24.14.0",
+    "opencode": ">=2.2.4"
   },
   "scripts": {
     "dev": "bun run build:watch",
@@ -34,11 +35,11 @@
     "@gitbeaker/rest": "43.8.0",
     "@octokit/rest": "^22.0.1",
     "@openchamber/sdk": "workspace:*",
-    "@opencode/client": "2.2.3",
-    "@opencode/schema": "2.2.3",
+    "@opencode/client": "2.3.0",
+    "@opencode/schema": "2.3.0",
     "@simplewebauthn/server": "13.3.3",
     "@vscode/ripgrep": "^1.18.0",
-    "bun-pty": "0.5.1",
+    "bun-pty": "0.6.0",
     "compression": "^1.8.1",
     "cron-parser": "^5.10.1",
     "express": "^5.1.0",
@@ -99,7 +100,7 @@
     "tsx": "^4.20.6",
     "tw-animate-css": "^1.3.8",
     "typescript": "~7.0.2",
-    "vite": "^7.1.2",
+    "vite": "^7.3.2",
     "vite-plugin-pwa": "^1.0.3",
     "vitest": "^4.1.4",
     "workbox-window": "^7.4.0",

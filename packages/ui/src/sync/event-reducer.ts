@@ -135,6 +135,7 @@ export type SessionMaterializationReason =
   | "child-session-discovered"
   | "ensure-session-messages"
   | "stream-reconnect"
+  | "stream-replayed"
   | "transport-switch"
   | "stale-status-resync"
   | "settled-running-tool"
@@ -233,7 +234,10 @@ function applyMessagePatch(message: Message, patch: MessagePatch): Message {
     return next
   }
   if (patch.time?.created !== undefined) {
-    return { ...message, time: { ...message.time, created: patch.time.created } }
+    const next = { ...message, time: { ...message.time, created: patch.time.created } }
+    // Only delivery out of the inbox moves a synthetic message's time.
+    if (next.role === "synthetic") delete next.pending
+    return next
   }
   return message
 }

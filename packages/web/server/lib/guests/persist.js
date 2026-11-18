@@ -36,6 +36,8 @@ const storeSchema = z.object({
 const capabilityScopeSchema = z.object({
   filesystem: z.array(z.string().min(1)).optional(),
   origins: z.array(z.string().min(1)).optional(),
+  // The wait ids whose text was approved to wake a session (`grant-scope.js`).
+  wake: z.array(z.string().min(1)).optional(),
   apiOrigin: z.string().min(1).optional(),
   oauth: z.object({
     authorizeUrl: z.string().min(1),
@@ -57,11 +59,37 @@ const capabilityScopeSchema = z.object({
       events: z.array(z.string().min(1)),
       content: z.boolean(),
     }).optional(),
+    // Running with nobody asking, the composer's `@` and acting on sessions (`grant-scope.js`); absent for other services.
+    keepRunning: z.literal(true).optional(),
+    schedule: z.array(z.string().min(1)).optional(),
+    mentions: z.literal(true).optional(),
+    sessionControl: z.object({ content: z.boolean() }).optional(),
     // Where a notification channel's account lives (`grant-scope.js`); absent for other services.
     notifications: z.union([
       z.object({ kind: z.literal('fixed'), origin: z.string().min(1) }),
       z.object({ kind: z.literal('user') }),
     ]).optional(),
+    // Where a tracker's accounts live, its OAuth endpoints and the links it claims (`grant-scope.js`); absent for other services.
+    tracker: z.object({
+      instances: z.union([
+        z.object({ kind: z.literal('fixed'), origin: z.string().min(1) }),
+        z.object({ kind: z.literal('user') }),
+      ]),
+      oauth: z.object({ authorizeUrl: z.string().min(1), tokenUrl: z.string().min(1) }).nullable(),
+      urls: z.array(z.string().min(1)),
+    }).optional(),
+    // The OpenCode providers a usage provider reads the credentials of (`grant-scope.js`); absent for other services.
+    quota: z.object({
+      providers: z.array(z.string().min(1)),
+    }).optional(),
+  }).optional(),
+  // The identifiers and links in chat messages the extension claims, and what a click does (`grant-scope.js`).
+  links: z.object({
+    action: z.string().min(1),
+    keys: z.array(z.string().min(1)),
+    origin: z.string().min(1).nullable(),
+    identifier: z.string().min(1).nullable(),
+    urls: z.array(z.string().min(1)),
   }).optional(),
   opencode: z.array(z.object({
     id: z.string().min(1),
@@ -166,7 +194,7 @@ export const readExtensionStore = async (persistPath) => {
       throw new Error('Invalid extensions store');
     }
     const scopes = knownScopesOnly(parsed.capabilityScopes ?? {});
-    const grants = parsed.capabilityGrants ?? {};
+    const grants = knownGrantsOnly(parsed.capabilityGrants ?? {});
     // Before v2 this fork used "opencode" only for explicitly scoped plugin routes.
     if (!parsed.grantNamesVersion) {
       for (const [id, list] of Object.entries(grants)) {
@@ -178,7 +206,7 @@ export const readExtensionStore = async (persistPath) => {
       paths: parsed.paths,
       sources: parsed.sources ?? {},
       gitOrigins: knownGitOriginsOnly(parsed.gitOrigins ?? {}),
-      capabilityGrants: knownGrantsOnly(grants),
+      capabilityGrants: grants,
       capabilityScopes: scopes,
       disabledGuests: parsed.disabledGuests ?? {},
       serviceSocketOverrides: parsed.serviceSocketOverrides ?? {},
