@@ -24,7 +24,7 @@ test('Docker uses one concrete numbered fork version and SHA-256 matching Electr
   assert.doesNotMatch(dockerfile, /^ARG OPENCODE_(?:VERSION|SHA256)(?:=|\s|$)/m);
 });
 
-test('released download is the default and both inputs reach the shared verification stage', () => {
+test('the external image is the default; only the bundled target copies the verified CLI', () => {
   assert.match(dockerfile, /^ARG OPENCODE_SOURCE=opencode-release$/m);
   assert.match(dockerfile, /^FROM opencode-pin AS opencode-release\nADD --checksum=sha256:\$\{OPENCODE_SHA256\} --chmod=755 https:\/\/github\.com\/internetisalie\/opencode\/releases\/download\/v\$\{OPENCODE_VERSION\}\/opencode-linux-x64-baseline \/opencode$/m);
   assert.match(dockerfile, /^FROM \$\{OPENCODE_SOURCE\} AS opencode-artifact$/m);
@@ -32,7 +32,10 @@ test('released download is the default and both inputs reach the shared verifica
   assert.match(dockerfile, /^COPY --from=opencode-verified --chmod=755 \/backend\/opencode \/usr\/local\/bin\/opencode$/m);
   const runtime = dockerfile.split(' AS runtime\n')[1];
   assert.ok(runtime);
-  assert.doesNotMatch(runtime, /^ADD |^COPY --from=opencode-(?:artifact|release)\s/gm);
+  const [shared, targets] = runtime.split('FROM runtime AS bundled\n');
+  assert.doesNotMatch(shared, /^ADD |^COPY --from=opencode-/gm);
+  assert.match(targets, /^COPY --from=opencode-verified /);
+  assert.match(targets, /FROM runtime AS external\nENV OPENCODE_SKIP_START=true\s*$/);
 });
 
 const candidate = (version) => `#!/bin/sh\nprintf executed > candidate-executed\nprintf '%s\\n' 'opencode v${version}'\n`;

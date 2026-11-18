@@ -44,9 +44,6 @@ RUN bun run build:web
 FROM oven/bun:1.4.4 AS runtime
 WORKDIR /home/openchamber
 
-# Both sources use the pinned GNU binary and the same verified runtime recipe.
-COPY --from=opencode-verified --chmod=755 /backend/opencode /usr/local/bin/opencode
-
 RUN apt-get update && apt-get install -y --no-install-recommends \
   bash \
   bzip2 \
@@ -98,3 +95,11 @@ COPY --from=builder /app/packages/web/dist ./packages/web/dist
 EXPOSE 3000
 
 ENTRYPOINT ["sh", "/home/openchamber/openchamber-entrypoint.sh"]
+
+# Standalone users can opt in with --target bundled.
+FROM runtime AS bundled
+COPY --from=opencode-verified --chmod=755 /backend/opencode /usr/local/bin/opencode
+
+# The stack supplies OPENCODE_HOST. BuildKit skips the bundled backend stages.
+FROM runtime AS external
+ENV OPENCODE_SKIP_START=true
