@@ -81,16 +81,16 @@
         "nixpkgs": "nixpkgs_2"
       },
       "locked": {
-        "lastModified": 1795212805,
-        "narHash": "sha256-COcFa3bVEYYwK94SRw8FxYBP4q1LVDT+Z4DnfBs7gqY=",
+        "lastModified": 1795215408,
+        "narHash": "sha256-aBU8C/FIt5ti75OpKNCgsuwY5gi+asPv+DlyjTcGhvs=",
         "owner": "internetisalie",
         "repo": "opencode",
-        "rev": "cb61c8967a80a73c4ae0b4ce694f50e6a0f44dd9",
+        "rev": "d11e4140de40160d5fe0ba7465fc50ebb8965658",
         "type": "github"
       },
       "original": {
         "owner": "internetisalie",
-        "ref": "v2.3.2-internetisalie.1-poc.4",
+        "ref": "v2.3.2-internetisalie.1-poc.5",
         "repo": "opencode",
         "type": "github"
       }
