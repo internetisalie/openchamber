@@ -776,7 +776,7 @@ node --test scripts/perf/json-tree-view.browser.test.mjs
 OPENCHAMBER_TEST_CHROME=/path/to/chrome node --test scripts/perf/json-tree-view.browser.test.mjs
 ```
 
-The test reports a skip if Chrome is unavailable. An explicit invalid Chrome path fails. This is layout correctness coverage; measure Files performance in the built app.
+The test reports a skip if Chrome is unavailable. An explicit invalid Chrome path fails. The fork PR workflow sets that path and prints the browser version, so the browser regressions are required there. Each test lets Chrome bind its own debugging port in a fresh profile. Startup failures report the browser's exit status or timeout with its stderr. This is layout correctness coverage; measure Files performance in the built app.
 
 ## Quote comment popover regression
 

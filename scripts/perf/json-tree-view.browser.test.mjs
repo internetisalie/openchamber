@@ -6,7 +6,7 @@ import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { createServer } from 'vite';
 
-import { CdpClient, createPageTarget, launchChrome, reservePort, resolveChrome, wait } from './cdp.mjs';
+import { CdpClient, launchBrowserTestChrome, resolveChrome, wait } from './cdp.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 let chrome;
@@ -53,9 +53,9 @@ test('JSON tree stays bounded and its tail remains reachable', { skip: !chrome &
   let client;
   try {
     await server.listen();
-    const port = await reservePort();
-    browser = launchChrome({ chrome, port, profileDir: path.join(fixture, 'profile'), headless: true, extraArgs: ['--no-sandbox', '--disable-dev-shm-usage'] });
-    const target = await createPageTarget(port);
+    const startup = launchBrowserTestChrome(chrome, path.join(fixture, 'profile'));
+    browser = startup.browser;
+    const target = await startup.pageTarget();
     client = new CdpClient(target.webSocketDebuggerUrl);
     await client.connect();
     await client.send('Page.enable');

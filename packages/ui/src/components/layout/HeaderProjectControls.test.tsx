@@ -26,6 +26,7 @@ const projectSetupReads: Array<{ id: string; path: string }> = [];
 const uiState = {
   terminalShell: 'zsh',
   terminalLoginShells: ['zsh'],
+  terminalOpenOnProjectAction: true,
   setSettingsPage: () => undefined,
   setSettingsDialogOpen: () => undefined,
   setSettingsProjectsSelectedId: () => undefined,
@@ -245,6 +246,7 @@ describe('HeaderProjectAction lifecycle', () => {
     toastCalls.success.length = 0;
     openContextPreviewCalls.length = 0;
     openContextPanelTabCalls.length = 0;
+    uiState.terminalOpenOnProjectAction = true;
     openExternalCalls.length = 0;
     detectedDevServer.command = null;
     detectedDevServer.previewUrlHint = null;
@@ -579,6 +581,16 @@ describe('HeaderProjectAction lifecycle', () => {
     expect(useTerminalStore.getState().getDirectoryState('/repo')?.tabs.some((tab) => tab.purpose.type === 'project-action' && tab.purpose.actionId === 'build')).toBe(true);
     expect(useTerminalStore.getState().getDirectoryState('/repo-worktree')?.tabs.some((tab) => tab.purpose.type === 'project-action') ?? false).toBe(false);
     expect(openContextPanelTabCalls).toEqual([{ directory: '/repo-worktree', mode: 'terminal', targetDirectory: '/repo' }]);
+  });
+
+  test('runs a project action without revealing the terminal when the preference is off', async () => {
+    uiState.terminalOpenOnProjectAction = false;
+    await renderButton();
+    const primaryButton = runButton();
+    if (!primaryButton) throw new Error('expected primary button');
+    await act(async () => primaryButton.dispatchEvent(new Event('click', { bubbles: true })));
+    expect(createCalls).toHaveLength(1);
+    expect(openContextPanelTabCalls).toEqual([]);
   });
 
   test('project action reveal uses the live effective host instead of the sticky action context directory', async () => {

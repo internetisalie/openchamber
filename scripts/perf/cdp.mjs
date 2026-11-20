@@ -8,7 +8,7 @@
 
 import { spawn } from "node:child_process"
 import { createServer } from "node:net"
-import { existsSync, mkdtempSync, readdirSync, readlinkSync, rmSync } from "node:fs"
+import { existsSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync } from "node:fs"
 import { platform, tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import process from "node:process"
@@ -191,7 +191,7 @@ export const resolveProfileDir = (explicit, name) => {
   }
 }
 
-export const launchChrome = ({ chrome, profileDir, port, headless, extraArgs = [] }) => {
+export const launchChrome = ({ chrome, profileDir, port, headless, extraArgs = [], captureStderr = false }) => {
   const args = [
     `--remote-debugging-port=${port}`,
     `--user-data-dir=${profileDir}`,
@@ -206,7 +206,41 @@ export const launchChrome = ({ chrome, profileDir, port, headless, extraArgs = [
   // Chrome refuses to start as root with its sandbox on, which is how
   // containers and CI runners usually run it.
   if (process.getuid?.() === 0) args.unshift("--no-sandbox")
-  return spawn(chrome, args, { stdio: "ignore" })
+  return spawn(chrome, args, { stdio: captureStderr ? ["ignore", "ignore", "pipe"] : "ignore" })
+}
+
+/** A fresh browser-test profile lets Chrome bind its own port without a reservation race. */
+export const launchBrowserTestChrome = (chrome, profileDir) => {
+  const browser = launchChrome({
+    chrome, profileDir, port: 0, headless: true, captureStderr: true,
+    extraArgs: ["--no-sandbox", "--disable-dev-shm-usage"],
+  })
+  let stderr = ""
+  let spawnError
+  browser.stderr.on("data", (chunk) => { stderr = (stderr + chunk).slice(-8192) })
+  browser.on("error", (error) => { spawnError = error })
+
+  const pageTarget = async () => {
+    const deadline = Date.now() + 15_000
+    const activePortFile = join(profileDir, "DevToolsActivePort")
+    try {
+      while (Date.now() < deadline) {
+        if (spawnError) throw spawnError
+        if (browser.exitCode !== null || browser.signalCode !== null) {
+          throw new Error(`Chrome exited before startup (${browser.exitCode ?? browser.signalCode})`)
+        }
+        if (existsSync(activePortFile)) {
+          const port = Number(readFileSync(activePortFile, "utf8").split("\n")[0])
+          if (Number.isInteger(port) && port > 0 && port <= 65535) return await createPageTarget(port)
+        }
+        await wait(100)
+      }
+      throw new Error("Chrome did not write a debugging port in 15s")
+    } catch (error) {
+      throw new Error(`Chrome debugging startup failed (${chrome}): ${error.message}\n${stderr.trim() || "No Chrome stderr"}`, { cause: error })
+    }
+  }
+  return { browser, pageTarget }
 }
 
 export class CdpClient {

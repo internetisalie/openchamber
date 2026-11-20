@@ -310,11 +310,12 @@ export const buildAnnotationOverlayScript = (
     // A status such as a model download is cut short, so the comment keeps its room.
     '.rec span:last-child{max-width:120px;overflow:hidden;text-overflow:ellipsis}',
     '.wave{display:block;width:48px;height:16px}',
-    '.dot{width:6px;height:6px;border-radius:50%;background:' + THEME.danger + ';animation:oc-blink 1s steps(2,start) infinite}',
-    '.spin{display:flex;width:28px;height:28px;align-items:center;justify-content:center;color:' + THEME.mutedText + '}',
-    '.spin svg{width:16px;height:16px;animation:oc-spin 1s linear infinite}',
-    '@keyframes oc-blink{to{visibility:hidden}}',
-    '@keyframes oc-spin{to{transform:rotate(360deg)}}',
+    // The injected overlay cannot use the app's shared clock. Keep both
+    // indicators static; the recording timer remains visible without the wave.
+    '.dot{width:6px;height:6px;border-radius:50%;background:' + THEME.danger + '}',
+    '.processing{display:flex;width:28px;height:28px;align-items:center;justify-content:center;color:' + THEME.mutedText + '}',
+    '.processing svg{width:16px;height:16px}',
+    '@media (prefers-reduced-motion: reduce){.wave{display:none}}',
     '[hidden]{display:none !important}'
   ].join('');
   shadow.appendChild(style);
@@ -416,7 +417,7 @@ export const buildAnnotationOverlayScript = (
     voiceText = document.createElement('span');
     voiceStatus.append(dot, wave, voiceText);
     voiceBusy = document.createElement('span');
-    voiceBusy.className = 'spin';
+    voiceBusy.className = 'processing';
     voiceBusy.setAttribute('role', 'status');
     voiceBusy.setAttribute('aria-label', VOICE.labels.processing);
     voiceBusy.title = VOICE.labels.processing;

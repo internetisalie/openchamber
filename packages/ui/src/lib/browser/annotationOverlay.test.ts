@@ -5,6 +5,7 @@ import { describe, expect, test } from 'bun:test';
 import {
   ANNOTATION_TEARDOWN_SCRIPT,
   buildAnnotationOverlayScript,
+  type AnnotationAppMessage,
   type BrowserAnnotationOverlayLabels,
   type BrowserAnnotationOverlayTheme,
 } from './annotationOverlay';
@@ -234,6 +235,46 @@ describe('annotation overlay script', () => {
       expect(asked).toEqual([]);
 
       win.dispatchEvent(new win.KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }));
+      expect(await completion).toBeNull();
+    } finally {
+      await win.happyDOM.close();
+    }
+  });
+
+  test('keeps recording and processing distinct without looping animation', async () => {
+    const voiceScript = buildAnnotationOverlayScript(theme, labels, {
+      shortcut: null,
+      labels: { start: 'Dictate', cancel: 'Cancel', insert: 'Insert', listening: 'Listening', processing: 'Transcribing' },
+      icons: { mic: '', close: '', check: '', loader: '<path d="M12 2v4"/>' },
+    });
+    const win = Object.assign(new Window({ url: 'http://annotation.test' }), {
+      __openchamberAnnotationSend: () => undefined,
+      __openchamberAnnotationReceive: (_message: AnnotationAppMessage) => undefined,
+    });
+    const shadow = captureShadowRoots(win);
+    const run = new Function('window', 'document', 'requestAnimationFrame', `return ${voiceScript}`);
+    const teardown = new Function('window', 'document', ANNOTATION_TEARDOWN_SCRIPT);
+    try {
+      const completion = run(win, win.document, (callback: FrameRequestCallback) => callback(0));
+      const recording = shadow.root!.querySelector('div[role="status"][aria-label="Listening"]');
+      const processing = shadow.root!.querySelector('span[role="status"][aria-label="Transcribing"]');
+      if (!(recording instanceof win.HTMLElement) || !(processing instanceof win.HTMLElement)) {
+        throw new Error('Dictation indicators missing');
+      }
+      const stylesheet = shadow.root!.querySelector('style')?.textContent ?? '';
+      expect(stylesheet).not.toContain('infinite');
+      expect(stylesheet).toContain('@media (prefers-reduced-motion: reduce){.wave{display:none}}');
+      expect(recording.querySelector('.dot')).not.toBeNull();
+      expect(processing.querySelector('svg path')).not.toBeNull();
+      expect([recording.hidden, processing.hidden]).toEqual([true, true]);
+      win.__openchamberAnnotationReceive({ type: 'voice', phase: 'recording' });
+      expect([recording.hidden, processing.hidden]).toEqual([false, true]);
+      expect(recording.textContent).toBe('0:00');
+      win.__openchamberAnnotationReceive({ type: 'voice', phase: 'processing' });
+      expect([recording.hidden, processing.hidden]).toEqual([true, false]);
+      win.__openchamberAnnotationReceive({ type: 'voice', phase: 'idle' });
+      expect([recording.hidden, processing.hidden]).toEqual([true, true]);
+      teardown(win, win.document);
       expect(await completion).toBeNull();
     } finally {
       await win.happyDOM.close();
