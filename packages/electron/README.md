@@ -484,13 +484,18 @@ when the fetch lands. No quota timer runs for the tray.
 
 ## Bundled OpenCode CLI
 
-The fork's Linux x64 release pins `2.0.32-internetisalie.1` and its
-binary SHA-256 in `opencodeCli`. `prepare:opencode-cli` downloads the
+The fork's Linux x64 release pins a numbered OpenCode version and binary SHA-256
+in `opencodeCli`. `prepare:opencode-cli` downloads the GNU/Linux x64
 `opencode-linux-x64-baseline` asset from that exact fork GitHub release. It checks
 downloaded, cached and staged bytes and runs the version check before replacing
 the staged executable. A failed download or verification preserves the previous
 staged executable. Corrupt cache entries fail the build and need removal before
-retrying. The Docker image uses the same release asset and SHA-256.
+retrying. The optional `bundled` Docker target uses the same release asset and
+SHA-256. The default `external` image has no bundled backend. Production fork
+tags require a stable numbered backend and matching SHA-256 in both pins. A
+numbered PoC tag can publish a standalone external image and produce Linux
+packaging artifacts in the Actions run for system tests. The PoC archives are
+not attached to a GitHub Release.
 
 This fork artifact is Linux x64 only. Other platforms fail explicitly when the
 fork version is selected. They need separately built and validated fork artifacts
@@ -657,7 +662,9 @@ Add new native capabilities in this order:
 
 ## Update channels and Canary
 
-The desktop app updates from one of two channels, chosen under Settings → About → Updates and stored as `desktopUpdateChannel` in `settings.json`:
+The fork has no update channel picker. The channel logic described here applies
+to upstream, where the desktop app updates from one of two channels, chosen
+under Settings → About → Updates and stored as `desktopUpdateChannel` in `settings.json`:
 
 - **Stable**: the latest full release, read from its mirror on Cloudflare R2 (`https://downloads.openchamber.dev/desktop/stable/`, the `generic` provider), with the GitHub release as the fallback (the `github` provider). `release.yml`'s `finalize-release` copies the draft's desktop files and `latest*.yml` manifests there with `scripts/release-mirror/mirror-to-r2.mjs` before anything announces the release: publishing it, the Discord post and the website rebuild wait for the upload, and a failed upload leaves the release a draft (`.github/workflows/mirror-release.yml` mirrors a published release again by hand). The script uploads files first and manifests last, keeps the previous release whole (the website links its files until it is rebuilt) and deletes older releases' files except their `.blockmap`s, which a Windows update reads to download only the changed blocks. A check or download that fails on the mirror sends checks to GitHub for an hour (`pickUpdaterSource`, `updater-feed.mjs`); a missing manifest on the mirror counts as a failure there, while on GitHub it still means "no release for this platform yet".
 - **Canary**: the nightly build of `main`. `.github/workflows/canary.yml` builds it when `main` moved, mirrors the night to `https://downloads.openchamber.dev/desktop/canary/` with the same script (`--channel canary`; blockmaps stay for the nights `canary-notes.json` covers), then replaces the files of one pre-release tagged `canary`. The app reads the mirror first and that pre-release's manifests as the fallback (the `generic` provider on `releases/download/canary/`), with the same one-hour switch as Stable. Stable never sees them, because the GitHub provider reads only the latest full release.

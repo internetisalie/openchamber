@@ -5,6 +5,7 @@ import path from 'path';
 import { createServer } from 'http';
 import net from 'net';
 import { spawn } from 'child_process';
+import { once } from 'node:events';
 import { fileURLToPath, pathToFileURL } from 'url';
 
 import { isModuleCliExecution, normalizeCliEntryPath } from './cli-entry.js';
@@ -1865,6 +1866,81 @@ describe('startup command lingering output', () => {
       'status'
     )).rejects.toMatchObject({ exitCode: EXIT_CODE.USAGE_ERROR });
   });
+});
+
+describe.skipIf(process.platform === 'win32')('standalone CLI without a local OpenCode', () => {
+  it('serves through the configured external backend and still rejects managed startup', async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), 'openchamber-external-start-'));
+    const bin = path.join(root, 'bin');
+    const shell = path.join(root, 'shell');
+    fs.mkdirSync(bin);
+    // The CLI falls back to the login shell's PATH. Keep that lookup isolated too.
+    fs.writeFileSync(shell, '#!/bin/sh\nprintf "__OPENCHAMBER_ENV__\\nPATH=%s\\000" "$PATH"\n', { mode: 0o755 });
+    const env = {
+      PATH: bin,
+      SHELL: shell,
+      HOME: root,
+      XDG_CONFIG_HOME: path.join(root, 'config'),
+      XDG_DATA_HOME: path.join(root, 'data'),
+      XDG_CACHE_HOME: path.join(root, 'cache'),
+      XDG_STATE_HOME: path.join(root, 'state'),
+      OPENCHAMBER_DATA_DIR: path.join(root, 'openchamber'),
+      OPENCHAMBER_RELAY_HOST: 'off',
+      NO_COLOR: '1',
+    };
+    const version = '2.3.2-internetisalie.1-poc.2';
+    const upstream = createServer((req, res) => {
+      if (req.url !== '/api/info') return res.writeHead(404).end();
+      res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({ version }));
+    });
+    function start(port, extraEnv) {
+      const child = spawn(process.execPath, [fileURLToPath(new URL('./cli.js', import.meta.url)),
+        'serve', '--foreground', '--quiet', '--api-only', '--port', String(port)], {
+        cwd: root,
+        env: { ...env, ...extraEnv },
+        stdio: ['ignore', 'pipe', 'pipe'],
+        timeout: 12_000,
+        killSignal: 'SIGKILL',
+      });
+      let stderr = '';
+      child.stderr.setEncoding('utf8').on('data', (text) => { stderr += text; });
+      const exit = once(child, 'close');
+      return { child, exit, stderr: () => stderr };
+    }
+
+    const runs = [];
+    try {
+      upstream.listen(0, '127.0.0.1');
+      await once(upstream, 'listening');
+      const socket = net.createServer().listen(0, '127.0.0.1');
+      await once(socket, 'listening');
+      const { port } = socket.address();
+      await new Promise((resolve) => socket.close(resolve));
+
+      const managed = start(port, {});
+      runs.push(managed);
+      const [code] = await managed.exit;
+      expect(code).not.toBe(0);
+      expect(managed.stderr()).toContain('Unable to locate the opencode CLI on PATH');
+
+      const external = start(port, { OPENCODE_SKIP_START: 'true', OPENCODE_HOST: `http://127.0.0.1:${upstream.address().port}` });
+      runs.push(external);
+      const [output] = await Promise.race([once(external.child.stdout, 'data'), external.exit.then(([code, signal]) => {
+        throw new Error(`External startup exited with ${code ?? signal}: ${external.stderr()}`);
+      })]);
+      expect(output.toString().trim()).toBe(String(port));
+      const response = await fetch(`http://127.0.0.1:${port}/api/opencode/version`, { signal: AbortSignal.timeout(3000) });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({ version });
+    } finally {
+      for (const { child, exit } of runs) {
+        child.kill('SIGKILL');
+        await exit.catch(() => {});
+      }
+      await new Promise((resolve) => upstream.close(resolve));
+      fs.rmSync(root, { recursive: true, force: true });
+    }
+  }, 20_000);
 });
 
 describe('schedule errors at the CLI entrypoint', () => {

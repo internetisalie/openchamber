@@ -5,14 +5,8 @@
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
     bun2nix.url = "github:nix-community/bun2nix";
     bun2nix.inputs.nixpkgs.follows = "nixpkgs";
-    # OpenCode CLI, pinned to the tag matching OpenChamber's OpenCode 2.x
-    # requirement. Keep in sync with packages/electron/package.json
-    # (opencodeCli.version) and the @opencode/client pin. Bump all together.
-    # OpenCode 2.3.0 targets Bun 1.4.4. Built with nixpkgs' Bun 1.4.2 it
-    # compiles, then exits on start with "Export named 'extension' not found
-    # in module 'ws'" (its ws workaround, anomalyco/opencode#61518), so keep
-    # nixpkgs on Bun 1.4.4 or newer.
-    opencode.url = "github:anomalyco/opencode/v2.3.0";
+    # Nix builds from the same fork tag that supplies Electron's binary.
+    opencode.url = "github:internetisalie/opencode/v2.3.2-internetisalie.1-poc.2";
   };
 
   outputs =
@@ -31,8 +25,8 @@
       version = (builtins.fromJSON (builtins.readFile ./package.json)).version;
       opencodeCliVersion =
         (builtins.fromJSON (builtins.readFile ./packages/electron/package.json)).opencodeCli.version;
-      opencodeTag =
-        ((builtins.fromJSON (builtins.readFile ./flake.lock)).nodes.opencode).original.ref or "no-tag";
+      opencodeLock = (builtins.fromJSON (builtins.readFile ./flake.lock)).nodes.opencode;
+      opencodeTag = opencodeLock.original.ref or "no-tag";
     in
     {
       overlays.default = final: _prev: {
@@ -60,42 +54,48 @@
             pkgs.${"electron_${electronMajor}"}
               or (throw "packages/electron pins electron ${electronSpec}, but nixpkgs has no electron_${electronMajor}. Pin an older electron in packages/electron or wait for nixpkgs-unstable to carry the major.");
           opencode-cli =
-            nixpkgs.lib.throwIf (opencodeTag != "v${opencodeCliVersion}")
+            nixpkgs.lib.throwIf
+              (opencodeTag != "v${opencodeCliVersion}" || opencodeLock.locked.owner != "internetisalie" || opencodeLock.locked.repo != "opencode")
               "flake pins opencode ${opencodeTag}, but packages/electron pins opencode CLI ${opencodeCliVersion}; update the opencode input URL and run nix flake update opencode"
               (
                 (pkgs.callPackage "${opencode}/nix/opencode.nix" {
                   node_modules = pkgs.callPackage "${opencode}/nix/node_modules.nix" {
                     rev = opencode.rev or "dirty";
-                    # A tag can carry stale hashes: OpenCode's bot refreshes
-                    # nix/hashes.json on dev after the release, and v2.2.5
-                    # through v2.3.0 all changed dependencies after the last
-                    # refresh. Keyed by tag and system; a missing entry falls
-                    # back to upstream's. The hash also follows nixpkgs' Bun,
-                    # so a nixpkgs update in flake.lock can change it.
+                    # The fork changed bun.lock after the inherited hashes were measured.
                     hash =
                       {
-                        "v2.3.0" = {
-                          "x86_64-linux" = "sha256-PYcpyYP/i0e6ZIt27u1tFYbjU4Cl848w77dU1NiIEls=";
-                          "aarch64-linux" = "sha256-95R+aINaP8helQQKdiLTTVm9qYBxqklIc6w8G7F3t6k=";
-                          "aarch64-darwin" = "sha256-ewGKM0UKTv+97MLpscGMDbx7qsGZXxloRfmJNfY5MMo=";
+                        "v2.3.2-internetisalie.1-poc.2" = {
+                          x86_64-linux = "sha256-n3yzsEslFmC3PuKJiSjCpYegkvdJgl2ZE1BoTVCLtno=";
+                          aarch64-linux = "sha256-BsjaK1KfTi5imH9Fw7ywcaDIpxuP+JM1gazkFI3SsRk=";
+                          aarch64-darwin = "sha256-xAN8JyDmqGd2PBBquHnREleAXwE1ROQTfag1QeTJ7xc=";
                         };
                       }.${opencodeTag}.${system}
-                        or (builtins.fromJSON (builtins.readFile "${opencode}/nix/hashes.json")).nodeModules.${system};
+                      or (builtins.fromJSON (builtins.readFile "${opencode}/nix/hashes.json")).nodeModules.${system};
                   };
                 }).overrideAttrs
                   (old: {
-                    # 2.0.28: build.ts imports NativeArch from the monorepo root,
-                    # which their src fileset omits. Upstream fix:
-                    # anomalyco/opencode#55494 — droppable once a tag ships it.
-                    preBuild = "cp -R ${opencode}/script ./script";
-                    postInstall = "";
-                    # A Nix-built binary cannot self-update; disable upstream's
-                    # auto-updater so it never fights the read-only store.
-                    # Upstream fix: anomalyco/opencode#54641 — droppable once a
-                    # tag ships it.
-                    postFixup = ''
-                      wrapProgram "$out/bin/opencode" --set OPENCODE_DISABLE_AUTOUPDATE 1
-                    '';
+                    version = opencodeCliVersion;
+                    __intentionallyOverridingVersion = true;
+                    env = old.env // {
+                      OPENCODE_VERSION = opencodeCliVersion;
+                      OPENCODE_CHANNEL = "internetisalie-v2";
+                    };
+                    # Match the fork server build: OpenChamber provides the UI.
+                    buildPhase =
+                      let
+                        flags = "--single --skip-install";
+                      in
+                      assert nixpkgs.lib.hasInfix flags old.buildPhase;
+                      builtins.replaceStrings [ flags ] [ "${flags} --skip-web-ui" ] old.buildPhase;
+                    installPhase =
+                      let
+                        wrapper = "wrapProgram $out/bin/opencode";
+                      in
+                      assert nixpkgs.lib.hasInfix wrapper old.installPhase;
+                      builtins.replaceStrings
+                        [ wrapper ]
+                        [ "${wrapper} --set OPENCODE_DISABLE_AUTOUPDATE 1" ]
+                        old.installPhase;
                   })
               );
         in

@@ -35,6 +35,8 @@ env:
 
 jobs:
   prepare:
+    # The fork only offers manual replacement from numbered fork releases.
+    if: github.repository != 'internetisalie/openchamber'
     runs-on: ubuntu-latest
     outputs:
       build: ${{ steps.decide.outputs.build }}
