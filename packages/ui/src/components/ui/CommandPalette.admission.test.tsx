@@ -250,16 +250,22 @@ test('archived sessions matching by title form their own group after the active 
   expect(rows).not.toContain('session:archived-declined');
 });
 
-test('opening an archived session selects it and leaves it archived', async () => {
+for (const [projectID, directory] of [['allowed', '/allowed'], ['global', '/unregistered-global']] as const) {
+test(`opening an archived ${projectID} session selects it and leaves it archived`, async () => {
   await renderPalette();
-  await act(async () => useGlobalSessionsStore.setState({ activeSessions: [], archivedSessions: [session('archived', '/allowed', 'Shelved conversation')] }));
+  const archived = session('archived', directory, 'Shelved conversation');
+  await act(async () => useGlobalSessionsStore.getState().applySnapshot([], [{
+    ...archived, projectID, time: { ...archived.time, archived: 2 },
+  }]));
   await editQuery('shelved');
   expect(groupHeadings()).toContain('Archived');
   await act(async () => item('session:archived')?.click());
   expect(useSessionUIStore.getState().currentSessionId).toBe('archived');
+  expect(useSessionUIStore.getState().currentSessionDirectory).toBe(directory);
   expect(useGlobalSessionsStore.getState().archivedSessions.map((entry) => entry.id)).toEqual(['archived']);
   expect(useGlobalSessionsStore.getState().activeSessions).toEqual([]);
 });
+}
 
 test('text that looks like a filter flag is searched as plain text', async () => {
   await renderPalette();

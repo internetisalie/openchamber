@@ -10,7 +10,7 @@ Object.assign(globalThis, { window: browser, document: browser.document, CustomE
   localStorage: browser.localStorage, sessionStorage: browser.sessionStorage, HTMLElement: browser.HTMLElement,
   HTMLAnchorElement: browser.HTMLAnchorElement, Element: browser.Element, Node: browser.Node, Text: browser.Text,
   SVGElement: browser.SVGElement, MutationObserver: browser.MutationObserver, DOMParser: browser.DOMParser,
-  Event: browser.Event,
+  Event: browser.Event, MouseEvent: browser.MouseEvent, PointerEvent: browser.PointerEvent,
   Range: browser.Range,
   XMLSerializer: browser.XMLSerializer, IntersectionObserver: browser.IntersectionObserver, ResizeObserver: browser.ResizeObserver,
   requestAnimationFrame: browser.requestAnimationFrame.bind(browser), cancelAnimationFrame: browser.cancelAnimationFrame.bind(browser) });
@@ -367,9 +367,49 @@ test('fitTables fits dialog columns without changing the saved table wrap prefer
     expect(Array.from(host.querySelectorAll('col'), (col) => col.style.width)).toEqual(['120px', '380px']);
     expect(host.querySelector('[data-markdown-content]')?.getAttribute('data-table-wrap')).toBe('true');
     expect(host.querySelector<HTMLElement>('td:last-child')?.style.getPropertyValue('--oc-table-code-wrap')).toBe('normal');
+    expect(host.querySelector('[data-streamdown="table-controls"] button[aria-pressed]')).toBeNull();
     expect(state.tableCellWrap).toBe(false);
   } finally {
     state.tableCellWrap = previousWrap;
+    bounds.mockRestore();
+    if (clientWidth) Object.defineProperty(HTMLElement.prototype, 'clientWidth', clientWidth);
+    else Reflect.deleteProperty(HTMLElement.prototype, 'clientWidth');
+    await act(() => root.render(null));
+  }
+});
+
+test('a resized Markdown column keeps its width on remount and double-click resets it', async () => {
+  const clientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
+  const bounds = spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => new window.DOMRect(0, 0, 120, 30));
+  Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 502 });
+  const draw = () => act(() => root.render(React.createElement(I18nProvider, null,
+    React.createElement(Renderer.MarkdownContent, {
+      content: '| name | value |\n| --- | --- |\n| A | B |',
+      tableWidthScope: '/column-width-test.md', enableFileReferences: false,
+    }))));
+  const widths = () => Array.from(host.querySelectorAll('col'), (col) => col.style.width);
+  const resizeHandle = () => {
+    const handle = host.querySelector('th [role="separator"]');
+    if (!handle) throw new Error('Column resize handle missing');
+    return handle;
+  };
+  try {
+    await draw();
+    expect(widths()).toEqual(['120px', '120px']);
+    const handle = resizeHandle();
+    await act(() => {
+      for (const [type, clientX] of [['pointerdown', 120], ['pointermove', 190], ['pointerup', 190]] as const) {
+        handle.dispatchEvent(new window.PointerEvent(type, { bubbles: true, button: 0, pointerId: 1, clientX }));
+      }
+    });
+    expect(widths()).toEqual(['190px', '120px']);
+    await act(() => root.render(null));
+    await draw();
+    expect(widths()).toEqual(['190px', '120px']);
+    await act(() => { resizeHandle().dispatchEvent(new window.MouseEvent('dblclick', { bubbles: true })); });
+    expect(widths()).toEqual(['120px', '120px']);
+  } finally {
+    browser.localStorage.removeItem('openchamber.columnWidths.v1');
     bounds.mockRestore();
     if (clientWidth) Object.defineProperty(HTMLElement.prototype, 'clientWidth', clientWidth);
     else Reflect.deleteProperty(HTMLElement.prototype, 'clientWidth');

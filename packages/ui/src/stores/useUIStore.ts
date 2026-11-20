@@ -3660,7 +3660,7 @@ export const useUIStore = create<UIStore>()(
       {
         name: 'ui-store',
         storage: createDeferredSafeJSONStorage(),
-        version: 30,
+        version: 31,
         migrate: (persistedState, version) => {
           if (!persistedState || typeof persistedState !== 'object') {
             return persistedState;
@@ -3674,10 +3674,10 @@ export const useUIStore = create<UIStore>()(
             state.tableCellWrap = true;
           }
 
-          // v26 -> v27: Context sources moved up the default order; an order
-          // the user arranged stays.
-          if (version < 27 && Array.isArray(state.workStatusSectionOrder)) {
-            state.workStatusSectionOrder = sanitizeWorkStatusSectionOrder(state.workStatusSectionOrder, false);
+          // Context sources moved up the default order in v27. Normalize the
+          // order again in v31 using the combined Tasks and Agent PTYs registry.
+          if (version < 31 && Array.isArray(state.workStatusSectionOrder)) {
+            state.workStatusSectionOrder = sanitizeWorkStatusSectionOrder(state.workStatusSectionOrder, state.workStatusSectionOrderExplicit === true);
           }
 
           // v27 -> v28: the Editor font size default went from 13 to 12. The

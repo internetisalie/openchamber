@@ -119,7 +119,11 @@ function headingWidths(cells: HTMLTableCellElement[], host: HTMLElement): number
   host.append(holder);
   const full = copies.map((copy) => copy.getBoundingClientRect().width);
   for (const copy of copies) copy.style.width = 'min-content';
-  const widths = copies.map((copy, index) => Math.ceil(Math.max(Math.min(full[index], MIN_COLUMN), copy.getBoundingClientRect().width)) + 1);
+  const widths = copies.map((copy, index) => {
+    const width = Math.ceil(Math.max(Math.min(full[index], MIN_COLUMN), copy.getBoundingClientRect().width));
+    // Reserve an extra pixel only for a heading we intend to wrap.
+    return full[index] > MIN_COLUMN ? width + 1 : width;
+  });
   holder.remove();
   return widths;
 }
@@ -309,7 +313,7 @@ export function MarkdownTable({ node, className, children, ...props }: React.Com
               <Icon name="fullscreen" className="size-3.5" />
             </Button>
           )}
-          <HoverTooltip label={t(wrap ? 'markdownRenderer.table.actions.disableWrapTitle' : 'markdownRenderer.table.actions.enableWrapTitle')}>
+          {!fitTables && <HoverTooltip label={t(wrap ? 'markdownRenderer.table.actions.disableWrapTitle' : 'markdownRenderer.table.actions.enableWrapTitle')}>
             <Button
               variant="ghost"
               size="xs"
@@ -320,7 +324,7 @@ export function MarkdownTable({ node, className, children, ...props }: React.Com
             >
               <Icon name="text-wrap" className="size-3.5" />
             </Button>
-          </HoverTooltip>
+          </HoverTooltip>}
           <DropdownMenu>
             <HoverTooltip label={t(copied ? 'markdownRenderer.code.actions.copiedTitle' : 'markdownRenderer.table.actions.copyTitle')}>
               <DropdownMenuTrigger asChild>

@@ -713,9 +713,9 @@ export const CommandPalette: React.FC = () => {
   );
   const orderedArchivedSessions = React.useMemo(
     () => orderVisibleRootSessions(archivedSessions.filter((session) => (
-      isSessionDirectoryAdmitted(resolveGlobalSessionDirectory(session), projects, worktreesByProject)
+      isSessionTargetAdmitted({ directory: resolveGlobalSessionDirectory(session), session }, projects, worktreesByProject, admissionScope)
     )), pinnedSessionIds, sessionOrderRanks),
-    [archivedSessions, pinnedSessionIds, projects, sessionOrderRanks, worktreesByProject],
+    [admissionScope, archivedSessions, pinnedSessionIds, projects, sessionOrderRanks, worktreesByProject],
   );
 
   const allBranches = useGitAllBranches();

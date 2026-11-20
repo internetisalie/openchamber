@@ -1192,7 +1192,7 @@ describe('useUIStore contextRailOrder', () => {
       'browser', 'editor', 'terminal', 'agent-pty',
       'diff', 'git', 'pr', 'walkthrough',
       'context',
-      'notes', 'workflows', 'chat',
+      'notes', 'workflows', 'chat', 'pages',
     ]);
     expect(new Set(ids)).toEqual(new Set(CONTEXT_SURFACES.map((surface) => surface.id)));
     expect(ids).toHaveLength(CONTEXT_SURFACES.length);
@@ -1200,8 +1200,9 @@ describe('useUIStore contextRailOrder', () => {
       'browser', 'agent-pty', 'terminal', 'editor',
       'diff', 'git', 'pr', 'walkthrough',
       'context',
-      'notes', 'workflows', 'chat',
+      'notes', 'workflows', 'chat', 'pages',
     ]);
+    expect(sortContextSurfaces(['pages']).slice(0, 4).map((surface) => surface.id)).toEqual(['pages', 'notes', 'workflows', 'chat']);
   });
 });
 

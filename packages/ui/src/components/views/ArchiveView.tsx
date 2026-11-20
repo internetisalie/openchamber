@@ -292,9 +292,10 @@ export function ArchiveSessionsView({ layout, onLeave }: {
   const sortedSessions = React.useMemo(
     () => listedSessions.filter((session) => {
       const directory = resolveGlobalSessionDirectory(session);
-      return isSessionTargetAdmitted({ directory, session }, projects, worktreesByProject, admissionScope, knownDirectories, classification);
+      return isSessionTargetAdmitted({ directory, session }, projects, worktreesByProject, admissionScope, knownDirectories, classification)
+        || (admissionScope !== 'vscode' && directory !== null && goneDirectories.has(directory) && ownership.bySessionId.has(session.id));
     }).sort((a, b) => (b.time?.archived ?? 0) - (a.time?.archived ?? 0)),
-    [admissionScope, classification, knownDirectories, listedSessions, projects, worktreesByProject],
+    [admissionScope, classification, goneDirectories, knownDirectories, listedSessions, ownership, projects, worktreesByProject],
   );
 
   const parentTitles = React.useMemo(() => {
@@ -363,7 +364,7 @@ export function ArchiveSessionsView({ layout, onLeave }: {
     }
     const order = { project: 0, space: 1, global: 2, other: 3 } as const;
     return [...byKey.values()].sort((a, b) => order[a.kind] - order[b.kind] || a.label.localeCompare(b.label));
-  }, [archivesByProject, labelOf, ownership, projects, sortedSessions, spaceArchives, t]);
+  }, [admissionScope, archivesByProject, classification, labelOf, ownership, projects, sortedSessions, spaceArchives, t]);
 
   const projectLabelFor = React.useCallback((session: Session, directory: string | null): string | null => {
     if (directory && spaceArchives?.has(directory)) return labelOf(directory);

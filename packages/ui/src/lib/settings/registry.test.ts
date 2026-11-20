@@ -195,8 +195,7 @@ describe('settings registry', () => {
   test('section order: a saved default moves on apply, a dragged order stays', () => {
     const original = useUIStore.getState();
     const savedDefault = ['session', 'repository', 'usage', 'telemetry', 'subagents', 'workflows', 'mcp', 'pinned', 'contextSources'];
-    // Sections added after an order was saved land in it: Tasks after Subagents.
-    const savedWithTasks = ['session', 'repository', 'usage', 'telemetry', 'subagents', 'tasks', 'workflows', 'mcp', 'pinned', 'contextSources'];
+    const savedWithTasks = ['session', 'repository', 'usage', 'telemetry', 'subagents', 'ptys', 'tasks', 'workflows', 'mcp', 'pinned', 'contextSources'];
     try {
       applySettingsToStores(parseSettingsDocument({ workStatusSectionOrder: savedDefault }) ?? {});
       expect(useUIStore.getState().workStatusSectionOrder.slice(0, 4)).toEqual(['session', 'repository', 'usage', 'contextSources']);
@@ -220,26 +219,30 @@ describe('settings registry', () => {
   test('section order: the local store migration moves a saved default', async () => {
     const migrate = useUIStore.persist.getOptions().migrate;
     if (!migrate) throw new Error('Expected a migration');
-    const savedDefault = ['session', 'repository', 'usage', 'telemetry', 'subagents', 'workflows', 'mcp', 'pinned', 'contextSources'];
+    // The prior fork already persisted Agent PTYs, but had no Tasks or explicit marker.
+    const savedDefault = ['session', 'repository', 'usage', 'telemetry', 'subagents', 'ptys', 'workflows', 'mcp', 'pinned', 'contextSources'];
     expect(await migrate({ workStatusSectionOrder: savedDefault }, 26)).toMatchObject({
-      workStatusSectionOrder: ['session', 'repository', 'usage', 'contextSources', 'telemetry', 'subagents', 'tasks', 'workflows', 'mcp', 'pinned'],
+      workStatusSectionOrder: ['session', 'repository', 'usage', 'contextSources', 'telemetry', 'subagents', 'ptys', 'tasks', 'workflows', 'mcp', 'pinned'],
     });
   });
 
   test('restores section order from the actual local persisted projection', async () => {
     const options = useUIStore.persist.getOptions();
     const original = useUIStore.getState();
-    let saved: Parameters<NonNullable<typeof options.storage>['setItem']>[1] = { state: original, version: options.version };
+    let saved: Parameters<NonNullable<typeof options.storage>['setItem']>[1] = {
+      state: { workStatusSectionOrder: ['session', 'repository', 'usage', 'telemetry', 'ptys', 'subagents', 'workflows', 'mcp', 'pinned', 'contextSources'] },
+      version: 26,
+    };
     try {
       useUIStore.persist.setOptions({ storage: {
         getItem: () => saved,
         setItem: (_name, value) => { saved = value; },
         removeItem: () => undefined,
       } });
-      useUIStore.getState().setWorkStatusSectionOrder(['tasks', 'mcp', 'session']);
-      const chosen = useUIStore.getState().workStatusSectionOrder;
-      useUIStore.persist.setOptions({ storage: { getItem: () => saved, setItem: () => undefined, removeItem: () => undefined } });
-      useUIStore.getState().setWorkStatusSectionOrder([]);
+      const chosen = ['session', 'repository', 'usage', 'telemetry', 'ptys', 'subagents', 'tasks', 'workflows', 'mcp', 'pinned', 'contextSources'];
+      await useUIStore.persist.rehydrate();
+      expect(useUIStore.getState().workStatusSectionOrder).toEqual(chosen);
+      expect(saved.version).toBe(options.version);
       await useUIStore.persist.rehydrate();
       expect(useUIStore.getState().workStatusSectionOrder).toEqual(chosen);
     } finally {

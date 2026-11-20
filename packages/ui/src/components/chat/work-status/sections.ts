@@ -71,14 +71,16 @@ const readStoredSectionId = (value: unknown): WorkStatusPanelSectionId | null =>
 };
 
 // The default before Context sources moved up. Clients saved the default as
-// their order without the user choosing it, and Turn stats, Workflows and Tasks
-// were appended to those saved lists wherever they stood, so those don't count.
+// their order without the user choosing it. Sections added since then don't
+// count when recognizing that default.
 const DEFAULT_ORDER_WITH_CONTEXT_SOURCES_LAST: readonly WorkStatusPanelSectionId[] = [
   'session', 'repository', 'usage', 'subagents', 'mcp', 'pinned', 'contextSources',
 ];
 
 const isDefaultOrderWithContextSourcesLast = (order: readonly WorkStatusPanelSectionId[]): boolean => {
-  const placed = order.filter((id) => id !== 'telemetry' && id !== 'workflows' && id !== 'tasks');
+  const ptys = order.indexOf('ptys');
+  if (ptys !== -1 && order[ptys - 1] !== 'subagents') return false;
+  const placed = order.filter((id) => id !== 'telemetry' && id !== 'workflows' && id !== 'ptys' && id !== 'tasks');
   return placed.length === DEFAULT_ORDER_WITH_CONTEXT_SOURCES_LAST.length
     && placed.every((id, index) => id === DEFAULT_ORDER_WITH_CONTEXT_SOURCES_LAST[index]);
 };
@@ -89,7 +91,7 @@ const isDefaultOrderWithContextSourcesLast = (order: readonly WorkStatusPanelSec
  * at the bottom of every saved list. Sections added before this rule were
  * appended and saved there, so they stay out of it.
  */
-const PLACED_AFTER = new Map<WorkStatusSectionId, WorkStatusSectionId>([['tasks', 'subagents']]);
+const PLACED_AFTER = new Map<WorkStatusSectionId, WorkStatusSectionId>([['ptys', 'subagents'], ['tasks', 'subagents']]);
 
 /**
  * Preserve chosen positions, discard obsolete ids, and add newly added
@@ -112,7 +114,10 @@ export const sanitizeWorkStatusSectionOrder = (
   for (const id of WORK_STATUS_SECTION_IDS) {
     if (ordered.has(id)) continue;
     const after = PLACED_AFTER.get(id);
-    const at = after ? order.indexOf(after) : -1;
+    let at = after ? order.indexOf(after) : -1;
+    // Keep the default Subagents → Agent PTYs → Tasks sequence when the PTYs
+    // are still next to Subagents. A separately moved PTY section stays put.
+    if (id === 'tasks' && at >= 0 && order[at + 1] === 'ptys') at += 1;
     if (at === -1) order.push(id);
     else order.splice(at + 1, 0, id);
     ordered.add(id);

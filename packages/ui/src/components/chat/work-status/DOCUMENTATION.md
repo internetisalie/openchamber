@@ -531,8 +531,10 @@ The sections dialog has drag handles for changing this order, including hidden
 sections. A drop updates the panel immediately. `workStatusSectionOrder` is a
 profile preference persisted through the settings registry and the local UI
 store. Missing or empty order uses the default; duplicate and obsolete ids are
-discarded, and newly introduced sections append in default order, except those listed in `PLACED_AFTER` (`sections.ts`), which go right after their default neighbour: Tasks lands after Subagents in every saved list, where the default puts it. Visibility
-changes never alter positions.
+discarded, and unplaced sections append in default order. A missing Agent PTYs
+section goes after Subagents. Missing Tasks goes after Subagents and any Agent
+PTYs section beside it. Saved positions, including a separately moved Agent
+PTYs section, stay put. Visibility changes never alter positions.
 
 Clients saved the default as their order without the user choosing it, so a
 saved list can't tell a choice from the default on its own.

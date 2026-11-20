@@ -5,6 +5,7 @@ import { getDeferredSafeStorage } from '@/stores/utils/safeStorage';
 import { z } from 'zod';
 import { PROJECTS_CAPTION_COLLAPSE_KEY, SIDEBAR_ACTIVITY_KEYS, sidebarSectionActivityKey } from '../sessionSidebarRowModel';
 import { useSessionDisplayStore } from '@/stores/useSessionDisplayStore';
+import { getSessionAdmissionScope } from '@/sync/session-admission-rule';
 
 const PROJECT_COLLAPSE_STORAGE_KEY = 'oc.sessions.projectCollapse';
 const GROUP_COLLAPSE_STORAGE_KEY = 'oc.sessions.groupCollapse';
@@ -56,6 +57,7 @@ export const useSessionProjectViewState = ({
   isVSCode,
   projects,
 }: SessionProjectViewStateArgs) => {
+  const hasGlobalZone = !isVSCode && getSessionAdmissionScope() === 'full-app';
   const safeStorage = React.useMemo(() => getDeferredSafeStorage(), []);
   const [collapsedProjects, setCollapsedProjects] = React.useState<Set<string>>(() => (
     parseStringSet(safeStorage.getItem(PROJECT_COLLAPSE_STORAGE_KEY))
@@ -156,7 +158,8 @@ export const useSessionProjectViewState = ({
     const customZoneKeys = useSessionDisplayStore.getState().sections.flatMap((entry) => (
       entry.kind === 'custom' && entry.grouping === 'time' ? [sidebarSectionActivityKey(entry.id)] : []
     ));
-    setCollapsedActivities((current) => new Set([...current, ...SIDEBAR_ACTIVITY_KEYS, ...customZoneKeys]));
+    const zoneKeys = hasGlobalZone ? SIDEBAR_ACTIVITY_KEYS : SIDEBAR_ACTIVITY_KEYS.filter((key) => key !== 'global');
+    setCollapsedActivities((current) => new Set([...current, ...zoneKeys, ...customZoneKeys]));
     setCollapsedProjects(() => {
       const allIds = new Set(projects.map((project) => project.id));
       try {
@@ -167,7 +170,7 @@ export const useSessionProjectViewState = ({
       scheduleCollapsedProjectsPersist(allIds);
       return allIds;
     });
-  }, [projects, safeStorage, scheduleCollapsedProjectsPersist]);
+  }, [hasGlobalZone, projects, safeStorage, scheduleCollapsedProjectsPersist]);
 
   const expandAll = React.useCallback(() => {
     ignoreIntersectionUntil.current = Date.now() + 150;
@@ -178,7 +181,9 @@ export const useSessionProjectViewState = ({
     setWorkExpansion({ expandedByDefault: true, toggled: new Set() });
     setCollapsedActivities((current) => {
       const next = new Set(current);
-      for (const key of SIDEBAR_ACTIVITY_KEYS) next.delete(key);
+      for (const key of SIDEBAR_ACTIVITY_KEYS) {
+        if (key !== 'global' || hasGlobalZone) next.delete(key);
+      }
       for (const key of current) if (key.startsWith('section:')) next.delete(key);
       next.delete(PROJECTS_CAPTION_COLLAPSE_KEY);
       return next;
@@ -193,7 +198,7 @@ export const useSessionProjectViewState = ({
       scheduleCollapsedProjectsPersist(empty);
       return empty;
     });
-  }, [safeStorage, scheduleCollapsedProjectsPersist]);
+  }, [hasGlobalZone, safeStorage, scheduleCollapsedProjectsPersist]);
 
   const toggleProject = React.useCallback((projectId: string) => {
     ignoreIntersectionUntil.current = Date.now() + 150;

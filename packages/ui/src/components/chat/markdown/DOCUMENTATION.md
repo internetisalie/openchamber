@@ -24,7 +24,9 @@ Clipboard and image exports omit the toolbar.
 
 The full-size table dialog passes `fitTables` through `MarkdownContent` and its
 presentation context. Its columns wrap to the available width independently of
-the saved `tableCellWrap` preference. The override does not write that preference.
+the saved `tableCellWrap` preference. The dialog omits the preference toggle
+because it cannot change the forced wrapping. A short heading keeps its measured
+width; the extra rounding pixel is only for a heading that will wrap.
 
 ## Decisions
 

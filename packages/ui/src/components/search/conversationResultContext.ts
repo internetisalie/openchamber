@@ -77,6 +77,7 @@ export function conversationContextFromLocation({
 
 function contextWithoutExtras({ location, directory, project, projectRoot, homeDirectory, folderOverride }: ConversationContextInput): ConversationResultContext {
   if (folderOverride) return { ...EMPTY_CONVERSATION_CONTEXT, folderLabel: folderOverride };
+  if (directory && isChatDirectory(directory, homeDirectory)) return EMPTY_CONVERSATION_CONTEXT;
   if (location) {
     const worktree = worktreeFolderFor(location, directory, projectRoot);
     return {

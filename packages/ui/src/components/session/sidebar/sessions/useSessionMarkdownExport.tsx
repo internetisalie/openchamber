@@ -2,7 +2,7 @@ import React from 'react';
 import { toast } from '@/components/ui';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { buildExportFilename, downloadAsMarkdown, formatSessionAsMarkdown, getExportRevealLabelKey, revealExportedMarkdown, saveAsMarkdownDesktop } from '@/lib/exportSession';
+import { buildExportFilename, collectChildSessionExports, downloadAsMarkdown, formatSessionAsMarkdown, getExportRevealLabelKey, revealExportedMarkdown, saveAsMarkdownDesktop } from '@/lib/exportSession';
 import type { ChildSessionExport } from '@/lib/exportSession';
 import { useI18n } from '@/lib/i18n';
 import type { Session } from '@/lib/opencode/model';
@@ -34,34 +34,6 @@ export function useSessionMarkdownExport(): {
   // Kept after the dialog closes, so its closing animation shows the same text.
   const [target, setTarget] = React.useState<ExportTarget | null>(null);
 
-  const collectChildExports = React.useCallback(async (
-    directory: string,
-    children: SessionNode[],
-  ): Promise<{ children: ChildSessionExport[]; skipped: number }> => {
-    const results: ChildSessionExport[] = [];
-    let skipped = 0;
-    for (const child of children) {
-      try {
-        const childRecords = await loadExportRecords({ directory, sessionID: child.session.id });
-        if (!childRecords) throw new Error('Session runtime changed during export');
-        const childTitle = child.session.title || t('sessions.sidebar.session.export.untitledSubagent');
-        // SAFETY: OpenCode session payloads may carry the optional agent label used by exports.
-        const childAgent = (child.session as Session & { agent?: string }).agent;
-        const grandChildren = await collectChildExports(directory, child.children);
-        skipped += grandChildren.skipped;
-        results.push({
-          title: childTitle,
-          agent: childAgent,
-          records: childRecords,
-          children: grandChildren.children,
-        });
-      } catch {
-        skipped += countDescendants(child) + 1;
-      }
-    }
-    return { children: results, skipped };
-  }, [loadExportRecords, t]);
-
   const showSkippedSubtasksWarning = React.useCallback((count: number) => {
     if (count <= 0) return;
     toast.warning(count === 1
@@ -88,7 +60,12 @@ export function useSessionMarkdownExport(): {
     let childExports: ChildSessionExport[] | undefined;
     let skippedSubtaskCount = 0;
     if (withSubtasks && tree.children.length > 0) {
-      const collected = await collectChildExports(directory, tree.children);
+      const collected = await collectChildSessionExports({
+        children: tree.children,
+        fallbackDirectory: directory,
+        loadRecords: loadExportRecords,
+        untitledSubagentTitle: t('sessions.sidebar.session.export.untitledSubagent'),
+      });
       childExports = collected.children;
       skippedSubtaskCount = collected.skipped;
     }
@@ -117,7 +94,7 @@ export function useSessionMarkdownExport(): {
     downloadAsMarkdown(markdown, filename);
     toast.success(t('sessions.sidebar.session.export.success'));
     showSkippedSubtasksWarning(skippedSubtaskCount);
-  }, [collectChildExports, loadExportRecords, showSkippedSubtasksWarning, t]);
+  }, [loadExportRecords, showSkippedSubtasksWarning, t]);
 
   const requestExport = React.useCallback((session: Session, directory: string | null, knownTree?: SessionNode | null) => {
     const tree = knownTree && knownTree.children.length > 0 ? knownTree : buildActiveSessionTreeFromCache(session);
