@@ -171,8 +171,11 @@ replaced the drawer's MCP tab: the MCP section carries the same switches.
   starts with Subagents hidden; the order is the shared
   `workStatusSectionOrder`. `useWorkStatusHiddenSections` picks the list by
   `isMobile`, so the sections dialog edits whichever one is on screen.
-- **Usage is left out** (`useUnavailableWorkStatusSections`). The phone has its
-  own Usage page, which reads better there than these compact rows.
+- **Usage and Agent PTYs are left out** (`useUnavailableWorkStatusSections`).
+  The phone has its own Usage page and the Status tab does not mount Agent PTYs.
+  The picker must omit both so it offers only sections the tab can show. The
+  desktop card and picker still offer Agent PTYs. Switching layouts leaves the
+  saved section order and desktop visibility unchanged.
 - **Rows go where the phone can show them.** The rows read
   `useMobileAppActions`: Branch and Changes switch to the drawer's Changes tab,
   PR and Checks open the PR on the issues and PRs board by its link, and the

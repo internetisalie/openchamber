@@ -17,6 +17,17 @@ Do not put high-frequency local component state here just because it is convenie
 
 ## Architecture
 
+### Fork UI-store migration version 31
+
+Upstream 2.7.2 stores version 30. This fork already writes version 31 and uses
+it to normalize the work-status order against the combined Tasks and Agent PTYs
+registry. On the next upstream merge, check whether upstream has assigned its
+own migration to 31. A browser that already saved fork version 31 will skip
+any newly imported migration for that version. If the number collides, keep
+the fork normalization and run the new work at a higher version. Verify
+hydration from upstream v30 and fork v31, including explicit order and hidden
+sections. Phone PTY availability is a render filter and needs no migration.
+
 ### Fork release checks
 
 `useUpdateStore` owns read-only OpenChamber release state. Desktop checks through

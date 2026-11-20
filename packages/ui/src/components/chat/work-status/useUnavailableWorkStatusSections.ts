@@ -15,8 +15,8 @@ import type { WorkStatusSectionId } from './sections';
  * so it is listed only once the server says the tool is on in the open
  * session's directory.
  *
- * The phone's Status tab also leaves out Usage: the phone has its own Usage
- * page, which reads better there than the panel's compact rows.
+ * The phone's Status tab has a separate Usage page and does not mount the
+ * Agent PTYs section. Its section picker omits both.
  */
 export const useUnavailableWorkStatusSections = (): readonly WorkStatusSectionId[] => {
   const workflows = useUIStore(selectWorkflowsShown);
@@ -24,7 +24,7 @@ export const useUnavailableWorkStatusSections = (): readonly WorkStatusSectionId
   const sessionId = useSessionUIStore((state) => state.currentSessionId);
   const tasks = useSessionTodosStore(selectSessionTodosOn(sessionId));
   return React.useMemo(() => [
-    ...(isMobile ? ['usage' as const] : []),
+    ...(isMobile ? ['usage' as const, 'ptys' as const] : []),
     ...(workflows ? [] : ['workflows' as const]),
     ...(tasks ? [] : ['tasks' as const]),
   ], [isMobile, tasks, workflows]);

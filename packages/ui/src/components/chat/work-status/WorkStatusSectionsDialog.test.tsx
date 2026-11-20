@@ -141,15 +141,20 @@ describe('section arrangement dialog', () => {
     expect(closeCount).toBe(0);
   });
 
-  test('on the phone it edits the Status tab list, which hides Subagents and has no Usage', async () => {
+  test('the phone edits its Status tab list and omits the desktop Usage and Agent PTYs rows', async () => {
+    expect(order()).toContain('ptys');
+    expect(order()).toContain('usage');
     await act(async () => useUIStore.setState({ isMobile: true }));
     expect(order()).not.toContain('usage');
+    expect(order()).not.toContain('ptys');
     const subagents = rows().find((row) => row.dataset.settingsItem?.endsWith('.subagents'));
     if (!subagents) throw new Error('Expected the Subagents row');
     expect(subagents.getAttribute('aria-pressed')).toBe('false');
     await act(async () => subagents.click());
     expect(useUIStore.getState().mobileWorkStatusHiddenSections).toEqual([]);
     expect(useUIStore.getState().workStatusHiddenSections).toEqual([]);
+    await act(async () => useUIStore.setState({ isMobile: false }));
+    expect(order()).toContain('ptys');
   });
 
   test('touch requires a hold and commits the same order as mouse dragging', async () => {
