@@ -80,7 +80,8 @@ import { z } from 'zod';
  *   Pairing a device then goes through a pinned relay only.
  * - Extensions that could send what they see elsewhere (`network`, `origins`,
  *   `service`, `transcript`, session content posted to such a service, and
- *   `opencode`, sessions such a service reads from OpenCode) install and run
+ *   `opencode`, sessions such a service reads from OpenCode, and
+ *   `opencode-plugin`, calls a guest frame makes to OpenCode plugin routes) install and run
  *   only from a Git repository the administrator listed (`allowedExtensions` /
  *   `OPENCHAMBER_ALLOWED_EXTENSIONS`), or from a
  *   local folder where `allowLocalExtensions` /

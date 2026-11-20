@@ -107,6 +107,12 @@ A sandboxed frame has an opaque origin, so its own requests (scripts, styles, `f
 - Update checks (`updates.js` `checkGuestUpdate`) never overlap for one installed copy: a second caller gets the running check's result, so two `git fetch --depth 1` runs cannot fight over `.git/shallow.lock`. Inside that guard a `shallow.lock` older than 60 s is removed before fetching, because nothing of ours is running. `runGit` ends a timed-out command with SIGTERM and only sends SIGKILL after 3 s, so git can remove its own locks. A `fetch-failed` result is not written to the update cache.
 - The OAuth callback skips UI auth. Everything else under `/api/guests` stays behind the usual session.
 
+### Why plugin calls use the same enterprise allowlist as OpenCode reads
+
+`opencode-plugin` authorizes calls to exact OpenCode plugin IDs and HTTP methods. Those declarations do not say what a plugin can read or do, so the same enterprise source policy as `opencode` applies at install, update, approval and catalog reads. The iframe bridge uses the effective grants from the catalog. Open frames follow policy changes on catalog refresh.
+
+An unversioned store used `opencode` for plugin calls. Only an entry with a stored plugin scope migrates to `opencode-plugin`, and that grant counts only when the current IDs and methods match the approved scope. An unscoped entry grants nothing. The separate `opencode` service read grant requires its own approval.
+
 ## Session events
 
 `session-events.js` owns the delivery of session events to extension services (`contributes.sessionEvents`, SDK `session-events.ts`): which catalog rows receive which event, when `turn-finished` fires, what each request carries, and how a delivery fails. `index.js` creates one runtime, feeds it every translated event from the hub loop after the trackers (`processPayload(payload, directory)`) and the server-made `openchamber:page-waiting` / `page-settled` from `onPageWaitChange`, calls `reconcile()` from `onGuestActivated` and the deactivation listener list in `feature-routes-runtime.js`, and stops it first thing in the graceful shutdown, in the same tick that closes admission to guest services (`beginGuestServiceShutdown`), so no event meets the shutdown refusal and reads as a broken service. The notifications runtime owns what a person is told; this module owns what an extension's service is told, and the two share the gates for "the turn is finished".

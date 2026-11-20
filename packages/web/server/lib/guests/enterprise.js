@@ -18,6 +18,8 @@ import { readEnterprisePolicy } from '../enterprise-mode.js';
  *   provider call and tool result in reach.
  * - `opencode`: that process reading sessions, messages and live events from
  *   OpenCode.
+ * - `opencode-plugin`: a guest frame calling OpenCode plugin routes, whose
+ *   effects and data access depend on the plugin.
  * Such a package installs and runs only from a Git repository listed in the
  * policy (`allowedExtensions`; an entry ending in `/` allows every
  * repository under it, such as a whole organization), or from a local folder
@@ -26,7 +28,7 @@ import { readEnterprisePolicy } from '../enterprise-mode.js';
  * The list names repositories, not package ids: a package declares its own
  * id, so an id would let a user ship any code under an allowed name.
  */
-const ENTERPRISE_GATED_CAPABILITIES = ['network', 'origins', 'service', 'transcript', 'sessionControl', 'sessionAnswers', 'instructions', 'skills', 'opencodePlugin', 'opencode'];
+const ENTERPRISE_GATED_CAPABILITIES = ['network', 'origins', 'service', 'transcript', 'sessionControl', 'sessionAnswers', 'instructions', 'skills', 'opencodePlugin', 'opencode', 'opencode-plugin'];
 
 /** `host/path` of a clone URL (https or scp-style ssh), for comparing two spellings of one repository. */
 const repositoryKey = (value) => {
