@@ -6,7 +6,7 @@
     bun2nix.url = "github:nix-community/bun2nix";
     bun2nix.inputs.nixpkgs.follows = "nixpkgs";
     # Nix builds from the same fork tag that supplies Electron's binary.
-    opencode.url = "github:internetisalie/opencode/v2.3.2-internetisalie.1-poc.2";
+    opencode.url = "github:internetisalie/opencode/v2.3.2-internetisalie.1-poc.4";
   };
 
   outputs =
@@ -64,7 +64,7 @@
                     # The fork changed bun.lock after the inherited hashes were measured.
                     hash =
                       {
-                        "v2.3.2-internetisalie.1-poc.2" = {
+                        "v2.3.2-internetisalie.1-poc.4" = {
                           x86_64-linux = "sha256-n3yzsEslFmC3PuKJiSjCpYegkvdJgl2ZE1BoTVCLtno=";
                           aarch64-linux = "sha256-BsjaK1KfTi5imH9Fw7ywcaDIpxuP+JM1gazkFI3SsRk=";
                           aarch64-darwin = "sha256-xAN8JyDmqGd2PBBquHnREleAXwE1ROQTfag1QeTJ7xc=";
