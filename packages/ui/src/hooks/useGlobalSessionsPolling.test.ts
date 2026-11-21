@@ -49,7 +49,7 @@ describe('global sessions polling lifecycle', () => {
     const dispose = startGlobalSessionsPolling(
       () => { initialLoads += 1; return pending; },
       async () => { refreshes += 1; return true; },
-      clock.schedule, clock.clear,
+      clock.schedule, clock.clear, undefined, undefined, undefined, () => 0,
     );
     expect(initialLoads).toBe(1);
     expect(clock.pending.size).toBe(0);
@@ -95,7 +95,10 @@ describe('global sessions polling lifecycle', () => {
 
   test('a background failure after success retries without restarting the startup burst', async () => {
     const clock = timers();
-    const dispose = startGlobalSessionsPolling(async () => true, async () => false, clock.schedule, clock.clear);
+    const dispose = startGlobalSessionsPolling(
+      async () => true, async () => false,
+      clock.schedule, clock.clear, undefined, undefined, undefined, () => 0,
+    );
     await flush();
     await clock.fire();
     expect(clock.delay()).toBe(GLOBAL_SESSIONS_RETRY_INTERVAL_MS);
@@ -151,7 +154,8 @@ describe('global sessions polling lifecycle', () => {
   test('a rejected load remains recoverable', async () => {
     const clock = timers();
     const dispose = startGlobalSessionsPolling(
-      async () => { throw new Error('offline'); }, async () => true, clock.schedule, clock.clear,
+      async () => { throw new Error('offline'); }, async () => true,
+      clock.schedule, clock.clear, undefined, undefined, undefined, () => 0,
     );
     await flush();
     expect(clock.delay()).toBe(1_000);
