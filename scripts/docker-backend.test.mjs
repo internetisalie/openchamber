@@ -26,7 +26,45 @@ test('Docker uses one concrete numbered fork version and SHA-256 matching Electr
   assert.doesNotMatch(dockerfile, /^ARG OPENCODE_(?:VERSION|SHA256)(?:=|\s|$)/m);
 });
 
-test('the external image is the default; only the bundled target copies the verified CLI', () => {
+// The stages BuildKit builds for a target: the target, the stage each of them
+// starts FROM, and each stage a COPY --from names. Build args resolve to their
+// global defaults. An unnamed target is the last stage, which is the default.
+function stagesBuiltFor(source, target) {
+  const defaults = new Map([...source.matchAll(/^ARG (\w+)=(\S*)$/gm)].map((match) => [match[1], match[2]]));
+  const stages = new Map();
+  let current = null;
+  for (const line of source.replace(/\\\n\s*/g, ' ').split('\n')) {
+    const from = /^FROM (?:--\S+ )*(\S+)(?: AS (\S+))?\s*$/.exec(line);
+    if (from) {
+      const base = from[1].replace(/^\$\{(\w+)\}$/, (_, name) => defaults.get(name) ?? from[1]);
+      current = { name: from[2], needs: new Set([base]) };
+      stages.set(from[2] ?? `#${stages.size}`, current);
+      continue;
+    }
+    const copied = current && /^COPY (?:--\S+ )*--from=(\S+) /.exec(line);
+    if (copied) current.needs.add(copied[1]);
+  }
+  const built = new Set();
+  const visit = (name) => {
+    if (built.has(name) || !stages.has(name)) return;
+    built.add(name);
+    for (const need of stages.get(name).needs) visit(need);
+  };
+  visit(target ?? [...stages.keys()].at(-1));
+  return built;
+}
+
+test('the default build target is external and builds no OpenCode backend stage', () => {
+  assert.equal([...stagesBuiltFor(dockerfile)].at(0), 'external');
+  const external = stagesBuiltFor(dockerfile);
+  for (const stage of ['opencode-pin', 'opencode-release', 'opencode-artifact', 'opencode-verified', 'bundled']) {
+    assert.ok(!external.has(stage), `${stage} is built by the default target`);
+  }
+  assert.ok(stagesBuiltFor(dockerfile, 'bundled').has('opencode-verified'));
+  assert.ok(stagesBuiltFor(dockerfile, 'bundled').has('opencode-release'));
+});
+
+test('only the bundled target copies the verified CLI, and the release stage is the default source', () => {
   assert.match(dockerfile, /^ARG OPENCODE_SOURCE=opencode-release$/m);
   assert.match(dockerfile, /^FROM opencode-pin AS opencode-release\nADD --checksum=sha256:\$\{OPENCODE_SHA256\} --chmod=755 https:\/\/github\.com\/internetisalie\/opencode\/releases\/download\/v\$\{OPENCODE_VERSION\}\/opencode-linux-x64-baseline \/opencode$/m);
   assert.match(dockerfile, /^FROM \$\{OPENCODE_SOURCE\} AS opencode-artifact$/m);
@@ -37,7 +75,7 @@ test('the external image is the default; only the bundled target copies the veri
   const [shared, targets] = runtime.split('FROM runtime AS bundled\n');
   assert.doesNotMatch(shared, /^ADD |^COPY --from=opencode-/gm);
   assert.match(targets, /^COPY --from=opencode-verified /);
-  assert.match(targets, /FROM runtime AS external\nENV OPENCODE_SKIP_START=true\s*$/);
+  assert.match(targets, /^FROM runtime AS external\nENV OPENCODE_SKIP_START=true\s*$/m);
 });
 
 const candidate = (version) => `#!/bin/sh\nprintf executed > candidate-executed\nprintf '%s\\n' 'opencode v${version}'\n`;
