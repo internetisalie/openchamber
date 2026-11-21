@@ -311,11 +311,26 @@ describe('concurrent store changes', () => {
     };
     try {
       await writeExtensionStore(file, { paths: ['/a'] });
-      await setCapabilityGrants('alpha', file, ['opencode'], scope);
+      await setCapabilityGrants('alpha', file, ['opencode-plugin'], scope);
       expect(await readExtensionStore(file)).toMatchObject({
-        capabilityGrants: { alpha: ['opencode'] },
+        capabilityGrants: { alpha: ['opencode-plugin'] },
         capabilityScopes: { alpha: scope },
       });
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+
+  test('legacy plugin approvals never grant session reads; new approvals round-trip independently', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'oc-guest-persist-'));
+    const file = extensionsPersistPath(dir);
+    const scope = { opencode: [{ id: 'example-plugin', methods: ['GET'] }] };
+    try {
+      await fs.writeFile(file, JSON.stringify({ paths: [], capabilityScopes: { scoped: scope },
+        capabilityGrants: { scoped: ['opencode'], ambiguous: ['opencode'] } }));
+      expect((await readExtensionStore(file)).capabilityGrants).toEqual({ scoped: ['opencode-plugin'], ambiguous: [] });
+      await setCapabilityGrants('scoped', file, ['opencode-plugin', 'opencode'], scope);
+      expect((await readExtensionStore(file)).capabilityGrants.scoped).toEqual(['opencode-plugin', 'opencode']);
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }
@@ -376,6 +391,57 @@ describe('notification channel scopes', () => {
       const typed = { service: { exec: [], sockets: [], notifications: { kind: 'user' } } };
       await writeExtensionStore(file, { paths: ['/a'], sources: {}, gitOrigins: {}, capabilityGrants: { alpha: ['service'] }, capabilityScopes: { alpha: typed } });
       expect((await readExtensionStore(file)).capabilityScopes).toEqual({ alpha: typed });
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('quota scopes', () => {
+  test('round-trips the service grant\'s quota scope, an empty list included', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'oc-guest-persist-'));
+    const file = extensionsPersistPath(dir);
+    try {
+      const scope = { service: { exec: [], sockets: [], quota: { providers: ['deepinfra', 'openrouter'] } } };
+      await writeExtensionStore(file, { paths: ['/a'], sources: {}, gitOrigins: {}, capabilityGrants: { alpha: ['service'] }, capabilityScopes: { alpha: scope } });
+      expect((await readExtensionStore(file)).capabilityScopes).toEqual({ alpha: scope });
+      const empty = { service: { exec: [], sockets: [], quota: { providers: [] } } };
+      await writeExtensionStore(file, { paths: ['/a'], sources: {}, gitOrigins: {}, capabilityGrants: { alpha: ['service'] }, capabilityScopes: { alpha: empty } });
+      expect((await readExtensionStore(file)).capabilityScopes).toEqual({ alpha: empty });
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('tracker scopes', () => {
+  test('round-trips the service grant\'s tracker scope', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'oc-guest-persist-'));
+    const file = extensionsPersistPath(dir);
+    try {
+      const scope = { service: { exec: [], sockets: [], tracker: { instances: { kind: 'fixed', origin: 'https://acme.atlassian.net' }, oauth: { authorizeUrl: 'https://auth.example/a', tokenUrl: 'https://auth.example/t' }, urls: ['/browse/{id}'] } } };
+      await writeExtensionStore(file, { paths: ['/a'], sources: {}, gitOrigins: {}, capabilityGrants: { alpha: ['service'] }, capabilityScopes: { alpha: scope } });
+      expect((await readExtensionStore(file)).capabilityScopes).toEqual({ alpha: scope });
+      const typed = { service: { exec: [], sockets: [], tracker: { instances: { kind: 'user' }, oauth: null, urls: ['/issue/{id}'] } } };
+      await writeExtensionStore(file, { paths: ['/a'], sources: {}, gitOrigins: {}, capabilityGrants: { alpha: ['service'] }, capabilityScopes: { alpha: typed } });
+      expect((await readExtensionStore(file)).capabilityScopes).toEqual({ alpha: typed });
+    } finally {
+      await fs.rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe('links scopes', () => {
+  test('round-trips the links scope, with and without link templates', async () => {
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'oc-guest-persist-'));
+    const file = extensionsPersistPath(dir);
+    try {
+      const scope = { links: { action: 'open', keys: ['DEMO'], origin: 'https://tasks.example.com', identifier: 'key-number', urls: ['/tasks/{id}'] } };
+      await writeExtensionStore(file, { paths: ['/a'], sources: {}, gitOrigins: {}, capabilityGrants: { alpha: ['links'] }, capabilityScopes: { alpha: scope } });
+      expect((await readExtensionStore(file)).capabilityScopes).toEqual({ alpha: scope });
+      const textOnly = { links: { action: 'open', keys: ['DEMO'], origin: null, identifier: null, urls: [] } };
+      await writeExtensionStore(file, { paths: ['/a'], sources: {}, gitOrigins: {}, capabilityGrants: { alpha: ['links'] }, capabilityScopes: { alpha: textOnly } });
+      expect((await readExtensionStore(file)).capabilityScopes).toEqual({ alpha: textOnly });
     } finally {
       await fs.rm(dir, { recursive: true, force: true });
     }

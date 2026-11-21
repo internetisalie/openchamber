@@ -8,8 +8,11 @@ import { cn } from '@/lib/utils';
 import type { Session } from '@/lib/opencode/model';
 import type { LaneSummary } from '@/lib/multirun/useLaneSummaries';
 import type { LaneStatus } from '@/lib/multirun/laneStatus';
+import { getSessionGoal, type SessionGoalStatus } from '@/lib/sessionGoalMetadata';
+import { sessionGoalMarkLabelKey, sessionGoalStatusColor } from '@/lib/sessionGoalPresentation';
 import { SessionActivityIndicator } from '@/components/session/SessionActivityIndicator';
 import { LaneStatusIcon } from './LaneStatusIcon';
+import { DiffCount } from '@/components/ui/diff-count';
 
 const costFormatter = new Intl.NumberFormat(undefined, { style: 'currency', currency: 'USD', minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -34,6 +37,22 @@ function LaneDuration({ session, busy }: { session: Session; busy: boolean }): R
   const end = busy ? now : session.time.idle;
   if (!end) return null;
   return <span className="inline-flex items-center gap-1"><Icon name="time" className="size-3" />{formatDuration(end - session.time.created)}</span>;
+}
+
+/** The goal this lane runs under; the sidebar's mark, in the same colours. */
+function LaneGoalMark({ status }: { status: SessionGoalStatus }): React.ReactNode {
+  const { t } = useI18n();
+  const label = t(sessionGoalMarkLabelKey[status]);
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <span className="inline-flex shrink-0 items-center" role="img" aria-label={label}>
+          <Icon name="target" className="size-3.5" style={{ color: sessionGoalStatusColor[status] }} />
+        </span>
+      </TooltipTrigger>
+      <TooltipContent side="top">{label}</TooltipContent>
+    </Tooltip>
+  );
 }
 
 export type RunLaneCardProps = {
@@ -86,6 +105,7 @@ export function RunLaneCard({
   const reply = summary?.reply;
   const diff = summary?.diff;
   const excluded = fuseSource !== null && !fuseSource.checked;
+  const goal = getSessionGoal(session);
   const replyText = reply?.state === 'ready' ? reply.text : '';
 
   // What stands where the reply goes: a lane that needs the user or broke
@@ -110,8 +130,7 @@ export function RunLaneCard({
       ? <span>{t('multirun.overview.card.noChanges')}</span>
       : (
         <span className="inline-flex items-center gap-1">
-          <span className="text-[var(--status-success)]">+{diff.stat.insertions}</span>
-          <span className="text-[var(--status-error)]">−{diff.stat.deletions}</span>
+          <DiffCount added={diff.stat.insertions} removed={diff.stat.deletions} />
           <span>· {diff.stat.files === 1
             ? t('multirun.overview.card.filesSingle', { count: diff.stat.files })
             : t('multirun.overview.card.filesPlural', { count: diff.stat.files })}</span>
@@ -151,6 +170,7 @@ export function RunLaneCard({
         {variantLabel ? (
           <span className="shrink-0 rounded border border-border px-1 typography-micro text-muted-foreground">{variantLabel}</span>
         ) : null}
+        {goal ? <LaneGoalMark status={goal.status} /> : null}
         <span className="ms-auto inline-flex shrink-0 items-center">
           {fuseSource ? (
             <span

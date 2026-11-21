@@ -18,6 +18,8 @@ import { isSameOpenCodeServer } from './opencodeServiceUrl';
 import { spawnManagedOpenCodeProcess } from './managed-opencode-process';
 import { readEnterprisePolicy } from '../../web/server/lib/enterprise-mode.js';
 import { isExecutable, isKnownOpenCodeDesktopAppPath, isMacOpenCodeAppBundlePath, resolveDetectedOpencodeCliPath } from './opencodeCliDiscovery';
+import { readMachineSetting } from './machine-settings';
+import { applyPluginSwitchPolicies } from './plugin-switches';
 
 const t = vscode.l10n.t;
 
@@ -72,6 +74,8 @@ export interface OpenCodeManager {
   start(workdir?: string): Promise<void>;
   stop(): Promise<void>;
   restart(): Promise<void>;
+  /** Re-apply the plugin switch denials to the managed OpenCode's config. */
+  refreshPluginSwitches(): Promise<{ updated: boolean; requiresManualRestart: boolean }>;
   upgradeCli(): Promise<void>;
   installV2(): Promise<void>;
   getCompatibility(): Promise<OpenCodeCompatibility>;
@@ -253,8 +257,7 @@ function validateConfiguredOpencodeBinaryForManagedStart(): string | null {
 
   const candidates: string[] = [];
   try {
-    const config = vscode.workspace.getConfiguration('openchamber');
-    const raw = config.get<string>('opencodeBinary') || '';
+    const raw = readMachineSetting('opencodeBinary');
     if (raw.trim()) {
       candidates.push(raw.trim());
     }
@@ -297,8 +300,7 @@ function resolveOpencodeCliPath(): string | null {
 
   const configured = (() => {
     try {
-      const config = vscode.workspace.getConfiguration('openchamber');
-      return normalizeConfiguredOpencodeBinary(config.get<string>('opencodeBinary') || '');
+      return normalizeConfiguredOpencodeBinary(readMachineSetting('opencodeBinary'));
     } catch {
       return null;
     }
@@ -665,6 +667,9 @@ export function createOpenCodeManager(context: vscode.ExtensionContext): OpenCod
   let managedApiUrlOverride: string | null = null;
   let managedPassword: string | null = null;
   let managedPasswordSource: 'user-env' | 'generated' | 'rotated' | null = null;
+  // Captured when the child launches: after `applyPluginSwitchPolicies` sets
+  // `OPENCODE_CONFIG` on the child env, that value is ours, not the user's.
+  let userOwnsOpenCodeConfig = false;
   let servicePassword: string | null = null;
   const userProvidedEnvPassword = (() => {
     const normalized = readEnvOpenCodePassword();
@@ -693,8 +698,7 @@ export function createOpenCodeManager(context: vscode.ExtensionContext): OpenCod
 
   let pendingOperation: Promise<void> | null = null;
 
-  const config = vscode.workspace.getConfiguration('openchamber');
-  const configuredApiUrl = config.get<string>('apiUrl') || '';
+  const configuredApiUrl = readMachineSetting('apiUrl');
   const useConfiguredUrl = configuredApiUrl && configuredApiUrl.trim().length > 0;
 
   let configuredPort: number | null = null;
@@ -864,7 +868,9 @@ export function createOpenCodeManager(context: vscode.ExtensionContext): OpenCod
       fs.mkdirSync(serverCwd, { recursive: true });
       const port = await allocateManagedOpenCodePort();
       startup.signal.throwIfAborted();
+      userOwnsOpenCodeConfig = (process.env.OPENCODE_CONFIG ?? '').trim().length > 0;
       serverEnv = applyProviderEnvAliases({ ...process.env, OPENCODE_DISABLE_AUTOUPDATE: '1' });
+      applyPluginSwitchPolicies(serverEnv, serverWorkingDirectory(), { userOwnsConfig: userOwnsOpenCodeConfig });
       server = spawnManagedOpenCodeServer(serverCwd, port, READY_CHECK_TIMEOUT_MS, startup.signal, serverEnv);
       await server.ready;
 
@@ -1015,6 +1021,11 @@ export function createOpenCodeManager(context: vscode.ExtensionContext): OpenCod
     installV2: async () => { throw new Error(FORK_UPDATE_ERROR); },
     upgradeCli: async () => { throw new Error(FORK_UPDATE_ERROR); },
     setWorkingDirectory,
+    refreshPluginSwitches: async () => {
+      if (useConfiguredUrl) return { updated: false, requiresManualRestart: false };
+      if (!serverEnv) return { updated: true, requiresManualRestart: false };
+      return applyPluginSwitchPolicies(serverEnv, serverWorkingDirectory(), { userOwnsConfig: userOwnsOpenCodeConfig });
+    },
     getStatus: () => status,
     getApiUrl,
     getOpenCodeAuthHeaders,

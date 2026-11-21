@@ -8,7 +8,7 @@
 
 import { spawn } from "node:child_process"
 import { createServer } from "node:net"
-import { existsSync, mkdtempSync, rmSync } from "node:fs"
+import { existsSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, rmSync } from "node:fs"
 import { platform, tmpdir } from "node:os"
 import { join, resolve } from "node:path"
 import process from "node:process"
@@ -127,29 +127,71 @@ const ANTI_THROTTLING_ARGS = [
   "--disable-features=CalculateNativeWinOcclusion,IntensiveWakeUpThrottling,MacAppCodeSignClone",
 ]
 
+const TEMPORARY_PROFILE_PREFIX = "openchamber-perf-"
+
+const isProcessAlive = (pid) => {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch (error) {
+    return error.code === "EPERM"
+  }
+}
+
+/**
+ * Removes temporary profiles left by earlier runs. Ad hoc probe scripts take
+ * `.dir` and never call `removeAfter`, and a killed run never gets to it: about
+ * 65 MB each, they once filled 32 GB of $TMPDIR in two days. A running Chrome
+ * holds `SingletonLock`, a symlink to `<host>-<pid>`, so a profile whose lock
+ * names a dead process is stale. A profile without that symlink stays: Windows
+ * keeps a plain lock file, so there its age says nothing about a live Chrome.
+ */
+const sweepStaleProfiles = () => {
+  const root = tmpdir()
+  let entries
+  try {
+    entries = readdirSync(root).filter((entry) => entry.startsWith(TEMPORARY_PROFILE_PREFIX))
+  } catch {
+    return
+  }
+  for (const entry of entries) {
+    const dir = join(root, entry)
+    try {
+      const pid = Number(readlinkSync(join(dir, "SingletonLock")).split("-").pop())
+      if (Number.isInteger(pid) && pid > 0 && !isProcessAlive(pid)) rmSync(dir, { recursive: true, force: true })
+    } catch {
+      // No lock symlink, another run removed it first, or a file is held open.
+    }
+  }
+}
+
 /**
  * The Chrome profile for one run. `--profile-dir` keeps a directory the caller
  * owns; without it every run gets a fresh temporary profile, removed once
- * Chrome exits. The app keeps sidebar state, the last session, panel widths and
- * the rail order in localStorage per origin, so a shared default profile
- * carried one run's (and one build's) state into the next.
+ * Chrome exits, and profiles earlier runs left behind are swept first. The app
+ * keeps sidebar state, the last session, panel widths and the rail order in
+ * localStorage per origin, so a shared default profile carried one run's (and
+ * one build's) state into the next.
  */
 export const resolveProfileDir = (explicit, name) => {
   if (explicit) return { dir: resolve(explicit), temporary: false, removeAfter: () => {} }
-  const dir = mkdtempSync(join(tmpdir(), `openchamber-perf-${name}-`))
+  sweepStaleProfiles()
+  const dir = mkdtempSync(join(tmpdir(), `${TEMPORARY_PROFILE_PREFIX}${name}-`))
   return {
     dir,
     temporary: true,
     /** Removes the profile when `chromeProcess` exits (now, if it already has). */
     removeAfter: (chromeProcess) => {
-      const remove = () => rmSync(dir, { recursive: true, force: true })
+      // Chrome's helpers can still be writing into the profile as the main
+      // process exits; the retries ride out the ENOTEMPTY that throws.
+      const remove = () => rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
       if (!chromeProcess || chromeProcess.exitCode !== null || chromeProcess.signalCode !== null) remove()
       else chromeProcess.once("exit", remove)
     },
   }
 }
 
-export const launchChrome = ({ chrome, profileDir, port, headless, extraArgs = [] }) => {
+export const launchChrome = ({ chrome, profileDir, port, headless, extraArgs = [], captureStderr = false }) => {
   const args = [
     `--remote-debugging-port=${port}`,
     `--user-data-dir=${profileDir}`,
@@ -164,7 +206,41 @@ export const launchChrome = ({ chrome, profileDir, port, headless, extraArgs = [
   // Chrome refuses to start as root with its sandbox on, which is how
   // containers and CI runners usually run it.
   if (process.getuid?.() === 0) args.unshift("--no-sandbox")
-  return spawn(chrome, args, { stdio: "ignore" })
+  return spawn(chrome, args, { stdio: captureStderr ? ["ignore", "ignore", "pipe"] : "ignore" })
+}
+
+/** A fresh browser-test profile lets Chrome bind its own port without a reservation race. */
+export const launchBrowserTestChrome = (chrome, profileDir) => {
+  const browser = launchChrome({
+    chrome, profileDir, port: 0, headless: true, captureStderr: true,
+    extraArgs: ["--no-sandbox", "--disable-dev-shm-usage"],
+  })
+  let stderr = ""
+  let spawnError
+  browser.stderr.on("data", (chunk) => { stderr = (stderr + chunk).slice(-8192) })
+  browser.on("error", (error) => { spawnError = error })
+
+  const pageTarget = async () => {
+    const deadline = Date.now() + 15_000
+    const activePortFile = join(profileDir, "DevToolsActivePort")
+    try {
+      while (Date.now() < deadline) {
+        if (spawnError) throw spawnError
+        if (browser.exitCode !== null || browser.signalCode !== null) {
+          throw new Error(`Chrome exited before startup (${browser.exitCode ?? browser.signalCode})`)
+        }
+        if (existsSync(activePortFile)) {
+          const port = Number(readFileSync(activePortFile, "utf8").split("\n")[0])
+          if (Number.isInteger(port) && port > 0 && port <= 65535) return await createPageTarget(port)
+        }
+        await wait(100)
+      }
+      throw new Error("Chrome did not write a debugging port in 15s")
+    } catch (error) {
+      throw new Error(`Chrome debugging startup failed (${chrome}): ${error.message}\n${stderr.trim() || "No Chrome stderr"}`, { cause: error })
+    }
+  }
+  return { browser, pageTarget }
 }
 
 export class CdpClient {

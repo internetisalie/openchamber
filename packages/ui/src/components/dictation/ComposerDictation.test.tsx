@@ -31,7 +31,7 @@ mock.module('@/hooks/useDictation', () => ({
 }));
 mock.module('@/stores/useConfigStore', () => ({ useConfigStore: (select: (state: typeof settings) => unknown) => select(settings) }));
 mock.module('@/stores/useUIStore', () => ({ useUIStore: (select: (state: { shortcutOverrides: object }) => unknown) => select({ shortcutOverrides: {} }) }));
-mock.module('@/lib/i18n', () => ({ useI18n: () => ({ t: (key: string) => key }) }));
+mock.module('@/lib/i18n', () => ({ useI18n: () => ({ t: (key: string) => key }), isRightToLeft: () => false }));
 mock.module('@/contexts/useThemeSystem', () => ({ useThemeSystem: () => ({ currentTheme: { colors: { surface: {}, status: {} } } }) }));
 mock.module('@/lib/utils', () => ({ cn: (...values: unknown[]) => values.filter(Boolean).join(' ') }));
 mock.module('@/lib/runtime-fetch', () => ({ runtimeFetch: async () => Response.json({}) }));
@@ -41,7 +41,7 @@ mock.module('@/hooks/useDurationTicker', () => ({ useWaitingBlink: () => '' }));
 mock.module('@/components/dictation/DictationWaveform', () => ({ DictationWaveform: () => null }));
 mock.module('@/components/icon/Icon', () => ({ Icon: () => null }));
 mock.module('@/lib/shortcuts', () => ({ formatShortcutForDisplay: () => '', getEffectiveShortcutCombo: () => '' }));
-mock.module('@/components/ui/action-toolbar', () => ({ TooltipLabelWithShortcut: () => null }));
+mock.module('@/components/ui/action-toolbar', () => ({ ButtonTooltip: Passthrough, TooltipLabelWithShortcut: () => null }));
 const Passthrough = ({ children }: { children?: React.ReactNode }) => <>{children}</>;
 mock.module('@/components/ui/tooltip', () => ({ Tooltip: Passthrough, TooltipTrigger: Passthrough, TooltipContent: () => null }));
 
@@ -70,6 +70,7 @@ beforeEach(async () => {
     Object.assign(globalThis, {
         window: dom, document: dom.document, IS_REACT_ACT_ENVIRONMENT: true,
         CustomEvent: dom.CustomEvent, KeyboardEvent: dom.KeyboardEvent,
+        requestAnimationFrame: dom.requestAnimationFrame.bind(dom), cancelAnimationFrame: dom.cancelAnimationFrame.bind(dom),
     });
     starts.length = 0;
     completions.length = 0;

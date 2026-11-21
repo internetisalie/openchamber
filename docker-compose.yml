@@ -20,6 +20,7 @@ services:
       # Set this before starting, for example:
       #   OPENCHAMBER_UI_PASSWORD="$(openssl rand -base64 24)" docker compose up -d
       OPENCHAMBER_UI_PASSWORD: ${OPENCHAMBER_UI_PASSWORD:?Set OPENCHAMBER_UI_PASSWORD before exposing OpenChamber through Docker}
+      OPENCODE_HOST: ${OPENCODE_HOST:-http://host.docker.internal:4096}
     # OPENCHAMBER_HOST: 0.0.0.0  # Bind address (default in Docker entrypoint: 0.0.0.0)
     # OPENCHAMBER_TUNNEL_PROVIDER: cloudflare
     # OPENCHAMBER_TUNNEL_MODE: quick  # quick | managed-remote | managed-local
@@ -27,7 +28,5 @@ services:
     # OPENCHAMBER_TUNNEL_TOKEN: your_cloudflare_token  # required for managed-remote
     # OPENCHAMBER_TUNNEL_CONFIG: /home/openchamber/.cloudflared/config.yml  # optional for managed-local
     # OH_MY_OPENCODE: true # enable oh-my-opencode
-    # OPENCODE_HOST: http://172.17.0.1:4096 # Connect to external OpenCode server
-    # OPENCODE_SKIP_START: true # skip start opencode
     # OPENCHAMBER_OPENCODE_HOSTNAME: 0.0.0.0 # Bind OpenCode to all interfaces
     restart: unless-stopped

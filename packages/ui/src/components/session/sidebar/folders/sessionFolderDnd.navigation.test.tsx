@@ -45,7 +45,8 @@ const mount = async (ownerKeys: string[], archivedBucket = false, navigationDisa
     <SessionFolderDndScope scopeKey="/workspace" ownerKey="project-a" hasFolders={ownerKeys.length > 0} onSessionDroppedOnFolder={() => undefined}>
       <SessionFolderOwnersProvider ownerKeys={ownerKeys}>
         <DraggableSessionRow sessionId="feature-session" ownerKey="project-a" sessionDirectory="/workspace/feature" sessionTitle="Feature session" archivedBucket={archivedBucket}>
-          <button disabled={navigationDisabled} onClick={() => selections.push('feature-session')}>Open feature session</button>
+          <button data-row-drag="" disabled={navigationDisabled} onClick={() => selections.push('feature-session')}>Open feature session</button>
+          <button aria-label="Row menu">Menu</button>
         </DraggableSessionRow>
       </SessionFolderOwnersProvider>
     </SessionFolderDndScope>,
@@ -96,6 +97,17 @@ test('a row with a folder target still activates and ends a real mouse-sensor dr
   });
   expect(wrapper.hasAttribute('aria-pressed')).toBe(false);
   expect(wrapper.classList.contains('opacity-30')).toBe(false);
+});
+
+test('a row menu press does not activate the mouse sensor', async () => {
+  const { wrapper } = await mount(['project-a']);
+  const menu = wrapper.querySelector('[aria-label="Row menu"]');
+  if (!menu) throw new Error('Row menu missing');
+  await act(() => { menu.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0, clientX: 1, clientY: 1 })); });
+  await act(() => { document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 30, clientY: 1 })); });
+  expect(wrapper.hasAttribute('aria-pressed')).toBe(false);
+  expect(wrapper.classList.contains('opacity-30')).toBe(false);
+  await act(() => { document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, button: 0 })); });
 });
 
 test('omitting inapplicable drag semantics preserves a genuinely disabled navigation control', async () => {

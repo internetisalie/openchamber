@@ -40,6 +40,22 @@ describe('requestGuestPluginRoute', () => {
     expect(calls).toBe(0);
   });
 
+  for (const path of ['/snapshot?view=summary', '/snapshot#summary']) {
+    test(`rejects a non-path route (${path}) before fetching`, async () => {
+      await expect(requestGuestPluginRoute({ ...request, path }, '/repo', async () => {
+        throw new Error('Unexpected fetch');
+      })).rejects.toThrow('escaped');
+    });
+  }
+
+  for (const key of ['directory', 'location[directory]']) {
+    test(`rejects caller-supplied ${key} before fetching`, async () => {
+      await expect(requestGuestPluginRoute({ ...request, query: { [key]: '/repo' } }, '/repo', async () => {
+        throw new Error('Unexpected fetch');
+      })).rejects.toThrow('cannot specify a directory');
+    });
+  }
+
   test('stops reading a plugin response at the public body limit', async () => {
     let cancelled = false;
     const stream = new ReadableStream<Uint8Array>({

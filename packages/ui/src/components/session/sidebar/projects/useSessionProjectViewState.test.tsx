@@ -17,7 +17,7 @@ type DocumentStub = {
   documentElement?: Element;
   body?: Element;
 };
-type GlobalValue = typeof globalThis | typeof ElementStub | DocumentStub | boolean;
+type GlobalValue = typeof globalThis | typeof ElementStub | DocumentStub | URL | boolean;
 type HookCapture = {
   state?: ReturnType<typeof useSessionProjectViewState>['state'];
   actions?: ReturnType<typeof useSessionProjectViewState>['actions'];
@@ -52,6 +52,7 @@ const installMinimalDom = () => {
   documentStub.body = container;
   setGlobal('document', documentStub);
   setGlobal('window', globalThis);
+  setGlobal('location', new URL('http://localhost'));
   setGlobal('Element', ElementStub);
   setGlobal('HTMLElement', ElementStub);
   setGlobal('HTMLIFrameElement', ElementStub);
@@ -75,14 +76,14 @@ describe('useSessionProjectViewState', () => {
     storage.removeItem('oc.sessions.activityCollapse');
   });
 
-  test('keeps stable state/actions and ignores selection-store updates', async () => {
+  const verifyCollapseActions = async (isVSCode: boolean) => {
     const dom = installMinimalDom();
     const root: Root = createRoot(dom.container);
     const capture: HookCapture = { renderCount: 0 };
     const projects = [{ id: 'project-a' }, { id: 'project-b' }];
     const Harness = () => {
       capture.renderCount += 1;
-      const viewState = useSessionProjectViewState({ isVSCode: true, projects });
+      const viewState = useSessionProjectViewState({ isVSCode, projects });
       capture.state = viewState.state;
       capture.actions = viewState.actions;
       return null;
@@ -109,7 +110,9 @@ describe('useSessionProjectViewState', () => {
       await act(async () => initialActions.setCollapsedActivities(new Set(['retired-zone'])));
       await act(async () => initialActions.collapseAll());
       expect(capture.state?.collapsedProjects).toEqual(new Set(['project-a', 'project-b']));
-      expect(capture.state?.collapsedActivities).toEqual(new Set(['retired-zone', 'chats', 'global', 'pinned', 'work', 'timeline']));
+      const collapsed = ['retired-zone', 'pages', 'chats', 'pinned', 'work', 'timeline'];
+      if (!isVSCode) collapsed.push('global');
+      expect(capture.state?.collapsedActivities).toEqual(new Set(collapsed));
       await act(async () => initialActions.expandAll());
       expect(capture.state?.collapsedProjects).toEqual(new Set());
       expect(capture.state?.collapsedActivities).toEqual(new Set(['retired-zone']));
@@ -126,7 +129,10 @@ describe('useSessionProjectViewState', () => {
       await act(async () => root.unmount());
       dom.restore();
     }
-  });
+  };
+
+  test('keeps stable state/actions and excludes Global from Collapse All in VS Code', () => verifyCollapseActions(true));
+  test('keeps stable state/actions and includes Global in Collapse All in the full app', () => verifyCollapseActions(false));
 
   test('preserves malformed group storage until explicit user mutation', async () => {
     const storage = getDeferredSafeStorage();

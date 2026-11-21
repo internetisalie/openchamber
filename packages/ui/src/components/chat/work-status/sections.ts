@@ -16,13 +16,14 @@ export const WORK_STATUS_SECTION_IDS = [
   'session',
   'repository',
   'usage',
+  'contextSources',
   'telemetry',
   'subagents',
   'ptys',
+  'tasks',
   'workflows',
   'mcp',
   'pinned',
-  'contextSources',
 ] as const;
 
 export type WorkStatusSectionId = (typeof WORK_STATUS_SECTION_IDS)[number];
@@ -34,6 +35,7 @@ export const WORK_STATUS_SECTION_LABEL_KEYS = {
   telemetry: 'chat.workStatus.section.telemetry',
   subagents: 'chat.workStatus.section.subagents',
   ptys: 'chat.workStatus.section.ptys',
+  tasks: 'chat.workStatus.section.tasks',
   workflows: 'chat.workStatus.section.workflows',
   mcp: 'chat.workStatus.section.mcp',
   pinned: 'chat.workStatus.section.pinned',
@@ -68,8 +70,39 @@ const readStoredSectionId = (value: unknown): WorkStatusPanelSectionId | null =>
   return parsed.success ? parsed.data : null;
 };
 
-/** Preserve chosen positions, discard obsolete ids, and append newly added built-in sections. */
-export const sanitizeWorkStatusSectionOrder = (value: readonly string[] | null | undefined): WorkStatusPanelSectionId[] => {
+// The default before Context sources moved up. Clients saved the default as
+// their order without the user choosing it. Sections added since then don't
+// count when recognizing that default.
+const DEFAULT_ORDER_WITH_CONTEXT_SOURCES_LAST: readonly WorkStatusPanelSectionId[] = [
+  'session', 'repository', 'usage', 'subagents', 'mcp', 'pinned', 'contextSources',
+];
+
+const isDefaultOrderWithContextSourcesLast = (order: readonly WorkStatusPanelSectionId[]): boolean => {
+  const ptys = order.indexOf('ptys');
+  if (ptys !== -1 && order[ptys - 1] !== 'subagents') return false;
+  const placed = order.filter((id) => id !== 'telemetry' && id !== 'workflows' && id !== 'ptys' && id !== 'tasks');
+  return placed.length === DEFAULT_ORDER_WITH_CONTEXT_SOURCES_LAST.length
+    && placed.every((id, index) => id === DEFAULT_ORDER_WITH_CONTEXT_SOURCES_LAST[index]);
+};
+
+/**
+ * A built-in section added after users had saved orders goes beside the one
+ * it follows by default, so it lands where the default puts it rather than
+ * at the bottom of every saved list. Sections added before this rule were
+ * appended and saved there, so they stay out of it.
+ */
+const PLACED_AFTER = new Map<WorkStatusSectionId, WorkStatusSectionId>([['ptys', 'subagents'], ['tasks', 'subagents']]);
+
+/**
+ * Preserve chosen positions, discard obsolete ids, and add newly added
+ * built-in sections: after their default neighbour (`PLACED_AFTER`), else at
+ * the end. `arranged` is false for an order the user never set by hand, which
+ * follows the default's move of Context sources.
+ */
+export const sanitizeWorkStatusSectionOrder = (
+  value: readonly string[] | null | undefined,
+  arranged = true,
+): WorkStatusPanelSectionId[] => {
   const ordered = new Set<WorkStatusPanelSectionId>();
   if (Array.isArray(value)) {
     for (const entry of value) {
@@ -77,8 +110,22 @@ export const sanitizeWorkStatusSectionOrder = (value: readonly string[] | null |
       if (id) ordered.add(id);
     }
   }
-  for (const id of WORK_STATUS_SECTION_IDS) ordered.add(id);
-  return [...ordered];
+  const order = [...ordered];
+  for (const id of WORK_STATUS_SECTION_IDS) {
+    if (ordered.has(id)) continue;
+    const after = PLACED_AFTER.get(id);
+    let at = after ? order.indexOf(after) : -1;
+    // Keep the default Subagents → Agent PTYs → Tasks sequence when the PTYs
+    // are still next to Subagents. A separately moved PTY section stays put.
+    if (id === 'tasks' && at >= 0 && order[at + 1] === 'ptys') at += 1;
+    if (at === -1) order.push(id);
+    else order.splice(at + 1, 0, id);
+    ordered.add(id);
+  }
+  if (arranged || !isDefaultOrderWithContextSourcesLast(order)) return order;
+  const moved: WorkStatusPanelSectionId[] = order.filter((id) => id !== 'contextSources');
+  moved.splice(moved.indexOf('usage') + 1, 0, 'contextSources');
+  return moved;
 };
 
 /**
@@ -101,6 +148,31 @@ export const resolveWorkStatusSectionOrder = (
     if (!placed.has(id)) order.push(id);
   }
   return order;
+};
+
+/**
+ * The saved order after the listed sections were rearranged to `shown`.
+ * Saved ids that are not listed (paused extensions, sections this runtime or
+ * the phone does not offer) keep their saved slots, and the listed ones fill
+ * the remaining slots in their new order. Listed ids the saved order did not
+ * know follow at the end.
+ */
+export const mergeWorkStatusSectionOrder = (
+  stored: readonly string[],
+  shown: readonly string[],
+): string[] => {
+  const listed = new Set<string>(shown);
+  const merged: string[] = [];
+  let next = 0;
+  for (const id of stored) {
+    if (!listed.has(id)) merged.push(id);
+    else if (next < shown.length) merged.push(shown[next++]);
+  }
+  const placed = new Set<string>(merged);
+  for (; next < shown.length; next += 1) {
+    if (!placed.has(shown[next])) merged.push(shown[next]);
+  }
+  return merged;
 };
 
 /**

@@ -1,5 +1,4 @@
 import React from 'react';
-import { ScrollShadow } from '@/components/ui/ScrollShadow';
 import type { SessionProjectListProps } from '@/components/session/sidebar/projects/SessionProjectScroller';
 import {
   applyShowControl,
@@ -23,6 +22,8 @@ import { MobileDraftRow, MobileRunRow, MobileWorktreeRow } from './MobileWorkRow
 import { MOBILE_TREE_GEOMETRY } from './mobileSidebarGeometry';
 import { useMobileSidebarActions, useMobileSidebarRowsStore } from './mobileSidebarState';
 import { MobileShowControl } from './mobileRowParts';
+import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
+import { SidebarConversationRow, SidebarSearchArchivedCaption, SidebarSearchShowMore, SidebarSearchMore } from '@/components/session/sidebar/SidebarConversationRow';
 
 // Rows that line up with gutterless two-line rows start this far in.
 const FLAT_TEXT_INSET_PX = 12;
@@ -106,7 +107,7 @@ export const MobileSessionList: React.FC<SessionProjectListProps> = ({ model, vi
       case 'activity-header':
         return <MobileZoneHeader row={row} onToggle={() => toggleActivityZone(row, { model, actions })} />;
       case 'caption':
-        return <MobileProjectsCaption row={row} onToggle={() => toggleProjectsCaption({ model })} />;
+        return <MobileProjectsCaption row={row} onToggle={() => toggleProjectsCaption(row, { model })} />;
       case 'project-header': {
         const project = row.section.project;
         return <MobileProjectHeader
@@ -131,6 +132,14 @@ export const MobileSessionList: React.FC<SessionProjectListProps> = ({ model, vi
         return <MobileFolderRow row={row} geometry={geometry} />;
       case 'session':
         return <MobileSessionRow row={row} geometry={geometry} toggleParent={model.groupProps.toggleParent} />;
+      case 'search-result':
+        return <SidebarConversationRow result={row.result} context={row.context} mobile search={model.search} onOpened={phone.close} />;
+      case 'search-archived-caption':
+        return <SidebarSearchArchivedCaption />;
+      case 'search-show-more':
+        return <SidebarSearchShowMore mobile section={row.section} hidden={row.hidden} onShow={model.search?.showMore} />;
+      case 'search-more':
+        return <SidebarSearchMore mobile onLoadMore={() => model.search?.loadMore(row.section)} />;
       case 'run':
         return <MobileRunRow row={row} geometry={geometry} toggleParent={model.groupProps.toggleParent} />;
       case 'draft':
@@ -139,13 +148,14 @@ export const MobileSessionList: React.FC<SessionProjectListProps> = ({ model, vi
         return <MobileShowControl
           more={row.more}
           fewer={row.fewer}
-          indent={row.flat ? FLAT_TEXT_INSET_PX : geometry.textLeft(row.depth ?? 0)}
+          hiddenNodes={row.hiddenNodes}
+          indent={row.flat ? FLAT_TEXT_INSET_PX : row.detailed ? geometry.detailedLeft(row.depth ?? 0) : geometry.textLeft(row.depth ?? 0)}
           onShow={(control) => applyShowControl(row, control, { model, actions })}
         />;
       case 'status':
         return <MobileStatusRow
           row={row}
-          indent={row.flat ? FLAT_TEXT_INSET_PX : geometry.textLeft(row.depth ?? 0)}
+          indent={row.flat ? FLAT_TEXT_INSET_PX : row.detailed ? geometry.detailedLeft(row.depth ?? 0) : geometry.textLeft(row.depth ?? 0)}
           onRetry={() => retryGroupStatus(row, childStores)}
           onGrantAccess={() => { void grantGroupAccess(row, childStores); }}
         />;
@@ -153,7 +163,7 @@ export const MobileSessionList: React.FC<SessionProjectListProps> = ({ model, vi
         if (row.emptyKind === 'sidebar') return model.emptyState;
         if (row.emptyKind === 'search') return model.searchEmptyState;
         return <div className="py-1 typography-micro text-muted-foreground" style={{ paddingInlineStart: geometry.textLeft(row.depth ?? 0) }}>
-          {t('sessions.sidebar.group.empty.noArchivedSessions')}
+          {row.emptyKind === 'section' ? t('sessions.sidebar.sections.empty') : t('sessions.sidebar.group.empty.noArchivedSessions')}
         </div>;
     }
   }, [actions, childStores, geometry, model, phone, t, view.homeDirectory]);
@@ -162,7 +172,7 @@ export const MobileSessionList: React.FC<SessionProjectListProps> = ({ model, vi
     // Inset from the screen's edges by the drawer's one gutter (12px, as the
     // header's buttons, the search field and the footer): rows are rounded
     // tiles, not bands across the screen.
-    <ScrollShadow ref={setScrollElement} className="min-h-0 flex-1 overflow-y-auto px-3 pb-4 [overflow-anchor:none]">
+    <ScrollableOverlay ref={setScrollElement} outerClassName="min-h-0 flex-1" className="px-3 pb-4 [overflow-anchor:none]" useScrollShadow disableHorizontal>
       <SessionSidebarRows
         model={model.rowModel}
         scrollElement={scrollElement}
@@ -172,6 +182,6 @@ export const MobileSessionList: React.FC<SessionProjectListProps> = ({ model, vi
         guideSlotStartPx={geometry.base}
         scrollRequest={scrollRequest}
       />
-    </ScrollShadow>
+    </ScrollableOverlay>
   );
 };

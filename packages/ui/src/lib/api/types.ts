@@ -19,10 +19,16 @@ import type {
   PullRequestStack,
   ProjectUpstream,
   ReadyChangeRequestInput,
+  DraftChangeRequestInput,
   CommentInput,
   DiscussionCloseReason,
   DiscussionCommentInput,
+  ChangeRequestReviewStateResult,
   ReviewChangeRequestInput,
+  ReviewCommentDeleteInput,
+  ReviewCommentInput,
+  ReviewCommentUpdateInput,
+  ReviewDiscardInput,
   SetDiscussionAnswerInput,
   SetDiscussionStateInput,
   SetStateInput,
@@ -40,6 +46,7 @@ import type {
   SourceControlMergeMutationResult,
   SourceControlMutationReceipt,
   SourceControlReadyMutationResult,
+  SourceControlDraftMutationResult,
   SourceControlReviewMutationResult,
   SourceControlStateMutationResult,
   SourceControlBindingRead,
@@ -206,6 +213,8 @@ interface GitStatusFile {
   path: string;
   index: string;
   working_dir: string;
+  /** Set on a rename: the path this file came from. */
+  previousPath?: string;
 }
 
 export interface GitMergeInProgress {
@@ -301,6 +310,8 @@ export interface GetGitDiffOptions {
   path: string;
   staged?: boolean;
   contextLines?: number;
+  /** A rename's source path. */
+  previousPath?: string;
 }
 
 export interface GetGitDiffsOptions {
@@ -329,6 +340,8 @@ export interface GetGitRangeDiffOptions {
   path?: string;
   contextLines?: number;
   includeWorkingTree?: boolean;
+  /** A rename's source path. */
+  previousPath?: string;
 }
 
 export interface GetGitRangeFilesOptions {
@@ -341,6 +354,8 @@ export interface GetGitRangeFilesOptions {
 export interface GitRangeFileEntry {
   path: string;
   status: string;
+  /** A rename's source path. */
+  previousPath?: string;
   /**
    * Working-tree listings only: changes exactly when this file's patch can
    * change (merge base moved, or the file was written). Absent elsewhere.
@@ -364,6 +379,8 @@ export interface GitFileDiffResponse {
 export interface GetGitFileDiffOptions {
   path: string;
   staged?: boolean;
+  /** A rename's source path. */
+  previousPath?: string;
 }
 
 export interface GitBranchDetails {
@@ -376,7 +393,7 @@ export interface GitBranchDetails {
   behind?: number;
 }
 
-export type GitBranchListOptions = { remote?: 'local' };
+export type GitBranchListOptions = { remote?: 'local' | 'live' };
 
 export interface GitBranch {
   all: string[];
@@ -695,9 +712,9 @@ export type GitNetworkOperationStep =
   | 'checked-out'
   | 'cleaned-up';
 
-export type GitNetworkSyncStepStatus = 'succeeded' | 'skipped' | 'conflicted' | 'failed' | 'cancelled';
+type GitNetworkSyncStepStatus = 'succeeded' | 'skipped' | 'conflicted' | 'failed' | 'cancelled';
 
-export interface GitNetworkSyncStepResult {
+interface GitNetworkSyncStepResult {
   step: 'fetch' | 'pull' | 'push';
   status: GitNetworkSyncStepStatus;
   error?: GitNetworkOperationError;
@@ -710,6 +727,7 @@ export type GitNetworkOperationErrorCode =
   | 'STALE_BINDING'
   | 'STALE_CONFIG'
   | 'REMOTE_CHANGED'
+  | 'REMOTE_URL_USERINFO'
   | 'AUTHENTICATION_REQUIRED'
   | 'DESTINATION_SELECTION_REQUIRED'
   | 'CONTRIBUTOR_MANAGED_TRANSPORT_REQUIRED'
@@ -722,6 +740,8 @@ export type GitNetworkOperationErrorCode =
   | 'RUNTIME_UNSUPPORTED'
   | 'GIT_LFS_CLIENT_MISSING'
   | 'CHECKOUT_TOO_LARGE'
+  | 'PATH_LENGTH_LIMIT'
+  | 'BRANCH_NAME_CONFLICT'
   | 'UNKNOWN';
 
 export interface GitNetworkOperationError<Code extends GitNetworkOperationErrorCode = GitNetworkOperationErrorCode> {
@@ -943,6 +963,8 @@ export interface GitWorktreeInfo {
   title?: string;
   /** When the user pinned the task to the top of the sidebar; absent while unpinned. */
   pinnedAt?: number;
+  /** The user's pin list the pin is filed in; absent for Pinned. */
+  pinList?: string;
   provenance?: GitContributorWorktreeProvenance;
 }
 
@@ -1016,6 +1038,12 @@ export interface CreateGitWorktreePayload {
   startRef?: string;
   /** Additional startup script to run after project startup script. */
   startCommand?: string;
+  /**
+   * The project's own command that creates the worktree in place of
+   * `git worktree add`, given `$WORKTREE_PATH` and `$WORKTREE_BRANCH`. The
+   * request then waits for it, even with `returnAfterDirectoryCreated`.
+   */
+  createCommand?: string;
   /** Configure upstream tracking for the created/attached local branch. */
   setUpstream?: boolean;
   upstreamRemote?: string;
@@ -1072,6 +1100,15 @@ export interface GitCheckoutTrustInspection {
 export interface RemoveGitWorktreePayload {
   directory: string;
   deleteLocalBranch?: boolean;
+  /** Runs inside the worktree before anything is removed; a failure keeps the worktree. */
+  teardownCommand?: string;
+}
+
+/** Runs a worktree's teardown commands without removing it. */
+export interface TeardownGitWorktreePayload {
+  /** The worktree. */
+  directory: string;
+  teardownCommand: string;
 }
 
 /** Private ref (`refs/openchamber/runs/<group>/<session>`) holding a worktree snapshot. */
@@ -1172,10 +1209,12 @@ interface GitWorktreeAPI {
   preview?(directory: string, payload: CreateGitWorktreePayload): Promise<GitWorktreeCreateResult>;
   create?(directory: string, payload: CreateGitWorktreePayload): Promise<GitWorktreeCreateResult>;
   remove?(directory: string, payload: RemoveGitWorktreePayload): Promise<{ success: boolean }>;
+  /** `directory` is the project; runs the worktree's teardown and keeps it. */
+  teardown?(directory: string, payload: TeardownGitWorktreePayload): Promise<{ success: boolean }>;
   /** Sets the task title of the worktree at `directory` as the user's; an empty title clears it. */
-  setTitle?(directory: string, title: string): Promise<GitWorktreeTitleResult>;
+  setTitle?(directory: string, title: string, by?: 'user' | 'agent'): Promise<GitWorktreeTitleResult>;
   /** Pins or unpins the task of the worktree at `directory`. */
-  setPinned?(directory: string, pinned: boolean): Promise<GitWorktreePinResult>;
+  setPinned?(directory: string, pinned: boolean, list?: string | null): Promise<GitWorktreePinResult>;
   /** `directory` is the worktree to snapshot. */
   snapshot?(directory: string, payload: GitWorktreeSnapshotPayload): Promise<GitWorktreeSnapshotResult>;
   /** `directory` is the project; the worktree is removed, its branch kept. */
@@ -1195,14 +1234,14 @@ export interface GitAPI {
    * without a batched status read (VS Code) omit it and read one by one.
    */
   prefetchProjectStatuses?(directories: string[]): Promise<void>;
-  getGitDiff(directory: string, options: GetGitDiffOptions): Promise<GitPathDiffResponse>;
+  getGitDiff?(directory: string, options: GetGitDiffOptions): Promise<GitPathDiffResponse>;
   /**
    * `getGitDiff` for many paths of one side in one request. Rejects when the
    * request itself fails; per-path failures are entries. Absent in runtimes
    * that read per path (VS Code).
    */
   getGitDiffs?(directory: string, options: GetGitDiffsOptions): Promise<GitPathDiffBatchEntry[]>;
-  getGitFileDiff(directory: string, options: GetGitFileDiffOptions): Promise<GitFileDiffResponse>;
+  getGitFileDiff?(directory: string, options: GetGitFileDiffOptions): Promise<GitFileDiffResponse>;
   getGitRangeDiff?(directory: string, options: GetGitRangeDiffOptions): Promise<GitDiffResponse>;
   getGitRangeFiles?(directory: string, options: GetGitRangeFilesOptions): Promise<GitRangeFileEntry[]>;
   getBranchBase?(directory: string, branch: string): Promise<GitBranchBaseResponse>;
@@ -1216,16 +1255,18 @@ export interface GitAPI {
   revertGitHunk?(directory: string, filePath: string, patch: string): Promise<void>;
   isLinkedWorktree(directory: string): Promise<boolean>;
   /**
-   * `remote: 'local'` lists what local refs know, without asking each remote
-   * over the network; for callers that need only the checked-out branch and
-   * its upstream. Runtimes that never ask remotes ignore it.
+   * `remote: 'local'` lists what local refs know. `remote: 'live'` also asks
+   * each remote over the network, which can start an SSH sign-in, so only an
+   * explicit request from the person may pass it. Callers name the mode: a
+   * server older than this contract treats a missing one as live. Runtimes
+   * that never ask remotes ignore it.
    */
   getGitBranches(directory: string, options?: GitBranchListOptions): Promise<GitBranch>;
   getGitUnpushedBranchCounts(directory: string, branches: string[]): Promise<GitUnpushedBranchCounts>;
   deleteGitBranch(directory: string, payload: GitDeleteBranchPayload): Promise<{ success: boolean }>;
   removeRemote(directory: string, payload: GitRemoveRemotePayload): Promise<{ success: boolean }>;
-  generateCommitMessage(directory: string, files: string[], options?: { zenModel?: string; providerId?: string; modelId?: string }): Promise<{ message: GeneratedCommitMessage }>;
-  generatePullRequestDescription(
+  generateCommitMessage?(directory: string, files: string[], options?: { zenModel?: string; providerId?: string; modelId?: string }): Promise<{ message: GeneratedCommitMessage }>;
+  generatePullRequestDescription?(
     directory: string,
     payload: { base: string; head: string; context?: string; zenModel?: string; providerId?: string; modelId?: string }
   ): Promise<GeneratedPullRequestDescription>;
@@ -1235,10 +1276,10 @@ export interface GitAPI {
   previewGitWorktree?(directory: string, payload: CreateGitWorktreePayload): Promise<GitWorktreeCreateResult>;
   createGitWorktree?(directory: string, payload: CreateGitWorktreePayload): Promise<GitWorktreeCreateResult>;
   deleteGitWorktree?(directory: string, payload: RemoveGitWorktreePayload): Promise<{ success: boolean }>;
-  createGitCommit(directory: string, message: string, options?: CreateGitCommitOptions): Promise<GitCommitResult>;
-  gitPush(directory: string, options?: { remote?: string; branch?: string; options?: string[] | Record<string, unknown> }): Promise<GitPushResult>;
-  gitPull(directory: string, options?: GitPullOptions): Promise<GitPullResult>;
-  gitFetch(directory: string, options?: { remote?: string; branch?: string }): Promise<{ success: boolean }>;
+  createGitCommit?(directory: string, message: string, options?: CreateGitCommitOptions): Promise<GitCommitResult>;
+  gitPush?(directory: string, options?: { remote?: string; branch?: string; options?: string[] | Record<string, unknown> }): Promise<GitPushResult>;
+  gitPull?(directory: string, options?: GitPullOptions): Promise<GitPullResult>;
+  gitFetch?(directory: string, options?: { remote?: string; branch?: string }): Promise<{ success: boolean }>;
   planNetworkOperation(request: GitNetworkOperationRequest): Promise<GitNetworkOperationPlan>;
   issueContributorDestination(request: GitContributorDestinationRequest): Promise<GitContributorDestinationSelection>;
   listContributorDestinations(directory: string): Promise<GitContributorDestinationCandidates>;
@@ -1261,22 +1302,22 @@ export interface GitAPI {
   applyGitStash(directory: string, options: { ref: string }): Promise<{ success: boolean; ref: string }>;
   popGitStash(directory: string, options: { ref: string }): Promise<{ success: boolean; ref: string }>;
   dropGitStash(directory: string, options: { ref: string }): Promise<{ success: boolean; ref: string }>;
-  checkoutBranch(directory: string, branch: string): Promise<{ success: boolean; branch: string }>;
+  checkoutBranch?(directory: string, branch: string): Promise<{ success: boolean; branch: string }>;
   createBranch(directory: string, name: string, startPoint?: string): Promise<{ success: boolean; branch: string }>;
   renameBranch(directory: string, oldName: string, newName: string): Promise<{ success: boolean; branch: string }>;
-  getGitLog(directory: string, options?: GitLogOptions): Promise<GitLogResponse>;
+  getGitLog?(directory: string, options?: GitLogOptions): Promise<GitLogResponse>;
   /**
    * Amends the checked-out commit to carry a Change-Id trailer, computed the
    * way a review host's commit-msg hook computes it. Refuses when HEAD is no
    * longer `expectedHead` or already has one. Absent where the runtime cannot.
    */
   addChangeIdToHead?(directory: string, expectedHead: string): Promise<{ sha: string; changeId: string }>;
-  getCommitFiles(directory: string, hash: string): Promise<GitCommitFilesResponse>;
+  getCommitFiles?(directory: string, hash: string): Promise<GitCommitFilesResponse>;
   getGitCommitDiff?(directory: string, options: GetGitCommitDiffOptions): Promise<GitDiffResponse>;
   getCommitFileDiff?(directory: string, hash: string, filePath: string, isBinary: boolean): Promise<CommitFileDiffResponse>;
-  getCurrentGitIdentity(directory: string): Promise<GitIdentitySummary | null>;
+  getCurrentGitIdentity?(directory: string): Promise<GitIdentitySummary | null>;
   hasLocalIdentity?(directory: string): Promise<boolean>;
-  setGitIdentity(directory: string, profileId: string): Promise<{ success: boolean; profile: GitIdentityProfile | null }>;
+  setGitIdentity?(directory: string, profileId: string): Promise<{ success: boolean; profile: GitIdentityProfile | null }>;
   getGitIdentities(): Promise<GitIdentityProfile[]>;
   createGitIdentity(profile: GitIdentityProfile): Promise<GitIdentityProfile>;
   updateGitIdentity(id: string, updates: GitIdentityProfile): Promise<GitIdentityProfile>;
@@ -1284,19 +1325,19 @@ export interface GitAPI {
   getGlobalGitIdentity?(): Promise<GitIdentitySummary | null>;
   /** Returns a redacted display URL, never a transport credential source. */
   getRemotes(directory: string): Promise<GitRemote[]>;
-  rebase(directory: string, options: { onto: string }): Promise<GitRebaseResult>;
-  abortRebase(directory: string): Promise<{ success: boolean }>;
-  continueRebase(directory: string): Promise<{ success: boolean; conflict: boolean; conflictFiles?: string[] }>;
-  merge(directory: string, options: { branch: string }): Promise<GitMergeResult>;
-  abortMerge(directory: string): Promise<{ success: boolean }>;
-  continueMerge(directory: string): Promise<{ success: boolean; conflict: boolean; conflictFiles?: string[] }>;
-  checkoutCommit(directory: string, hash: string): Promise<CheckoutCommitResponse>;
-  cherryPick(directory: string, hash: string): Promise<CherryPickResponse>;
-  revertCommit(directory: string, hash: string): Promise<RevertCommitResponse>;
-  resetToCommit(directory: string, hash: string, mode: 'soft' | 'mixed' | 'hard', force?: boolean): Promise<ResetToCommitResponse>;
+  rebase?(directory: string, options: { onto: string }): Promise<GitRebaseResult>;
+  abortRebase?(directory: string): Promise<{ success: boolean }>;
+  continueRebase?(directory: string): Promise<{ success: boolean; conflict: boolean; conflictFiles?: string[] }>;
+  merge?(directory: string, options: { branch: string }): Promise<GitMergeResult>;
+  abortMerge?(directory: string): Promise<{ success: boolean }>;
+  continueMerge?(directory: string): Promise<{ success: boolean; conflict: boolean; conflictFiles?: string[] }>;
+  checkoutCommit?(directory: string, hash: string): Promise<CheckoutCommitResponse>;
+  cherryPick?(directory: string, hash: string): Promise<CherryPickResponse>;
+  revertCommit?(directory: string, hash: string): Promise<RevertCommitResponse>;
+  resetToCommit?(directory: string, hash: string, mode: 'soft' | 'mixed' | 'hard', force?: boolean): Promise<ResetToCommitResponse>;
   stash(directory: string, options?: { message?: string; includeUntracked?: boolean }): Promise<{ success: boolean }>;
   stashPop(directory: string): Promise<{ success: boolean }>;
-  getConflictDetails(directory: string): Promise<MergeConflictDetails>;
+  getConflictDetails?(directory: string): Promise<MergeConflictDetails>;
   /** Phase 1: validate that a cwd is inside a worktreeRoot */
   validateWorktreeDirectory?(directory: string, worktreeRoot: string): Promise<{
     valid: boolean;
@@ -1373,6 +1414,7 @@ export interface FileSearchQuery {
   maxResults?: number;
   includeHidden?: boolean;
   respectGitignore?: boolean;
+  signal?: AbortSignal;
 }
 
 export interface FileSearchResult {
@@ -1415,15 +1457,6 @@ export type FileContentSearchOutcome =
   /** The server has no ripgrep to search with. */
   | { status: 'unavailable' };
 
-export interface CommandExecResult {
-  command: string;
-  success: boolean;
-  exitCode?: number;
-  stdout?: string;
-  stderr?: string;
-  error?: string;
-}
-
 interface ListDirectoryOptions {
   respectGitignore?: boolean;
 }
@@ -1454,7 +1487,6 @@ export interface FilesAPI {
   delete?(path: string): Promise<{ success: boolean }>;
   rename?(oldPath: string, newPath: string): Promise<{ success: boolean; path: string }>;
   revealPath?(path: string): Promise<{ success: boolean }>;
-  execCommands?(commands: string[], cwd: string): Promise<{ success: boolean; results: CommandExecResult[] }>;
   downloadFile?(path: string, options?: FileReadOptions): Promise<void>;
 }
 
@@ -1616,6 +1648,9 @@ type GitHubRepoRef = {
 };
 
 export type GitHubPullRequest = {
+  isInMergeQueue?: boolean;
+  mergeQueueEntry?: { state: string; position: number } | null;
+  autoMergeRequest?: { enabledAt: string; mergeMethod: string } | null;
   number: number;
   title: string;
   body?: string;
@@ -1644,6 +1679,9 @@ export type ProviderReadsRefreshScope = { item: RepositoryItemRef } | { lists: t
 
 /** Live fields of a known PR, refreshed in batches for list surfaces. */
 export type ChangeRequestLiveSummary = RepositoryItemRef & {
+  isInMergeQueue?: boolean;
+  mergeQueueEntry?: { state: string; position: number } | null;
+  autoMergeRequest?: { enabledAt: string; mergeMethod: string } | null;
   state: GitHubPullRequest['state'];
   draft: boolean;
   title: string;
@@ -1709,6 +1747,8 @@ type RepositoryReferenceCommon = {
   labels: Label[];
   commentCount: number;
   sourceRepo: RepositorySelector & { source: string };
+  /** Read through a link, outside the project's repository network: it can be read and attached, never acted on. */
+  linked?: true;
   /** The provider's own project id (GitLab's is numeric); absent on GitHub, where `owner/repo` is the id. */
   projectId?: string;
   /** The provider the item was read from; the adapter stamps it from the read context. */
@@ -1902,6 +1942,22 @@ export class SourceControlInstanceOtherProviderError extends Error {
   }
 }
 
+/**
+ * Saving an instance's aliases refused one: `invalid` when it is not an HTTPS
+ * address, `taken` when it already is (or aliases) another instance's.
+ */
+export class SourceControlInstanceAliasError extends Error {
+  readonly reason: 'invalid' | 'taken';
+  readonly alias: string;
+
+  constructor(message: string, reason: 'invalid' | 'taken', alias: string) {
+    super(message);
+    this.name = 'SourceControlInstanceAliasError';
+    this.reason = reason;
+    this.alias = alias;
+  }
+}
+
 export interface SourceControlAPI {
   /**
    * The providers the connected server serves, ordered. An authoritative
@@ -1923,6 +1979,14 @@ export interface SourceControlAPI {
    * when the instance belongs on another provider's card.
    */
   authSetToken(identity: SourceControlIdentity, token: string, options?: { username?: string }): Promise<SourceControlAuthStatus>;
+  /** Stores the instance's separate SSH address, or removes it with null. Providers without one answer unsupported. */
+  authSetSshUrl(identity: SourceControlIdentity, sshUrl: string | null): Promise<{ sshUrl: string | null }>;
+  /**
+   * Replaces the other web addresses of an instance the user added; an empty
+   * list removes them. Answers them as stored, in the instance's spelling.
+   * Throws `SourceControlInstanceAliasError` for an address it refuses.
+   */
+  setInstanceAliases(identity: SourceControlIdentity, aliases: string[]): Promise<{ aliases: string[] }>;
   authDisconnect(identity: SourceControlIdentity, accountId: string): Promise<{ removed: boolean }>;
   authActivate(identity: SourceControlIdentity, accountId: string): Promise<SourceControlAuthStatus>;
   authSetCliDisabled(identity: SourceControlIdentity, disabled: boolean): Promise<{ disabled: boolean }>;
@@ -1936,12 +2000,19 @@ export interface SourceControlAPI {
   changeRequestUpdate(payload: UpdateChangeRequestInput): Promise<SourceControlMutationReceipt<SourceControlEmptyMutationResult>>;
   changeRequestMerge(payload: MergeChangeRequestInput): Promise<SourceControlMutationReceipt<SourceControlMergeMutationResult>>;
   changeRequestReady(payload: ReadyChangeRequestInput): Promise<SourceControlMutationReceipt<SourceControlReadyMutationResult>>;
+  changeRequestDraft(payload: DraftChangeRequestInput): Promise<SourceControlMutationReceipt<SourceControlDraftMutationResult>>;
   changeRequestComment(payload: CommentInput): Promise<SourceControlMutationReceipt<SourceControlEmptyMutationResult>>;
   /** Opens a thread on a change request: a comment that waits to be resolved (GitLab). */
   changeRequestStartThread(payload: CommentInput): Promise<SourceControlMutationReceipt<SourceControlEmptyMutationResult>>;
   changeRequestReplyToThread(payload: ThreadReplyInput): Promise<SourceControlMutationReceipt<SourceControlEmptyMutationResult>>;
   changeRequestResolveThread(payload: ThreadResolveInput): Promise<SourceControlMutationReceipt<SourceControlEmptyMutationResult>>;
   changeRequestReview(payload: ReviewChangeRequestInput): Promise<SourceControlMutationReceipt<SourceControlReviewMutationResult>>;
+  /** The viewer's review draft and the open threads on the diff (`features.reviewDrafts`). */
+  changeRequestReviewState(context: SourceControlReadContext, ref: { owner: string; repo: string; number: number }): Promise<ChangeRequestReviewStateResult>;
+  changeRequestReviewComment(payload: ReviewCommentInput): Promise<SourceControlMutationReceipt<SourceControlEmptyMutationResult>>;
+  changeRequestReviewCommentUpdate(payload: ReviewCommentUpdateInput): Promise<SourceControlMutationReceipt<SourceControlEmptyMutationResult>>;
+  changeRequestReviewCommentDelete(payload: ReviewCommentDeleteInput): Promise<SourceControlMutationReceipt<SourceControlEmptyMutationResult>>;
+  changeRequestReviewDiscard(payload: ReviewDiscardInput): Promise<SourceControlMutationReceipt<SourceControlEmptyMutationResult>>;
   issueComment(payload: CommentInput): Promise<SourceControlMutationReceipt<SourceControlEmptyMutationResult>>;
   changeRequestSetState(payload: SetStateInput): Promise<SourceControlMutationReceipt<SourceControlStateMutationResult>>;
   issueSetState(payload: SetStateInput): Promise<SourceControlMutationReceipt<SourceControlStateMutationResult>>;

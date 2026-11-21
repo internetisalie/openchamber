@@ -12,6 +12,7 @@ import { consumeTerminalThemeQueries, terminalThemeModeReport } from './theme-re
 import { buildTerminalShellLaunch, createTerminalShellResolver, normalizeTerminalShell } from './shells.js';
 import { stripAppImageArgv0Leak, stripAppImageLauncherEnv, resolvePosixPtyLaunch } from '../inherited-env.js';
 import { shutdownTerminalProcesses } from './shutdown.js';
+import { bunVersionRunsBunPty } from './bun-pty-support.js';
 import { isOpaqueOriginRequest, isPasswordlessSocketOriginAllowed } from '../security/request-security.js';
 
 const MAX_SESSIONS = 20;
@@ -181,14 +182,25 @@ const appendHistory = (history, text) => {
   if (history.head > 128) { history.chunks = history.chunks.slice(history.head); history.head = 0; }
 };
 
+export async function loadTerminalPtyProvider(bunVersion = globalThis.Bun?.version, importPty = (name) => import(name)) {
+  if (bunVersionRunsBunPty(bunVersion)) {
+    try { const pty = await importPty('bun-pty'); return { spawn: pty.spawn, backend: 'bun-pty' }; } catch { /* fall through */ }
+  }
+  const pty = await importPty('node-pty');
+  return { spawn: pty.spawn, backend: 'node-pty' };
+}
+
 export function createTerminalRuntime({
   app, server, fs, path, uiAuthController, buildAugmentedPath, searchPathFor, isExecutable,
   isRequestOriginAllowed, rejectWebSocketUpgrade, TERMINAL_INPUT_WS_HEARTBEAT_INTERVAL_MS,
   loadPtyProvider, terminalTerminationGraceMs = TERMINATION_GRACE_MS, shutdownProcesses = shutdownTerminalProcesses,
   environmentRuntime = null,
+  broadcastUiEvent = () => {},
   logger = console,
 }) {
   const sessions = new Map();
+  // Invalidation only: clients read the authoritative list without command text.
+  const announceSessionsChanged = () => broadcastUiEvent({ type: 'openchamber:terminal-sessions-changed', properties: {} });
   const pendingSessionCreates = new Map();
   const pendingSessionRestarts = new Map();
   const connections = new Set();
@@ -201,13 +213,7 @@ export function createTerminalRuntime({
 
   const getPtyProvider = async () => {
     if (!ptyProviderPromise) {
-      ptyProviderPromise = loadPtyProvider ? loadPtyProvider() : (async () => {
-        if (typeof globalThis.Bun !== 'undefined') {
-          try { const pty = await import('bun-pty'); return { spawn: pty.spawn, backend: 'bun-pty' }; } catch { /* fall through */ }
-        }
-        const pty = await import('node-pty');
-        return { spawn: pty.spawn, backend: 'node-pty' };
-      })();
+      ptyProviderPromise = (loadPtyProvider ?? loadTerminalPtyProvider)();
     }
     return ptyProviderPromise;
   };
@@ -279,10 +285,10 @@ export function createTerminalRuntime({
     return termination;
   };
 
-  const send = (socket, message) => {
+  const send = (socket, message, frameOptions) => {
     if (socket?.readyState !== 1) return false;
     try {
-      const frame = createTerminalWsControlFrame(message);
+      const frame = createTerminalWsControlFrame(message, frameOptions);
       if (socket.bufferedAmount + frame.length > MAX_SOCKET_BUFFER_BYTES) {
         socket.terminate();
         return false;
@@ -384,6 +390,7 @@ export function createTerminalRuntime({
           session.signal = Number.isInteger(event.signal) ? event.signal : null;
           session.process = null;
           publish(session, { t: 'exit', exitCode: session.exitCode, signal: session.signal });
+          if (sessions.get(session.id) === session) announceSessionsChanged();
         }
       }
     } finally { session.draining = false; }
@@ -503,6 +510,7 @@ export function createTerminalRuntime({
         closeAttachments(previous.id, 'SUPERSEDED', 'Terminal replaced by a new action run');
       }
       sessions.set(id, session);
+      announceSessionsChanged();
       return session;
     })();
     pendingEntry.promise = creation;
@@ -532,7 +540,9 @@ export function createTerminalRuntime({
         connection.attachments.set(id, attachment);
         flushOutput(session);
         const initial = snapshot(session);
-        send(socket, initial);
+        // `z: 1` is a client that can gunzip: history compresses five to ten
+        // times, and neither this socket nor the relay tunnel compresses frames.
+        send(socket, initial, { gzip: message.z === 1 });
         for (const event of attachment.pending) if (event.q > initial.q) send(socket, event);
         attachment.pending.length = 0; attachment.initializing = false;
         return;
@@ -699,6 +709,7 @@ export function createTerminalRuntime({
       session.history = newHistory(); session.pendingHistoryControlSequence = ''; session.pendingThemeControlSequence = ''; session.themeModeEnabled = false; session.status = 'running'; session.exitCode = null; session.signal = null; session.eventQueue.length = 0;
       session.themeMode = themeMode === 'light' ? 'light' : 'dark'; session.terminalBackground = terminalBackground; session.terminalForeground = terminalForeground;
       wire(session, spawned.process); void terminateProcess(oldProcess); publish(session, { t: 'restarted', history: '' });
+      announceSessionsChanged();
     });
     pendingSessionRestarts.set(session.id, restart);
     try {
@@ -720,6 +731,7 @@ export function createTerminalRuntime({
       return res.json({ success: true });
     }
     sessions.delete(session.id);
+    announceSessionsChanged();
     flushOutput(session);
     session.retired = true;
     closeAttachments(session.id, 'CLOSED', 'Terminal closed');
@@ -734,6 +746,7 @@ export function createTerminalRuntime({
       sessions.delete(id); flushOutput(session); session.retired = true; closeAttachments(id, 'KILLED', 'Terminal was killed'); void terminateProcess(session.process, true); killedSessionIds.push(id); killedCount += 1;
     }
     res.json({ success: true, killedCount, killedSessionIds });
+    if (killedCount > 0) announceSessionsChanged();
   });
 
   const idleSweep = setInterval(() => {
@@ -742,6 +755,7 @@ export function createTerminalRuntime({
       const attached = [...connections].some((connection) => connection.attachments.has(id));
       if (!attached && now - session.lastActivity > IDLE_TIMEOUT_MS) {
         sessions.delete(id); session.retired = true; discardOutput(session); closeAttachments(id, 'IDLE_TIMEOUT', 'Terminal expired after being idle'); void terminateProcess(session.process, true);
+        announceSessionsChanged();
       }
     }
   }, 5 * 60 * 1000);
@@ -758,7 +772,9 @@ export function createTerminalRuntime({
     const terminals = [...sessions.values()]
       .filter(session => session.status === 'running' && session.process)
       .map(session => ({ process: session.process, shellExecutable: session.shellExecutable }));
+    const hadSessions = sessions.size > 0;
     sessions.clear();
+    if (hadSessions) announceSessionsChanged();
     await shutdownProcesses(terminals);
     await Promise.allSettled([...pendingTerminations]);
     if (!wsServer) return;

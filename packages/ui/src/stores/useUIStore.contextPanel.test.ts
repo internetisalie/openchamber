@@ -8,7 +8,7 @@ import {
 } from '../lib/browser/devServerWait';
 import { useFilesViewTabsStore } from './useFilesViewTabsStore';
 import { useTerminalStore } from './useTerminalStore';
-import { useUIStore } from './useUIStore';
+import { DEFAULT_CONTEXT_EDITOR_TREE_WIDTH, useUIStore } from './useUIStore';
 
 const getContextPanelTabs = (directory: string) => useUIStore.getState().contextPanelByDirectory[directory]?.tabs ?? [];
 
@@ -1165,6 +1165,15 @@ describe('useUIStore zone sizes', () => {
     expect(useUIStore.getState().contextEditorTreeWidth).toBe(260);
     expect(sizes).toEqual({});
   });
+
+  test('the old default tree width moves to the new one; a width the user set stays', async () => {
+    await rehydrate({}, { contextEditorTreeWidth: 240 }, 28);
+    expect(useUIStore.getState().contextEditorTreeWidth).toBe(DEFAULT_CONTEXT_EDITOR_TREE_WIDTH);
+    await rehydrate({}, { contextEditorTreeWidth: 260 }, 28);
+    expect(useUIStore.getState().contextEditorTreeWidth).toBe(260);
+    await rehydrate({}, { contextEditorTreeWidth: 240 }, 29);
+    expect(useUIStore.getState().contextEditorTreeWidth).toBe(240);
+  });
 });
 
 describe('useUIStore contextRailOrder', () => {
@@ -1183,7 +1192,7 @@ describe('useUIStore contextRailOrder', () => {
       'browser', 'editor', 'terminal', 'agent-pty',
       'diff', 'git', 'pr', 'walkthrough',
       'context',
-      'notes', 'workflows', 'chat',
+      'notes', 'workflows', 'chat', 'pages',
     ]);
     expect(new Set(ids)).toEqual(new Set(CONTEXT_SURFACES.map((surface) => surface.id)));
     expect(ids).toHaveLength(CONTEXT_SURFACES.length);
@@ -1191,8 +1200,9 @@ describe('useUIStore contextRailOrder', () => {
       'browser', 'agent-pty', 'terminal', 'editor',
       'diff', 'git', 'pr', 'walkthrough',
       'context',
-      'notes', 'workflows', 'chat',
+      'notes', 'workflows', 'chat', 'pages',
     ]);
+    expect(sortContextSurfaces(['pages']).slice(0, 4).map((surface) => surface.id)).toEqual(['pages', 'notes', 'workflows', 'chat']);
   });
 });
 

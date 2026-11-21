@@ -10,6 +10,7 @@ import { toast } from '@/components/ui';
 import { Button } from '@/components/ui/button';
 import { useConfirmDialog } from '@/components/ui/confirm-dialog';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { getCurrentIntlLocale, useI18n, type I18nKey } from '@/lib/i18n';
 import type { Session } from '@/lib/opencode/model';
@@ -28,6 +29,7 @@ import { getCurrentSessionAssist } from '@/lib/sessionAssistMetadata';
 import { isSessionInWork } from '@/lib/sessionWorkMetadata';
 import { cn } from '@/lib/utils';
 import { getWorktreeDisplayName } from '@/lib/worktrees/worktreeManager';
+import { deleteWithoutTeardownToast } from '@/lib/worktrees/worktreeRemovalFlow';
 import { resolveGlobalSessionDirectory } from '@/stores/useGlobalSessionsStore';
 import { useUIStore } from '@/stores/useUIStore';
 import { useGlobalBlockingRequestsStore } from '@/sync/global-blocking-requests';
@@ -78,6 +80,9 @@ const ACTIVITY_KEY = {
   running: 'overview.activity.running',
   subagent: 'overview.activity.subagent',
   shell: 'overview.activity.shell',
+  image: 'overview.activity.image',
+  pullRequest: 'sessions.sidebar.session.status.waitingOnPullRequest',
+  extensionWait: 'sessions.sidebar.session.status.waitingOnExtension',
 } satisfies Record<OverviewActivity, I18nKey>;
 
 const SIGNAL_KEY = {
@@ -238,7 +243,7 @@ const BulkConfirmDialog: React.FC<{
           <DialogTitle>{request?.title}</DialogTitle>
           <DialogDescription>{request?.description}</DialogDescription>
         </DialogHeader>
-        <ul className="max-h-64 overflow-y-auto">{request?.items.map(itemLine)}</ul>
+        <ScrollableOverlay as="ul" outerClassName="max-h-64" disableHorizontal>{request?.items.map(itemLine)}</ScrollableOverlay>
         {request && request.leftOut.length > 0 ? (
           <div className="flex flex-col gap-1">
             <button
@@ -250,7 +255,7 @@ const BulkConfirmDialog: React.FC<{
               <Icon name="arrow-right-s" className={cn('size-3.5 transition-transform', showLeftOut && 'rotate-90 rtl:-rotate-90')} />
               {t('overview.bulk.leftOut', { count: request.leftOut.length })}
             </button>
-            {showLeftOut ? <ul className="max-h-40 overflow-y-auto">{request.leftOut.map(itemLine)}</ul> : null}
+            {showLeftOut ? <ScrollableOverlay as="ul" outerClassName="max-h-40" disableHorizontal>{request.leftOut.map(itemLine)}</ScrollableOverlay> : null}
           </div>
         ) : null}
         <DialogFooter>
@@ -383,20 +388,25 @@ export function OverviewPage({ layout, onLeave }: { layout: Layout; onLeave: () 
     for (const session of failed) toast.error(t('overview.toast.doneFailed', { title: titleOf(session) }));
   });
 
-  const removeOne = async (target: OverviewWorktreeTarget, agreed: OverviewWorktreeLosses) => {
+  const removeOne = async (target: OverviewWorktreeTarget, agreed: OverviewWorktreeLosses, skipTeardown = false) => {
     const name = worktreeName(target);
-    const outcome = await removeOverviewWorktree({ target, agreed });
+    const outcome = await removeOverviewWorktree({ target, agreed, skipTeardown });
     if (outcome.kind === 'removed') {
       toast.success(t('overview.toast.removed', { name }));
     } else if (outcome.kind === 'failed') {
-      toast.error(t('overview.toast.removeFailed', { name }), { description: outcome.error.message });
+      toast.error(t('overview.toast.removeFailed', { name }), {
+        description: outcome.error.message,
+        ...deleteWithoutTeardownToast(outcome.error, t('sessions.sidebar.sessionDialogs.worktree.deleteWithoutTeardown'), () => {
+          void removeWorktree(target, agreed, true);
+        }),
+      });
     } else {
       toast.info(t(LEFT_AS_IS_KEY[outcome.kind], { name }));
     }
   };
 
-  const removeWorktree = (target: OverviewWorktreeTarget, agreed: OverviewWorktreeLosses) => run([target.worktree.path], async () => {
-    await removeOne(target, agreed);
+  const removeWorktree = (target: OverviewWorktreeTarget, agreed: OverviewWorktreeLosses, skipTeardown = false) => run([target.worktree.path], async () => {
+    await removeOne(target, agreed, skipTeardown);
     data.refreshGit();
   });
 
@@ -702,7 +712,7 @@ export function OverviewPage({ layout, onLeave }: { layout: Layout; onLeave: () 
   ));
 
   return (
-    <div className="h-full overflow-y-auto" style={mobile ? { paddingBottom: 'calc(1rem + var(--oc-safe-area-bottom, 0px))' } : undefined}>
+    <ScrollableOverlay outerClassName="h-full" style={mobile ? { paddingBottom: 'calc(1rem + var(--oc-safe-area-bottom, 0px))' } : undefined} disableHorizontal>
       <div className={cn('mx-auto flex w-full flex-col', mobile ? 'gap-5 px-2 pt-4' : 'max-w-[52rem] gap-6 px-8 py-8')}>
         <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1 px-2">
           {counts.length === 0 ? (
@@ -723,7 +733,7 @@ export function OverviewPage({ layout, onLeave }: { layout: Layout; onLeave: () 
       </div>
       {confirmDialog}
       {bulkDialog}
-    </div>
+    </ScrollableOverlay>
   );
 }
 

@@ -35,12 +35,7 @@ function statusEvent(type: "busy" | "retry"): OpenCodeEvent {
 }
 
 /** A raw stream payload: wire events, or OpenChamber's own bridge events. */
-type StreamPayload = OpenCodeEvent | { type: string; properties: Record<string, JsonValue> } | {
-  id: string
-  type: "session.mirror.updated"
-  location?: { directory: string }
-  data: { sessionID: string }
-}
+type StreamPayload = OpenCodeEvent | { type: string; properties: Record<string, JsonValue> }
 
 /** `keepalives` counts SSE comments sent before the events. They are activity without an event. */
 function createSdk(events: StreamPayload[], streamFinished: () => void, keepalives = 0): OpenCodeClient {
@@ -142,18 +137,6 @@ describe("createEventPipeline", () => {
     )
     expect(events).toHaveLength(1)
     expect(events[0]).toMatchObject({ type: "session.patched", properties: { patch: { title: "New", cost: 1, time: { updated: 1000 } } } })
-  })
-
-  test("routes mirror notices and coalesces repeated notices for one session", async () => {
-    const { directory, events } = await collect(
-      [
-        { id: "evt_mirror_1", type: "session.mirror.updated", location: { directory: "/repo" }, data: { sessionID: "ses_1" } },
-        { id: "evt_mirror_2", type: "session.mirror.updated", location: { directory: "/repo" }, data: { sessionID: "ses_1" } },
-      ],
-      1,
-    )
-    expect(directory).toBe("/repo")
-    expect(events).toEqual([{ type: "session.mirror.updated", properties: { sessionID: "ses_1" } }])
   })
 
   test("bridges openchamber session status events into session.status", async () => {
@@ -533,9 +516,115 @@ describe("createEventPipeline over the WebSocket transport", () => {
     expect(activity).toBe(2)
     expect(delivered).toEqual([])
   })
+
+  test("retries a WebSocket route that worked before, and falls back to SSE on one that never did", async () => {
+    const run = async (readyFirst: boolean) => {
+      // A socket closed before ready drops the token, so each run starts with one.
+      setRuntimeUrlAuthToken("fixture-url-token", Date.now() + 10 * 60_000)
+      const paths: string[] = []
+      const sockets: RelayTunnelWebSocket[] = []
+      const tunnel: RelayTunnelClient = {
+        async fetch() { throw new Error("the WebSocket transport must not fetch") },
+        openWebSocket(pathWithQuery) {
+          paths.push(pathWithQuery)
+          const socket = createFakeSocket()
+          sockets.push(socket)
+          return socket
+        },
+        getStatus: () => ({ state: "connected" }),
+        subscribeStatus: () => () => undefined,
+        retry: () => undefined,
+        close: () => undefined,
+      }
+      adoptRelayTunnel({ relayUrl: "wss://relay.test", serverId: "fixture", hostEncPubJwk: {} }, tunnel)
+      let sseStreams = 0
+      const pipeline = createEventPipeline({
+        sdk: createSdk([], () => { sseStreams += 1 }),
+        onEvents: () => undefined,
+        transport: "auto",
+        reconnectDelayMs: 1,
+        heartbeatTimeoutMs: 60_000,
+      })
+      const nextSocket = async (count: number) => {
+        for (let i = 0; i < 400 && sockets.length < count && sseStreams === 0; i += 1) await new Promise((resolve) => setTimeout(resolve, 5))
+        return sockets[count - 1]
+      }
+      try {
+        const first = await nextSocket(1)
+        if (readyFirst) {
+          first.onmessage?.({ data: JSON.stringify({ type: "ready", cursor: "c1" }) })
+          // A socket that drops within two seconds of ready counts as unstable.
+          await new Promise((resolve) => setTimeout(resolve, 2_100))
+        }
+        first.onclose?.({ code: 1006, reason: "" })
+        const second = await nextSocket(2)
+        second?.onclose?.({ code: 1006, reason: "" })
+        // The SSE fallback starts at once; a WebSocket retry waits out its backoff.
+        await new Promise((resolve) => setTimeout(resolve, 300))
+      } finally {
+        pipeline.cleanup()
+      }
+      return { paths, sseStreams }
+    }
+
+    const proven = await run(true)
+    expect(proven.sseStreams).toBe(0)
+    expect(proven.paths).toHaveLength(2)
+    expect(proven.paths[1]).toContain("lastEventId=c1")
+
+    const unproven = await run(false)
+    expect(unproven.paths).toHaveLength(1)
+    expect(unproven.sseStreams).toBe(1)
+  })
+
+  test("reports which ready frames stand for a complete replay", async () => {
+    const sockets: RelayTunnelWebSocket[] = []
+    const tunnel: RelayTunnelClient = {
+      async fetch() { throw new Error("the WebSocket transport must not fetch") },
+      openWebSocket() {
+        const socket = createFakeSocket()
+        sockets.push(socket)
+        return socket
+      },
+      getStatus: () => ({ state: "connected" }),
+      subscribeStatus: () => () => undefined,
+      retry: () => undefined,
+      close: () => undefined,
+    }
+    adoptRelayTunnel({ relayUrl: "wss://relay.test", serverId: "fixture", hostEncPubJwk: {} }, tunnel)
+    const reconnects: Array<{ replayReset: boolean; replayed: boolean }> = []
+    const pipeline = createEventPipeline({
+      sdk: createSdk([], () => undefined),
+      onEvents: () => undefined,
+      onReconnect: (details) => { reconnects.push(details) },
+      transport: "ws",
+      heartbeatTimeoutMs: 1_000,
+    })
+    try {
+      for (let i = 0; i < 20 && sockets.length === 0; i += 1) await new Promise((resolve) => setTimeout(resolve, 0))
+      const socket = sockets[0]
+      socket.onmessage?.({ data: JSON.stringify({ type: "ready" }) })
+      socket.onmessage?.({ data: JSON.stringify({ type: "ready", replayed: true }) })
+      socket.onmessage?.({ data: JSON.stringify({ type: "ready", replayReset: true }) })
+    } finally {
+      pipeline.cleanup()
+    }
+    expect(reconnects).toEqual([
+      { replayReset: false, replayed: false },
+      { replayReset: false, replayed: true },
+      { replayReset: true, replayed: false },
+    ])
+  })
 })
 
 describe("classifyStreamPayload", () => {
+  test("routes authoritative space task titles and refuses malformed title records", () => {
+    const properties = { spaceId: "0123456789ab", taskTitle: { title: "Task", by: "user" } }
+    expect(classifyStreamPayload({ type: "openchamber:space-task-title.updated", properties }, undefined))
+      .toEqual({ kind: "space-task-title", properties })
+    expect(classifyStreamPayload({ type: "openchamber:space-task-title.updated", properties: { ...properties, taskTitle: { title: "Task", by: "other" } } }, undefined))
+      .toEqual({ kind: "events", events: [] })
+  })
   test("classifies each payload kind by its type", () => {
     expect(classifyStreamPayload(textDelta("a"), undefined)).toMatchObject({ kind: "events", events: [{ directory: "/repo" }] })
     expect(classifyStreamPayload({ type: "openchamber:space-setup", properties: { spaceId: "0123456789ab" } }, undefined))

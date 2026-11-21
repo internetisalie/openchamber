@@ -56,9 +56,19 @@ function usePinnedToastStyles(container: HTMLElement | null, shadow: string) {
   React.useEffect(() => {
     if (!container) return
 
+    // Writes only what differs: the observer watches `style`, so the pin must
+    // not depend on an unchanged write producing no mutation record. Values
+    // are compared in the form the style declaration serializes them to.
+    const probe = document.createElement("div").style
+    const pinned = ([["box-shadow", shadow], ["outline", "none"]] as const).map(([property, value]) => {
+      probe.setProperty(property, value)
+      return [property, probe.getPropertyValue(property) || value] as const
+    })
     const apply = (el: HTMLElement) => {
-      el.style.setProperty("box-shadow", shadow, "important")
-      el.style.setProperty("outline", "none", "important")
+      for (const [property, value] of pinned) {
+        if (el.style.getPropertyValue(property) === value && el.style.getPropertyPriority(property) === "important") continue
+        el.style.setProperty(property, value, "important")
+      }
       if (el.getAttribute("tabindex") === "0") el.setAttribute("tabindex", "-1")
     }
 
@@ -135,13 +145,15 @@ const BANNER_CLASS_NAMES = {
   // the larger disc. Sonner positions the button absolutely; `!` undoes it.
   closeButton:
     "order-last !static -me-1 flex size-9 shrink-0 !transform-none items-center justify-center self-center rounded-full !border-0 !bg-transparent p-0 text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none",
+  // Rows start at the top: the title's first line is padded to the close
+  // target's height (size-9), and the icon fills that same band, so the two
+  // share a centre whether the title wraps or not. The close and action
+  // buttons centre on the whole toast.
   toast:
-    "oc-surface-elevated group/toast toast flex w-[var(--width)] items-center gap-2 rounded-[var(--radius-xl)] py-2.5 ps-3.5 pe-2 text-foreground data-[expanded=false]:data-[front=false]:[&>*]:opacity-0 [&_[data-button]]:shrink-0",
+    "oc-surface-elevated group/toast toast flex w-[var(--width)] items-start gap-2 rounded-[var(--radius-xl)] py-2.5 ps-3.5 pe-2 text-foreground data-[expanded=false]:data-[front=false]:[&>*]:opacity-0 [&_[data-button]]:shrink-0 [&_[data-button]]:self-center",
   content: "flex min-w-0 flex-1 flex-col",
-  title: "typography-ui-label font-medium text-foreground",
-  // On the title's first line: the icon takes the title's type so `1lh` is
-  // that line's height.
-  icon: "relative me-0.5 flex h-[1lh] w-5 shrink-0 items-center justify-center self-start typography-ui-label text-muted-foreground [&>svg]:size-5",
+  title: "typography-ui-label font-medium text-foreground py-[calc((2.25rem-1lh)/2)]",
+  icon: "relative me-0.5 flex h-9 w-5 shrink-0 items-center justify-center text-muted-foreground [&>svg]:size-5",
 }
 
 const Toaster = ({ position = "bottom-right", layout = "corner", ...props }: ToasterProps & { layout?: ToastLayout }) => {

@@ -5,22 +5,61 @@ import {
   areAllWorkStatusSectionsHidden,
   getWorkStatusPanelPresentation,
   isWorkStatusSectionVisible,
+  mergeWorkStatusSectionOrder,
   resolveWorkStatusSectionOrder,
   sanitizeWorkStatusHiddenSections,
   sanitizeWorkStatusSectionOrder,
 } from './sections';
 
 describe('section registry', () => {
+  test('a phone drag keeps the unavailable ids where they were saved', () => {
+    const stored = [...WORK_STATUS_SECTION_IDS];
+    const phone = resolveWorkStatusSectionOrder(stored, [], ['usage', 'ptys']);
+    const dragged = [phone[1], phone[0], ...phone.slice(2)];
+    const merged = mergeWorkStatusSectionOrder(stored, dragged);
+    expect(merged.indexOf('usage')).toBe(stored.indexOf('usage'));
+    expect(merged.indexOf('ptys')).toBe(stored.indexOf('ptys'));
+    expect(merged.slice(0, 3)).toEqual(['repository', 'session', 'usage']);
+    expect(merged).toHaveLength(stored.length);
+    expect([...merged].sort()).toEqual([...stored].sort());
+  });
+
+  test('a listed section the saved order did not know follows at the end', () => {
+    expect(mergeWorkStatusSectionOrder(['ext:gone', 'a', 'b'], ['b', 'a', 'ext:new'])).toEqual(['ext:gone', 'b', 'a', 'ext:new']);
+  });
+
   test('restores defaults for missing or empty saved order', () => {
     for (const value of [undefined, null, []]) {
-      expect(sanitizeWorkStatusSectionOrder(value)).toEqual([...WORK_STATUS_SECTION_IDS]);
+      expect(sanitizeWorkStatusSectionOrder(value)).toEqual(['session', 'repository', 'usage', 'contextSources', 'telemetry', 'subagents', 'ptys', 'tasks', 'workflows', 'mcp', 'pinned']);
     }
   });
 
   test('preserves chosen positions and appends missing sections once', () => {
     const order = sanitizeWorkStatusSectionOrder(['pinned', 'repository', 'pinned', 'obsolete', 'session']);
-    expect(order).toEqual(['pinned', 'repository', 'session', 'usage', 'telemetry', 'subagents', 'ptys', 'workflows', 'mcp', 'contextSources']);
+    expect(order).toEqual(['pinned', 'repository', 'session', 'usage', 'contextSources', 'telemetry', 'subagents', 'ptys', 'tasks', 'workflows', 'mcp']);
+    // Tasks, added later, goes after Subagents wherever the user put it.
+    expect(sanitizeWorkStatusSectionOrder(['subagents', 'session', 'repository', 'usage', 'contextSources', 'telemetry', 'workflows', 'mcp', 'pinned']))
+      .toEqual(['subagents', 'ptys', 'tasks', 'session', 'repository', 'usage', 'contextSources', 'telemetry', 'workflows', 'mcp', 'pinned']);
     expect(sanitizeWorkStatusSectionOrder(JSON.parse(JSON.stringify(order)))).toEqual(order);
+  });
+
+  test('a saved old default follows Context sources up, however the later sections were appended', () => {
+    const moved = ['session', 'repository', 'usage', 'contextSources', 'telemetry', 'subagents', 'workflows', 'mcp', 'pinned'];
+    const savedDefault = ['session', 'repository', 'usage', 'telemetry', 'subagents', 'workflows', 'mcp', 'pinned', 'contextSources'];
+    const withTasks = (order: string[]) => order.flatMap((id) => (id === 'subagents' ? ['subagents', 'ptys', 'tasks'] : [id]));
+    expect(sanitizeWorkStatusSectionOrder(savedDefault, false)).toEqual(withTasks(moved));
+    expect(sanitizeWorkStatusSectionOrder(withTasks(moved), false)).toEqual(withTasks(moved));
+    expect(sanitizeWorkStatusSectionOrder(['session', 'repository', 'usage', 'subagents', 'mcp', 'pinned', 'contextSources', 'telemetry', 'workflows'], false))
+      .toEqual(['session', 'repository', 'usage', 'contextSources', 'subagents', 'ptys', 'tasks', 'mcp', 'pinned', 'telemetry', 'workflows']);
+  });
+
+  test('an arranged order keeps Context sources where it is', () => {
+    const savedDefault = ['session', 'repository', 'usage', 'telemetry', 'subagents', 'workflows', 'mcp', 'pinned', 'contextSources'];
+    const custom = ['repository', 'session', 'usage', 'telemetry', 'subagents', 'workflows', 'mcp', 'pinned', 'contextSources'];
+    const withTasks = (order: string[]) => order.flatMap((id) => (id === 'subagents' ? ['subagents', 'ptys', 'tasks'] : [id]));
+    expect(sanitizeWorkStatusSectionOrder(savedDefault)).toEqual(withTasks(savedDefault));
+    expect(sanitizeWorkStatusSectionOrder(custom, false)).toEqual(withTasks(custom));
+    expect(sanitizeWorkStatusSectionOrder([...savedDefault, 'ext:git-graph'], false)).toEqual(withTasks([...savedDefault, 'ext:git-graph']));
   });
 
   test('every section has a label, and every label a section', () => {

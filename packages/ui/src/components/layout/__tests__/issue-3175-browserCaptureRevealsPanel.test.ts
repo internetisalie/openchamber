@@ -40,7 +40,13 @@ describe('issue #3175 browser capture while the agent works in the background', 
   // flashed the browser in front of the user. It now draws the page
   // transparently instead and leaves the panel alone.
   test('capture never opens the panel or switches its tab', () => {
-    expect(browserPaneSource).toContain('revealStageForCapture(stageRef.current)');
+    const captureStart = browserPaneSource.indexOf("if (action === 'browser.capture') {");
+    const captureEnd = browserPaneSource.indexOf("if (action === 'browser.resize') {", captureStart);
+    expect(captureStart).toBeGreaterThanOrEqual(0);
+    expect(captureEnd).toBeGreaterThan(captureStart);
+    const capture = browserPaneSource.slice(captureStart, captureEnd);
+    expect(capture).toContain("revealStage(stageRef.current, 'capture')");
+    expect(capture).toContain('finally {\n        restoreStage();');
     expect(browserPaneSource).not.toContain('setActiveContextPanelTab');
     expect(browserPaneSource).not.toContain('closeContextPanel');
   });

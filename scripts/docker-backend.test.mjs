@@ -5,16 +5,18 @@ import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'no
 import os from 'node:os';
 import path from 'node:path';
 import { test } from 'node:test';
+import { checkForkReleaseTag } from './check-fork-release.mjs';
 
 const dockerfile = readFileSync(new URL('../Dockerfile', import.meta.url), 'utf8');
 const electron = JSON.parse(readFileSync(new URL('../packages/electron/package.json', import.meta.url), 'utf8'));
+const nixTag = JSON.parse(readFileSync(new URL('../flake.lock', import.meta.url), 'utf8')).nodes.opencode.original.ref;
 const pin = /^ENV OPENCODE_VERSION=(\S+) \\\n    OPENCODE_SHA256=(\S+)$/m.exec(dockerfile);
 const verificationStage = dockerfile.split('FROM opencode-pin AS opencode-verified\n')[1]?.split('\nFROM ')[0];
 const verification = /^RUN ([\s\S]+)$/m.exec(verificationStage ?? '')?.[1].replace(/\\\n\s*/g, ' ');
 
 test('Docker uses one concrete numbered fork version and SHA-256 matching Electron', () => {
   assert.ok(pin, 'Missing authoritative Docker backend pin');
-  assert.match(pin[1], /^\d+\.\d+\.\d+-internetisalie\.[1-9]\d*$/);
+  assert.match(pin[1], /^\d+\.\d+\.\d+-internetisalie\.[1-9]\d*(?:-poc\.[1-9]\d*)?$/);
   assert.match(pin[2], /^[a-f0-9]{64}$/);
   assert.notEqual(pin[2], '0'.repeat(64));
   assert.equal(pin[1], electron.opencodeCli.version);
@@ -22,17 +24,6 @@ test('Docker uses one concrete numbered fork version and SHA-256 matching Electr
   assert.equal((dockerfile.match(/^ENV OPENCODE_VERSION=/gm) ?? []).length, 1);
   assert.equal((dockerfile.match(/^\s*OPENCODE_SHA256=/gm) ?? []).length, 1);
   assert.doesNotMatch(dockerfile, /^ARG OPENCODE_(?:VERSION|SHA256)(?:=|\s|$)/m);
-});
-
-test('released download is the default and both inputs reach the shared verification stage', () => {
-  assert.match(dockerfile, /^ARG OPENCODE_SOURCE=opencode-release$/m);
-  assert.match(dockerfile, /^FROM opencode-pin AS opencode-release\nADD --checksum=sha256:\$\{OPENCODE_SHA256\} --chmod=755 https:\/\/github\.com\/internetisalie\/opencode\/releases\/download\/v\$\{OPENCODE_VERSION\}\/opencode-linux-x64-baseline \/opencode$/m);
-  assert.match(dockerfile, /^FROM \$\{OPENCODE_SOURCE\} AS opencode-artifact$/m);
-  assert.match(verificationStage ?? '', /^COPY --from=opencode-artifact --chmod=755 \/opencode \.\/opencode$/m);
-  assert.match(dockerfile, /^COPY --from=opencode-verified --chmod=755 \/backend\/opencode \/usr\/local\/bin\/opencode$/m);
-  const runtime = dockerfile.split(' AS runtime\n')[1];
-  assert.ok(runtime);
-  assert.doesNotMatch(runtime, /^ADD |^COPY --from=opencode-(?:artifact|release)\s/gm);
 });
 
 const candidate = (version) => `#!/bin/sh\nprintf executed > candidate-executed\nprintf '%s\\n' 'opencode v${version}'\n`;
@@ -91,4 +82,36 @@ test('Docker verification rejects bare versions and extra version text', () => {
     const bytes = `#!/bin/sh\nprintf '%s\\n' '${output}'\n`;
     assert.notEqual(verifyCandidate(bytes, sha256(bytes), '2.2.3-internetisalie.1').status, 0);
   }
+});
+
+test('numbered candidate image tags accept the checked-in backend pin', () => {
+  assert.doesNotThrow(() => checkForkReleaseTag('v2.7.2-internetisalie.1-poc.2', '2.7.2', electron.opencodeCli, dockerfile, nixTag));
+});
+
+test('production tags reject PoC and dev pins even when both packages agree', () => {
+  const stableTag = 'v2.7.2-internetisalie.1';
+  const candidateTag = 'v2.7.2-internetisalie.1-poc.2';
+  const poc = { ...electron.opencodeCli, version: '2.3.2-internetisalie.42-poc.1' };
+  const pocDockerfile = dockerfile.replace(pin[1], poc.version);
+  assert.doesNotThrow(() => checkForkReleaseTag(candidateTag, '2.7.2', poc, pocDockerfile, `v${poc.version}`));
+  assert.throws(() => checkForkReleaseTag(stableTag, '2.7.2', poc, pocDockerfile, `v${poc.version}`), /exact stable/);
+  const dev = { ...electron.opencodeCli, version: '2.3.2-internetisalie.dev' };
+  const devDockerfile = dockerfile.replace(pin[1], dev.version);
+  assert.throws(() => checkForkReleaseTag(stableTag, '2.7.2', dev, devDockerfile, `v${dev.version}`), /exact stable/);
+  assert.throws(() => checkForkReleaseTag(candidateTag, '2.7.2', dev, devDockerfile, `v${dev.version}`), /exact numbered/);
+});
+
+test('production tag requires an exact stable fork pin and matching nonzero checksum', () => {
+  // Fixture metadata only. The Linux release job separately verifies the downloaded artifact.
+  const fixture = { version: '2.3.2-internetisalie.42', sha256: sha256('release policy fixture') };
+  const fixtureDockerfile = dockerfile.replace(pin[1], fixture.version).replace(pin[2], fixture.sha256);
+  const check = (overrides, docker = fixtureDockerfile, tag = 'v2.3.2-internetisalie.42') =>
+    checkForkReleaseTag('v2.7.2-internetisalie.1', '2.7.2', { ...fixture, ...overrides }, docker, tag);
+  assert.doesNotThrow(() => check({}));
+  assert.throws(() => check({ sha256: undefined }), /requires a nonzero SHA-256/);
+  assert.throws(() => check({ sha256: '0'.repeat(64) }), /requires a nonzero SHA-256/);
+  assert.throws(() => check({}, fixtureDockerfile.replace(fixture.sha256, sha256('different'))), /same OpenCode version and SHA-256/);
+  assert.throws(() => check({}, fixtureDockerfile.replace(fixture.version, '2.3.2-internetisalie.43')), /same OpenCode version and SHA-256/);
+  assert.throws(() => check({}, fixtureDockerfile, 'v2.3.2-internetisalie.42-poc.1'), /same OpenCode tag/);
+  assert.throws(() => checkForkReleaseTag('v2.7.3-internetisalie.1', '2.7.2', fixture, fixtureDockerfile, 'v2.3.2-internetisalie.42'), /Expected a numbered fork tag/);
 });

@@ -1,4 +1,5 @@
 import { createProjectIdFromPath, projectConfigFileStemOf } from '../projects/project-id.js';
+import { isMessageSearchEnabled } from './settings-helpers.js';
 import {
   buildPreferencesFields,
   flattenPreferences,
@@ -77,8 +78,8 @@ const MANAGED_PLUGIN_SETTINGS_KEYS = new Set([
   'agentRenderToolEnabled',
   'agentImageToolEnabled',
   'agentSecretToolEnabled',
+  'agentUsageToolEnabled',
   'agentWorkflowToolEnabled',
-  'agentToolsCodeMode',
   // The limit failover plugin loads only while one of these is set.
   'fallbackModel',
   'accountSwitchProviders',
@@ -983,6 +984,10 @@ export const createSettingsRuntime = (deps) => {
       next.notifyOnCompletion = true;
       changed = true;
     }
+    if (settings.notifyOnPullRequests !== true && settings.notifyOnPullRequests !== false) {
+      next.notifyOnPullRequests = true;
+      changed = true;
+    }
     if (typeof settings.notifyOnError !== 'boolean') {
       next.notifyOnError = true;
       changed = true;
@@ -1120,12 +1125,15 @@ export const createSettingsRuntime = (deps) => {
     return normalizeSettingsSurface(surface) ? readSettingsFromDisk({ surface }) : migration9.settings;
   };
 
-  const persistSettings = async (changes, { surface = null } = {}) => {
+  // For a caller whose change depends on the settings on disk: `resolveChanges`
+  // runs inside the queue, so no other save lands between that read and this write.
+  const persistResolvedSettings = async (resolveChanges, { surface = null } = {}) => {
     const result = persistSettingsLock.then(async () => {
+      const current = await readSettingsFromDisk({ surface });
+      const changes = resolveChanges(current);
       // Log field names only — changes can carry credentials (UI password,
       // client tokens, tunnel tokens) that must never reach the log file.
       console.log('[persistSettings] Updating fields:', Object.keys(changes || {}).join(', ') || '(none)');
-      const current = await readSettingsFromDisk({ surface });
       const sanitized = sanitizeSettingsUpdate(changes);
       for (const key of Object.keys(sanitized)) {
         // Device state belongs to the install in front of the user, never to
@@ -1212,7 +1220,7 @@ export const createSettingsRuntime = (deps) => {
       }
       // The search index starts or stops in the background; the save does not wait for it.
       if (changedKeys.includes('messageSearchEnabled')) {
-        onMessageSearchEnabledChanged(next.messageSearchEnabled === true);
+        onMessageSearchEnabledChanged(isMessageSearchEnabled(next));
       }
       if (changedKeys.includes('messageSearchReasoningEnabled')) {
         onMessageSearchReasoningChanged(next.messageSearchReasoningEnabled === true);
@@ -1230,6 +1238,8 @@ export const createSettingsRuntime = (deps) => {
     persistSettingsLock = result.catch(() => {});
     return result;
   };
+
+  const persistSettings = (changes, options) => persistResolvedSettings(() => changes, options);
 
   // A background session may discover a project while another window saves
   // settings. Resolve the append inside the settings queue, without activation.
@@ -1256,6 +1266,7 @@ export const createSettingsRuntime = (deps) => {
     readSettingsFromDiskMigrated,
     writeSettingsToDisk,
     persistSettings,
+    persistResolvedSettings,
     registerSessionProject,
   };
 };

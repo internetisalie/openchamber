@@ -8,9 +8,9 @@ Bun dependencies come from `bun.lock`. The pinned bun2nix converter runs in a Ni
 
 The generated dependency expression stays in the Nix store. Changing `bun.lock` requires no generated file or aggregate dependency hash update. Evaluation requires import-from-derivation and may build the converter before returning a result.
 
-OpenCode uses its upstream Nix dependency recipe and upstream hashes at the revision pinned in `flake.lock`. Its Git and non-registry dependencies require prefetching in the current bun2nix converter, so converting that separate repository's dependency installation is outside this packaging change.
+Nix builds OpenCode from the fork tag locked in `flake.lock` with the fork server's headless build flag. OpenChamber supplies the browser UI. The version must match the Electron backend pin, and the desktop build verifies the staged launcher reports that exact version. The Nix backend has platform-specific dependency hashes in `flake.nix`. These hashes cover the Bun dependency tree; Docker and Electron separately verify the SHA-256 of the prebuilt GNU release asset.
 
-When changing `opencodeCli.version` in `packages/electron/package.json`, update the matching OpenCode tag in `flake.nix` and run `nix flake update opencode`.
+When changing `opencodeCli.version` in `packages/electron/package.json`, update the matching OpenCode tag in `flake.nix`, run `nix flake update opencode`, and verify the dependency hashes on the native CI matrix.
 
 Validate changes with `nix build .#openchamber .#openchamber-desktop` and `nix run .#openchamber -- --version`. Desktop launch requires a graphical session.
 

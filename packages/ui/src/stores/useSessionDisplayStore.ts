@@ -1,7 +1,17 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import { getSettingsSurface } from '@/lib/settings/surface';
+import { getRuntimeKey, isTransientRuntimeKey, subscribeRuntimeEndpointWillChange } from '@/lib/runtime-switch';
 import type { SettingsSurface } from '@/lib/settings/registry';
+import {
+  clampSessionBatchSize,
+  DEFAULT_SIDEBAR_SECTIONS,
+  hiddenSidebarSectionsSchema,
+  sidebarPinListsSchema,
+  sidebarSectionsSchema,
+  type SidebarPinList,
+  type SidebarSectionEntry,
+} from '@/lib/sidebarSections';
 
 type ProjectSortOrder = 'manual' | 'a-z' | 'z-a' | 'date-added' | 'recent';
 // Worktree groups inside a project. 'recent' floats worktrees with the latest
@@ -36,6 +46,17 @@ type SessionDisplayStore = {
   /** A work in the In work block also stays in its project or folder; off by default. */
   keepWorkInPlace: boolean;
   setKeepWorkInPlace: (keep: boolean) => void;
+  /** A work in the Pinned block also stays in its project or folder, and in In work; on by default. */
+  keepPinnedInPlace: boolean;
+  setKeepPinnedInPlace: (keep: boolean) => void;
+  /**
+   * How many works a project, a worktree, Pinned or one of the user's sections
+   * shows before Show more, and how many each Show more adds. Null until the
+   * user sets it: a project then shows 7 (20 in single-project mode, 10 in
+   * VS Code).
+   */
+  sessionBatchSize: number | null;
+  setSessionBatchSize: (size: number) => void;
   /** Local display preference; motion remains opt-in. */
   animatedActivityIndicators: boolean;
   setAnimatedActivityIndicators: (enabled: boolean) => void;
@@ -56,6 +77,24 @@ type SessionDisplayStore = {
    * their task; the other name goes under it. Off by default.
    */
   worktreeNameByBranch: boolean;
+  /**
+   * The sidebar's sections in order, the built-in ones included
+   * (`lib/sidebarSections.ts`). Shared by every surface.
+   */
+  sections: SidebarSectionEntry[];
+  /** The named pin lists Pin to files works into. Shared by every surface. */
+  pinLists: SidebarPinList[];
+  /** The user's sections this surface hides; built-in ones keep their own show toggles. */
+  hiddenSections: string[];
+  /**
+   * The instance the sections, pin lists and hidden sections came from. They
+   * belong to that instance: switching to another drops them until its own
+   * settings arrive, so one server's sections never show on another.
+   */
+  sectionsOwner: string | null;
+  setSections: (sections: SidebarSectionEntry[]) => void;
+  setPinLists: (lists: SidebarPinList[]) => void;
+  setHiddenSections: (ids: string[]) => void;
   // VS Code only: the compact webview keeps archived buckets inline because it
   // has no room for the full Archive page. Web/desktop ignore this flag and
   // always route archived sessions to the Archive page instead.
@@ -150,6 +189,10 @@ export const useSessionDisplayStore = create<SessionDisplayStore>()(
       setSidebarGrouping: (grouping) => set({ sidebarGrouping: grouping }),
       keepWorkInPlace: false,
       setKeepWorkInPlace: (keep) => set({ keepWorkInPlace: keep }),
+      keepPinnedInPlace: true,
+      setKeepPinnedInPlace: (keep) => set({ keepPinnedInPlace: keep }),
+      sessionBatchSize: null,
+      setSessionBatchSize: (size) => set({ sessionBatchSize: clampSessionBatchSize(size) }),
       showChatsSection: true,
       showWorkSection: true,
       // On for new installs: pinned work gets its own block on top. Stored
@@ -157,6 +200,14 @@ export const useSessionDisplayStore = create<SessionDisplayStore>()(
       showPinnedSection: true,
       detailedZoneRows: getSettingsSurface() === 'mobile',
       worktreeNameByBranch: false,
+      sections: [...DEFAULT_SIDEBAR_SECTIONS],
+      pinLists: [],
+      hiddenSections: [],
+      sectionsOwner: null,
+      // The same rules as a stored value: built-in sections kept, limits held.
+      setSections: (sections) => set({ sections: sidebarSectionsSchema.parse(sections), sectionsOwner: getRuntimeKey() }),
+      setPinLists: (lists) => set({ pinLists: sidebarPinListsSchema.parse(lists), sectionsOwner: getRuntimeKey() }),
+      setHiddenSections: (ids) => set({ hiddenSections: hiddenSidebarSectionsSchema.parse(ids), sectionsOwner: getRuntimeKey() }),
       // Default to HIDDEN so the pre-hydration state matches the quiet/safe
       // option: archived sessions must never flash visible on startup and then
       // disappear once the persisted preference rehydrates.
@@ -185,6 +236,14 @@ export const useSessionDisplayStore = create<SessionDisplayStore>()(
       // v9→v10 drops showRecentSection (Recent is gone).
       // v11→v12 turns two-line rows on for a phone that was on List.
       migrate: migrateSessionDisplayState,
+      // Sections cached by another build (an older one before a filter field
+      // existed) are read through the same rules as the stored setting.
+      merge: (persisted, current) => {
+        // SAFETY: `migrate` has already brought the stored state to this version's shape.
+        const state = (persisted ?? {}) as Partial<SessionDisplayStore>;
+        const sections = sidebarSectionsSchema.safeParse(state.sections ?? current.sections);
+        return { ...current, ...state, sections: sections.success ? sections.data : [...DEFAULT_SIDEBAR_SECTIONS] };
+      },
     },
   ),
 );
@@ -192,3 +251,18 @@ export const useSessionDisplayStore = create<SessionDisplayStore>()(
 export type {
   ProjectSortOrder
 };
+
+// The user's sections, pin lists and hidden sections are another instance's
+// once the client switches: back to the built-in sections until the new
+// instance's settings arrive (an instance without any keeps them).
+/** Drops the user's sections when they came from another instance than `runtimeKey`. */
+export const dropSectionsOfOtherInstance = (runtimeKey: string): void => {
+  const state = useSessionDisplayStore.getState();
+  if (state.sectionsOwner === null || state.sectionsOwner === runtimeKey || isTransientRuntimeKey(runtimeKey)) return;
+  useSessionDisplayStore.setState({ sections: [...DEFAULT_SIDEBAR_SECTIONS], pinLists: [], hiddenSections: [], sectionsOwner: null });
+};
+subscribeRuntimeEndpointWillChange(({ runtimeKey }) => dropSectionsOfOtherInstance(runtimeKey));
+// The stored copy may be another instance's when the app starts on a different
+// one. Checked once the boot code has set the instance (it runs in the same
+// task as this module), so a window opened on a saved host keeps its own.
+queueMicrotask(() => dropSectionsOfOtherInstance(getRuntimeKey()));

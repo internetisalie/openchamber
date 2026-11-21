@@ -4,7 +4,9 @@ import { Dialog as BaseDialog } from "@base-ui/react/dialog"
 import { cn } from "@/lib/utils"
 import { useI18n } from '@/lib/i18n'
 import { Icon } from "@/components/icon/Icon";
+import { PopupOverlayScrollbar } from "@/components/ui/AttachedOverlayScrollbar";
 import { DockedPanelSurfaceContext } from "@/hooks/usePageColors";
+import { useDeviceInfo, useTabletLayout } from "@/lib/device";
 
 let openDialogCount = 0;
 
@@ -97,9 +99,15 @@ function DialogContent({
   ...props
 }: DialogContentProps) {
   const { t } = useI18n()
+  const { isMobile } = useDeviceInfo()
+  const { enabled: tabletLayout } = useTabletLayout()
+  const heldToTop = layerClassName?.includes('items-start') ?? false
+  const bottomSheet = isMobile && !tabletLayout && !heldToTop
   const popupRef = React.useRef<HTMLDivElement | null>(null)
+  const [popup, setPopup] = React.useState<HTMLDivElement | null>(null)
   const setPopupRef = React.useCallback((node: HTMLDivElement | null) => {
     popupRef.current = node
+    setPopup(node)
     if (typeof ref === "function") ref(node)
     else if (ref) ref.current = node
   }, [ref])
@@ -118,9 +126,10 @@ function DialogContent({
       <DialogOverlay className="rounded-none" {...backdropProps} />
       {/* In the iOS app the layer takes the keyboard into its layout and
           a centred window rides half its travel (mobileNativeChrome), so a
-          field in it stays above the keyboard; a window held to the top
-          (the command palette) does not move. Elsewhere both do nothing. */}
-      <div data-keyboard-rider={layerClassName?.includes('items-start') ? undefined : '0.5'} className={cn("oc-keyboard-inset-surface fixed inset-0 z-50 flex items-center justify-center pointer-events-none p-4", layerClassName)}>
+          field in it stays above the keyboard; a phone's bottom sheet (mobile.css)
+          rides all of it; a window held to the top (the command palette) does
+          not move. Elsewhere all of them do nothing. */}
+      <div data-slot="dialog-layer" data-sheet={bottomSheet ? '' : undefined} data-keyboard-rider={heldToTop ? undefined : bottomSheet ? '1' : '0.5'} className={cn("oc-keyboard-inset-surface fixed inset-0 z-50 flex items-center justify-center pointer-events-none p-4", layerClassName)}>
         <BaseDialog.Popup
           ref={setPopupRef}
           initialFocus={initialFocus ?? defaultInitialFocus}
@@ -130,7 +139,7 @@ function DialogContent({
             // The canvas tone, like the Settings window: in themes whose
             // elevated surface is lighter, a dialog would otherwise read as a
             // grey slab over the dimmed app.
-            "oc-window-corners relative pointer-events-auto outline-none bg-background flex flex-col w-full max-w-lg max-h-full gap-4 p-5 oc-modal-shadow overflow-y-auto pwa-dialog-content origin-center",
+            "oc-window-corners relative pointer-events-auto outline-none bg-background flex flex-col w-full max-w-lg max-h-full gap-4 p-5 oc-modal-shadow overflow-y-auto overlay-scrollbar-target pwa-dialog-content origin-center",
             "transition-all duration-150 ease-out",
             "data-[starting-style]:opacity-0 data-[starting-style]:scale-[0.98]",
             "data-[ending-style]:opacity-0 data-[ending-style]:scale-[0.98]",
@@ -150,13 +159,14 @@ function DialogContent({
         {showCloseButton && (
           <BaseDialog.Close
             data-slot="dialog-close"
-            className="ring-offset-background focus-visible:ring-ring data-[open]:bg-interactive-active data-[open]:text-foreground absolute top-2.5 inset-e-2.5 z-10 inline-flex size-7 items-center justify-center rounded-md opacity-70 transition-opacity hover:opacity-100 focus-visible:ring-2 focus-visible:ring-offset-2 focus:outline-hidden disabled:pointer-events-none text-muted-foreground hover:text-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
+            className="ring-offset-background focus-visible:ring-ring data-[open]:bg-interactive-active data-[open]:text-foreground absolute top-2.5 inset-e-2.5 z-10 inline-flex size-7 items-center justify-center rounded-md transition-colors focus-visible:ring-2 focus-visible:ring-offset-2 focus:outline-hidden disabled:pointer-events-none text-muted-foreground hover:text-foreground [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4"
           >
             <Icon name="close"/>
             <span className="sr-only">{t('dialog.common.actions.close')}</span>
           </BaseDialog.Close>
         )}
         </BaseDialog.Popup>
+        <PopupOverlayScrollbar scroller={popup} />
       </div>
     </DialogPortal>
   )

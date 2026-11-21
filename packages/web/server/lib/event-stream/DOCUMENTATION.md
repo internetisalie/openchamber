@@ -52,11 +52,13 @@ This module contains the OpenChamber message-stream WebSocket protocol and runti
 - OpenChamber still fetches OpenCode upstream event streams over SSE, now from `/api/event`.
 - OpenCode 2.x sends no `id:` SSE lines: the event id is `payload.id` and the directory is `payload.location.directory`. Replay and per-directory routing read both out of the payload.
 - Browser clients receive the RAW wire payload and translate it themselves. Server-side subscribers read `event.translated()` instead, so the translation happens once per event and only when something listens.
+- `session.archived` and `session.unarchived` translate to events of their own. Extension session events announce the first as `session-archived`; session work waits for the second to open a session a message reached while it was archived. Neither is folded into `session.updated`, whose consumers (goal mode kickoff, lineage, notifications) would read an archive or a restore as an edit of the record.
 - `session.forked` translates its `data.sessionID` and `data.parentID` into the fork and source ids in `properties`. Permission inheritance consumes this translated event; OpenCode emits no `session.created` for the fork. Tests of server fork behavior must pass the wire event through this translator.
 - v2 emits no `session.status` and no `session.idle` of its own: live status is synthesized from `session.execution.started|succeeded|interrupted|failed`, plus `session.retry.scheduled` (status `retry` while a provider error waits for the next attempt) and `session.step.started` (back to `busy`, which clears `retry` once the attempt begins). Only the status from `session.execution.started` carries `turnStartedAt` (the event's `created`): it is the one event that marks where a turn begins, and the synthetic `openchamber:session-status` frames forward that start, or the session runtime's, beside a busy or retry status. A user abort arrives as `session.idle` with `aborted: true`, not as an assistant message carrying `MessageAbortedError`. A `session.execution.interrupted` with `reason: "shutdown"` translates to nothing: OpenCode keeps the execution claim across a shutdown and resumes the turn after restart, so the session stays busy for server consumers (goal, queue, notifications) until the real terminal event arrives.
 - The web server creates one shared global message-stream hub. OpenCode watcher side effects and global WS clients subscribe to that hub, so there is one upstream `/global/event` SSE reader for both server-side processing and browser fan-out.
 - The global hub keeps a bounded replay buffer keyed by SSE `eventId` so reconnecting browser clients can receive buffered events after their requested `Last-Event-ID`.
-- Replay retains at most 2,048 events and 8 MiB of UTF-8 wire frames. It stores encoded frames rather than retaining parsed payloads as well. Encoding is shared with live WS fanout. An oversized event still reaches live clients in full, but clears the retained suffix so replay cannot cross its gap. A missing replay cursor returns `null`, distinct from a complete empty tail; the bridge sends `ready` with `replayReset: true` and no partial replay. The client retires its cursor and requests authoritative repair, including during the early-boot reconnect grace period. A stopped hub retains its bounded suffix for clients reconnecting after the last socket closed.
+- Replay retains at most 2,048 events and 8 MiB of UTF-8 wire frames. It stores encoded frames rather than retaining parsed payloads as well. Encoding is shared with live WS fanout. An oversized event still reaches live clients in full, but clears the retained suffix so replay cannot cross its gap. A missing replay cursor returns `null`, distinct from a complete empty tail; the bridge sends `ready` with `replayReset: true` and no partial replay. The client retires its cursor and requests authoritative repair, including during the early-boot reconnect grace period. The suffix never crosses a gap in the hub's own reading: when the upstream reader connects again, after a drop or after the hub was stopped, the buffer is emptied and a cursor from before then reports `replayReset`.
+- A `ready` frame says how the client stands. `replayed: true` means the cursor was found and every event after it follows, so the client missed nothing. Every other `ready` carries `cursor`, the point the stream continues from: the latest event, or the start of the current suffix when it holds none. A client that receives no event before its next reconnect resumes from that cursor. The `ready` sent to connected clients after an upstream reconnect carries the new cursor and no `replayed`, so those clients repair.
 - The hub numbers every event that arrives without an SSE id (`oc-<process>-<sequence>`). OpenCode 1.18 sends no ids at all, and an event without an id used to skip the replay buffer, so reconnecting clients had no cursor and lost whatever fell into the gap. The process prefix makes a cursor from before a server restart miss, which reports `replayReset`, instead of matching an unrelated sequence number.
 - Directory WS clients still attach one upstream `/event?directory=...` SSE reader per connection because directory streams are scoped.
 - If an upstream SSE stream stalls after the browser WS is already ready, the reader aborts that upstream fetch and reconnects upstream with `Last-Event-ID`, keeping the browser WS alive when recovery is fast.
@@ -67,34 +69,6 @@ This module contains the OpenChamber message-stream WebSocket protocol and runti
 - Global UI broadcasts serialize once per wire format, irrespective of client count. The SSE writer accepts an optional pre-serialized payload; isolated callers keep the two-argument contract. Failed or backpressured clients cannot block delivery to healthy clients.
 - The reusable upstream reader centralizes SSE fetch/parsing/reconnect behavior for the WS runtime and OpenCode watcher. Additional event consumers should move to it only with parity tests for their lifecycle and error semantics.
 - Browser transport concerns live in the WS bridge modules; server-side global stream ownership lives in `global-hub.js`.
-
-## Disposable v2 mirror smoke
-
-`scripts/smoke-v2-mirror.mjs` verifies the fork's mirror notice through a real
-OpenChamber server, then reads the updated title and settled messages through
-its HTTP proxy. It makes no model call. It creates an OpenCode container from
-an explicitly supplied local image and starts this checkout's OpenChamber on
-an automatically allocated loopback port. Both instances use isolated data.
-The script removes its container and stops its child process on success or
-failure. Failure logs remain in the supplied worktree scratch directory.
-
-Build the SDK and web assets first if this checkout has no build output. Run
-each command through the workspace's `run-with-worktree-scratch` wrapper:
-
-```sh
-../run-with-worktree-scratch "$PWD" bun run --cwd packages/sdk build
-../run-with-worktree-scratch "$PWD" bun run build:web
-../run-with-worktree-scratch "$PWD" env \
-  OPENCODE_MIRROR_SMOKE_DISPOSABLE=1 \
-  OPENCODE_MIRROR_SMOKE_IMAGE=opencode-fork-server:ack-smoke \
-  OPENCODE_MIRROR_SMOKE_CONTAINER_PORT=4096 \
-  OPENCODE_MIRROR_SMOKE_SCRATCH="$PWD/.agent-scratch/mirror-smoke" \
-  node scripts/smoke-v2-mirror.mjs
-```
-
-The image must contain the fork's v2 mirror API and listen on the configured
-container port. The script uses `--pull never`, random host ports, and no
-existing server URL. Docker and Node.js 22 or later must be available.
 
 ## Delta coalescing
 OpenCode publishes one `message.part.delta` per token fragment. A 5.7 KB answer measured 3,402 delta events of 1.7 characters each, 97% of all frames and 1.3 MB on the wire. The hub merges them before replay and fan-out, which cut that stream to 483 frames and 197 KB with identical text. Replay holds merged frames too, so its 2,048 entries cover about seven times more streaming time.

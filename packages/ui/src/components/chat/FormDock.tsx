@@ -7,6 +7,7 @@ import { Icon } from '@/components/icon/Icon';
 import { toast } from '@/components/ui';
 import { cn } from '@/lib/utils';
 import { isIMECompositionEvent } from '@/lib/ime';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useI18n } from '@/lib/i18n';
 import { copyTextToClipboard } from '@/lib/clipboard';
 import type { FormRequest } from '@/lib/opencode/model';
@@ -14,10 +15,10 @@ import type { RecoveredQuestion } from '@/sync/recoverable-questions';
 import { readWebSearchConsent } from '@/lib/opencode/websearch';
 import { useUIStore } from '@/stores/useUIStore';
 import { useScopedBlockingForms, useRecoveredQuestions, useSessions } from '@/sync/sync-context';
-import { useRequestReveal } from '@/sync/request-reveal';
+import { revealWaitingPage, useRequestReveal } from '@/sync/request-reveal';
 import { useChatSessionSelection } from './chatColumnSession';
 import * as sessionActions from '@/sync/session-actions';
-import { isFormRequestNotFoundError } from '@/sync/form-request-error';
+import { agentUnavailableFrom, connectionLostMessage, isFormRequestNotFoundError } from '@/sync/form-request-error';
 import { useMobileAutocompleteMaxHeight } from './useMobileAutocompleteMaxHeight';
 import { FormFieldControl } from './FormFieldControl';
 import { WebSearchConsentDock } from './WebSearchConsent';
@@ -25,12 +26,12 @@ import { FormMarkdown } from './FormMarkdown';
 import { serializeFormAnswerAsMarkdown, serializeFormAsJson, serializeFormAsMarkdown } from './formSerializers';
 import { formDraftScope, loadFormDraft, saveFormDraft, dropFormDraft } from './formDrafts';
 import { noteLocalFormCancelled } from '@/sync/recoverable-questions';
+import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import {
     type FormValues,
     buildFormAnswer,
-    fieldAnswer,
     initialFormValues,
-    isAnswerableField,
+    isFieldAnswered,
     missingRequiredKeys,
     valueOf,
     visibleFields,
@@ -52,16 +53,23 @@ import {
  *
  * Mounted once per composer, inside the shared floating frame, so it shares
  * the frame's clearance and hides behind an expanded BTW. The BTW
- * sheet keeps the inline `FormCard` for its child session's forms.
+ * sheet keeps the inline `FormCard` for its child session's forms. With
+ * questions set to show in the chat (`inChat`), the cards sit at the end of
+ * the transcript (`TranscriptForms`) and the dock is a one-line pointer.
  */
 
 interface FormDockProps {
     sessionId: string | null;
     directory?: string;
     hidden: boolean;
+    /**
+     * The chat shows the questions as cards at its end ("Questions: in the
+     * chat"), so the dock is only a line that brings the reader to them.
+     */
+    inChat?: boolean;
 }
 
-const FormDockView: React.FC<FormDockProps> = ({ sessionId, directory, hidden }) => {
+const FormDockView: React.FC<FormDockProps> = ({ sessionId, directory, hidden, inChat = false }) => {
     const forms = useScopedBlockingForms(sessionId, directory);
     // The session's own forms come first; a location-scoped form (an MCP
     // elicitation, owned by no session) follows and shows in every session
@@ -72,6 +80,21 @@ const FormDockView: React.FC<FormDockProps> = ({ sessionId, directory, hidden })
     // answering it starts a new turn instead of replying to a form.
     const recovered = useRecoveredQuestions(sessionId, directory);
     const recoveredFirst = form ? undefined : recovered[0];
+    if (inChat) {
+        const first = form ?? recoveredFirst?.form;
+        return (
+            <AnimatePresence>
+                {hidden || !first ? null : (
+                    <FormDockPointer
+                        key="in-chat"
+                        sessionId={sessionId}
+                        form={first}
+                        formIds={[...forms.map((item) => item.id), ...recovered.map((item) => item.form.id)]}
+                    />
+                )}
+            </AnimatePresence>
+        );
+    }
     // Keyed on the form id so a different request starts from a clean slate
     // (and the panels cross-fade instead of swapping content in place).
     return (
@@ -93,11 +116,57 @@ const FormDockView: React.FC<FormDockProps> = ({ sessionId, directory, hidden })
     );
 };
 
-const isStepAnswered = (field: FormField, values: FormValues): boolean => {
-    if (!isAnswerableField(field)) return valueOf(values, field.key).acknowledged;
-    const answer = fieldAnswer(field, values);
-    if (answer === undefined) return false;
-    return !(Array.isArray(answer) && answer.length === 0);
+/**
+ * The dock while the questions sit in the chat: one line naming the first
+ * question, which brings its card into view. It holds no answers, so it never
+ * writes the form's draft. A full dock still shows beside or instead of a card
+ * in a chat pinned in the side panel, a session whose transcript is loading and
+ * an expanded composer; that dock writes the shared draft from its own state and
+ * can overwrite what a card saved, as either of two docks on one form can today.
+ */
+const FormDockPointer: React.FC<{
+    sessionId: string | null;
+    form: FormRequest;
+    /** Every question shown in the chat, in order; the first is `form`. */
+    formIds: string[];
+}> = ({ sessionId, form, formIds }) => {
+    const { t } = useI18n();
+    const reveal = React.useCallback((formId: string) => {
+        if (sessionId) revealWaitingPage(sessionId, formId);
+    }, [sessionId]);
+    // "Open session" on a question's toast lands on that question's card.
+    useRequestReveal(formIds, reveal);
+    const title = form.title?.trim() || t('chat.formCard.inputNeeded');
+    const waiting = formIds.length - 1;
+    return (
+        <ComposerFloatingPanel
+            role="region"
+            ariaLabel={title}
+            compact
+            header={<>
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <button
+                            type="button"
+                            onClick={() => reveal(form.id)}
+                            aria-label={t('chat.formDock.showInChatAria')}
+                            className="flex min-w-0 flex-1 items-center gap-2 text-start text-muted-foreground transition-colors hover:text-foreground"
+                        >
+                            <Icon name="question" className="size-3.5 shrink-0 text-primary" />
+                            <Icon name="arrow-up-s" className="size-4 shrink-0" />
+                            <span dir="auto" className="typography-ui-label min-w-0 truncate oc-ui-start-align text-foreground">{title}</span>
+                        </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" sideOffset={6}>{t('chat.formDock.showInChatAria')}</TooltipContent>
+                </Tooltip>
+                {waiting > 0 ? (
+                    <span className="typography-micro shrink-0 text-muted-foreground">
+                        {t('chat.formDock.waiting', { count: String(waiting) })}
+                    </span>
+                ) : null}
+            </>}
+        />
+    );
 };
 
 const FormDockPanel: React.FC<{
@@ -161,7 +230,7 @@ const FormDockPanel: React.FC<{
     const lastStep = Math.max(0, shown.length - 1);
     const currentStep = Math.min(step, lastStep);
     const currentField = shown[currentStep];
-    const answered = React.useMemo(() => shown.map((field) => isStepAnswered(field, values)), [shown, values]);
+    const answered = React.useMemo(() => shown.map((field) => isFieldAnswered(field, values)), [shown, values]);
     // Submit stays off while any question is still open, optional or not:
     // the agent asked, so every question gets an answer or the form is
     // dismissed.
@@ -220,6 +289,19 @@ const FormDockPanel: React.FC<{
                 dropFormDraft(draftScope);
                 return;
             }
+            const unavailableAgent = agentUnavailableFrom(error instanceof Error ? error : null);
+            if (unavailableAgent) {
+                toast.error(t('chat.chatInput.toast.agentUnavailable', { agent: unavailableAgent }));
+                return;
+            }
+            // The reply gate refused before anything was sent, so say that
+            // instead of implying the server rejected the answer. The
+            // answer stays in the draft, so the retry sends it as picked.
+            const connectionLost = connectionLostMessage(error instanceof Error ? error : null, t);
+            if (connectionLost) {
+                toast.error(connectionLost);
+                return;
+            }
             toast.error(t('chat.formCard.submitFailed'), { description: t('chat.formCard.tryAgain') });
         } finally {
             respondingRef.current = false;
@@ -241,6 +323,11 @@ const FormDockPanel: React.FC<{
         } catch (error) {
             if (!recovered && isFormRequestNotFoundError(error)) {
                 dropFormDraft(draftScope);
+                return;
+            }
+            const connectionLost = connectionLostMessage(error instanceof Error ? error : null, t);
+            if (connectionLost) {
+                toast.error(connectionLost);
                 return;
             }
             toast.error(t('chat.formCard.cancelFailed'), { description: t('chat.formCard.tryAgain') });
@@ -298,6 +385,8 @@ const FormDockPanel: React.FC<{
             ariaLabel={title}
             compact={collapsed}
             header={<>
+                <Tooltip>
+                <TooltipTrigger asChild>
                 <button
                     type="button"
                     onClick={() => setCollapsed((value) => !value)}
@@ -307,7 +396,7 @@ const FormDockPanel: React.FC<{
                 >
                     <Icon name="question" className="size-3.5 shrink-0 text-primary" />
                     <Icon name={collapsed ? 'arrow-up-s' : 'arrow-down-s'} className="size-4 shrink-0" />
-                    <span className="typography-ui-label min-w-0 truncate text-foreground">{title}</span>
+                    <span dir="auto" className="typography-ui-label min-w-0 truncate oc-ui-start-align text-foreground">{title}</span>
                     {isFromSubagent ? (
                         <span className="typography-micro shrink-0 rounded bg-foreground/5 px-1.5 py-0.5 text-muted-foreground">
                             {t('chat.formCard.fromSubagent')}
@@ -317,31 +406,37 @@ const FormDockPanel: React.FC<{
                         {t('chat.formDock.progress', { current: String(currentStep + 1), total: String(shown.length) })}
                     </span>
                 </button>
+                </TooltipTrigger>
+                <TooltipContent side="top" sideOffset={6}>{collapsed ? t('chat.formDock.expandAria') : t('chat.formDock.collapseAria')}</TooltipContent>
+                </Tooltip>
                 {/* One dot per question: filled when answered, the current one solid. */}
                 {!collapsed ? (
                     <div className="flex shrink-0 items-center gap-1" role="tablist">
                         {shown.map((field, index) => (
-                            <button
-                                key={field.key}
-                                type="button"
-                                role="tab"
-                                aria-selected={index === currentStep}
-                                aria-label={t('chat.formDock.stepAria', { index: String(index + 1), title: stepLabel(field, index) })}
-                                title={stepLabel(field, index)}
-                                onClick={() => setStep(index)}
-                                className="flex size-4 items-center justify-center"
-                            >
-                                <span
-                                    className={cn(
-                                        'block size-1.5 rounded-full transition-colors',
-                                        index === currentStep
-                                            ? 'bg-primary'
-                                            : answered[index]
-                                                ? 'bg-primary/40'
-                                                : 'bg-foreground/15',
-                                    )}
-                                />
-                            </button>
+                            <Tooltip key={field.key}>
+                                <TooltipTrigger asChild>
+                                    <button
+                                        type="button"
+                                        role="tab"
+                                        aria-selected={index === currentStep}
+                                        aria-label={t('chat.formDock.stepAria', { index: String(index + 1), title: stepLabel(field, index) })}
+                                        onClick={() => setStep(index)}
+                                        className="flex size-4 items-center justify-center"
+                                    >
+                                        <span
+                                            className={cn(
+                                                'block size-1.5 rounded-full transition-colors',
+                                                index === currentStep
+                                                    ? 'bg-primary'
+                                                    : answered[index]
+                                                        ? 'bg-primary/40'
+                                                        : 'bg-foreground/15',
+                                            )}
+                                        />
+                                    </button>
+                                </TooltipTrigger>
+                                <TooltipContent side="top" sideOffset={6}>{stepLabel(field, index)}</TooltipContent>
+                            </Tooltip>
                         ))}
                     </div>
                 ) : null}
@@ -350,12 +445,22 @@ const FormDockPanel: React.FC<{
                         {t('chat.formDock.waiting', { count: String(waiting) })}
                     </span>
                 ) : null}
-                <button type="button" onClick={() => void handleCopy('markdown')} title={t('chat.questionCard.copyMarkdown')} aria-label={t('chat.questionCard.copyMarkdown')} className={iconButtonClass}>
-                    <Icon name="file-text" className="size-3" />
-                </button>
-                <button type="button" onClick={() => void handleCopy('json')} title={t('chat.questionCard.copyJson')} aria-label={t('chat.questionCard.copyJson')} className={iconButtonClass}>
-                    <Icon name="code" className="size-3" />
-                </button>
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <button type="button" onClick={() => void handleCopy('markdown')} aria-label={t('chat.questionCard.copyMarkdown')} className={iconButtonClass}>
+                            <Icon name="file-text" className="size-3" />
+                        </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" sideOffset={6}>{t('chat.questionCard.copyMarkdown')}</TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                    <TooltipTrigger asChild>
+                        <button type="button" onClick={() => void handleCopy('json')} aria-label={t('chat.questionCard.copyJson')} className={iconButtonClass}>
+                            <Icon name="code" className="size-3" />
+                        </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="top" sideOffset={6}>{t('chat.questionCard.copyJson')}</TooltipContent>
+                </Tooltip>
             </>}
         >
             {!collapsed ? (
@@ -365,10 +470,12 @@ const FormDockPanel: React.FC<{
                             {t('chat.formCard.recoveredNotice')}
                         </div>
                     ) : null}
-                    <div
+                    <ScrollableOverlay
                         ref={bodyRef}
-                        className="max-h-[50vh] overflow-y-auto overscroll-contain px-1.5"
-                        style={availableMaxHeight === undefined ? undefined : { maxHeight: Math.max(120, availableMaxHeight - 96) }}
+                        outerClassName="max-h-[50vh]"
+                        outerStyle={availableMaxHeight === undefined ? undefined : { maxHeight: Math.max(120, availableMaxHeight - 96) }}
+                        className="overscroll-contain px-1.5"
+                        disableHorizontal
                     >
                         {currentField ? (
                             currentField.type === 'external' ? (
@@ -401,7 +508,7 @@ const FormDockPanel: React.FC<{
                                 />
                             )
                         ) : null}
-                    </div>
+                    </ScrollableOverlay>
 
                     <div className="flex items-center gap-1.5 px-3 pb-2 pt-1">
                         <Button variant="ghost" size="xs" disabled={isResponding} onClick={() => void handleDismiss()}>

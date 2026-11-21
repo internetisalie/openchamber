@@ -55,6 +55,9 @@ type HostBridgeEffects = {
   shellsUnsubscribe: (subscriptionId: string) => void;
   shellOutput: (request: GuestShellOutputRequest) => Promise<GuestShellOutputResult>;
   shellStop: (request: { shellId: string }) => Promise<GuestShellStopResult>;
+  /** Start capturing for this frame at the frame's rate; the pane checks the `microphone` grant. Resolves once audio flows. */
+  microphoneOpen: (sampleRate: number) => Promise<void>;
+  microphoneClose: () => void;
   storage: (request: GuestStorageRequest) => Promise<GuestStorageResult>;
   setStatusControls: (controls: GuestStatusControl[]) => void;
   openSession: (sessionId: string) => void;
@@ -98,6 +101,8 @@ type HostBridgeEffects = {
   openCommit: (sha: string) => Promise<GuestOpenCommitResult>;
   /** Content height the guest asked for; only the Work Status section sizes its frame from it. */
   resize: (height: number) => void;
+  /** A `block` frame answers the agent; a rejection carries what to tell the frame. */
+  answerBlock: (text: string) => Promise<void>;
   /** The guest answered a host `resolve` with this id. Not a request, so no `result` goes back. */
   resolveResult: (id: string, payload: ResolveResultPayload) => void;
   openPopover?: (request: GuestPopoverRequest) => void;
@@ -274,6 +279,8 @@ export const answerGuestMessage = async (
     case 'shells-unsubscribe': effects.shellsUnsubscribe(message.payload.subscriptionId); return okResult(message.id);
     case 'shell-output': return okResult(message.id, await effects.shellOutput(message.payload));
     case 'shell-stop': return okResult(message.id, await effects.shellStop(message.payload));
+    case 'microphone-open': await effects.microphoneOpen(message.payload.sampleRate); return okResult(message.id, { opened: true });
+    case 'microphone-close': effects.microphoneClose(); return okResult(message.id);
     case 'storage': return okResult(message.id, await effects.storage(message.payload));
     case 'status-controls': effects.setStatusControls(message.payload.controls); return okResult(message.id);
     case 'open-session': effects.openSession(message.payload.sessionId); return okResult(message.id);
@@ -297,6 +304,11 @@ export const answerGuestMessage = async (
       const opened = await effects.openUrl(message.payload.url);
       return opened ? okResult(message.id) : errorResult(message.id, 'Could not open URL.');
     }
+    case 'block-answer':
+      return effects.answerBlock(message.payload.text).then(
+        () => okResult(message.id),
+        (error: Error) => errorResult(message.id, error.message, 'HOST_REJECTED'),
+      );
     case 'open-surface': {
       if (!isContextPanelMode(message.payload.surfaceId)) {
         return errorResult(message.id, 'Unknown surface.');

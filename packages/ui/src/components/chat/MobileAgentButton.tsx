@@ -6,6 +6,10 @@ import { useSelectionStore } from '@/sync/selection-store';
 import { getAgentDisplayName } from './mobileControlsUtils';
 import { useAgentColors } from '@/hooks/useAgentColors';
 import { isAutoModel } from '@/lib/routing/autoModel';
+import { Icon } from '@/components/icon/Icon';
+import { useI18n } from '@/lib/i18n';
+import { useAgentMissingFromCatalog } from './agentAvailability';
+import { restingAgentColor } from '@/lib/agentColors';
 
 interface MobileAgentButtonProps {
     onCycleAgent: () => void;
@@ -31,6 +35,12 @@ export const MobileAgentButton: React.FC<MobileAgentButtonProps> = ({ onCycleAge
     const uiAgentName = currentSessionId ? (sessionAgentName || currentAgentName) : currentAgentName;
     const agentLabel = getAgentDisplayName(agents, uiAgentName);
     const agentColor = getAgentColor(uiAgentName);
+    // The send would stop with an error, so the button says so beforehand.
+    const agentUnavailable = useAgentMissingFromCatalog(uiAgentName);
+    const { t } = useI18n();
+    const unavailableText = agentUnavailable && uiAgentName
+        ? t('chat.modelControls.agentUnavailable', { agent: uiAgentName })
+        : undefined;
 
     const longPressTimerRef = React.useRef<ReturnType<typeof setTimeout> | null>(null);
     const isLongPressRef = React.useRef(false);
@@ -95,10 +105,13 @@ export const MobileAgentButton: React.FC<MobileAgentButtonProps> = ({ onCycleAge
                 'touch-none',
                 className
             )}
-            style={{ color: agentColor.color }}
-            title={agentLabel}
+            // At rest in the composer: the agent's hue, quieted.
+            style={unavailableText ? undefined : { color: restingAgentColor(agentColor.color) }}
+            title={unavailableText ?? agentLabel}
+            aria-label={unavailableText}
         >
-            <span className="flex h-full w-full min-w-0 items-center">
+            <span className={cn('flex h-full w-full min-w-0 items-center', unavailableText && 'gap-1 text-foreground')}>
+                {unavailableText ? <Icon name="error-warning" className="size-3.5 flex-shrink-0 text-[var(--status-warning)]" /> : null}
                 <span className="truncate">{agentLabel}</span>
             </span>
         </button>

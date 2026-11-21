@@ -53,6 +53,7 @@ import { scheduleDesktopHostCandidateRefresh } from '@/lib/desktopRelayRestore';
 import { adoptRelayTunnel } from '@/lib/relay/runtime-tunnel';
 import { createRelayTunnelClient } from '@/lib/relay/tunnel-client';
 import { subscribeRuntimeEndpointChanged, switchRuntimeEndpoint } from '@/lib/runtime-switch';
+import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 import {
   desktopSshConnect,
   desktopSshDisconnect,
@@ -296,6 +297,11 @@ export function DesktopHostSwitcherDialog({
 
   const [runtimeEndpointEpoch, setRuntimeEndpointEpoch] = React.useState(0);
   const switchTokenRef = React.useRef(0);
+  const selectionTokenRef = React.useRef(0);
+  React.useEffect(() => () => {
+    selectionTokenRef.current += 1;
+    switchTokenRef.current += 1;
+  }, []);
 
   const allHosts = React.useMemo(() => {
     const normalizedRemote = configHosts.map((h) => ({
@@ -384,6 +390,8 @@ export function DesktopHostSwitcherDialog({
 
   React.useEffect(() => {
     if (!open) {
+      selectionTokenRef.current += 1;
+      switchTokenRef.current += 1;
       setEditingId(null);
       setEditLabel('');
       setEditUrl('');
@@ -427,6 +435,8 @@ export function DesktopHostSwitcherDialog({
   }, [open]);
 
   const handleSwitch = React.useCallback(async (selectedHost: DesktopHost) => {
+    const selectionToken = ++selectionTokenRef.current;
+    switchTokenRef.current += 1;
     let host = selectedHost;
     // Relay legs ride the E2EE tunnel activated in-renderer via
     // switchRuntimeEndpoint({ relay }); the runtime fetch/socket layers route
@@ -453,16 +463,21 @@ export function DesktopHostSwitcherDialog({
     // open it first, then switch with the host entry the connect rewrote
     // (forward URL and client token); the row's Connect button does the same
     // without switching.
-    if (isElectronShell() && host.id !== LOCAL_HOST_ID && sshHostIds[host.id] && sshStatusesById[host.id]?.phase !== 'ready') {
+    if (isElectronShell() && host.id !== LOCAL_HOST_ID && sshHostIds[host.id]) {
       setSwitchingHostId(host.id);
       try {
-        await desktopSshConnect(host.id);
-        await waitForSshReady(host.id, SSH_CONNECT_TIMEOUT_MS, (status) => {
-          setSshStatusesById((prev) => ({ ...prev, [status.id]: status }));
-        });
+        if (sshStatusesById[host.id]?.phase !== 'ready') {
+          await desktopSshConnect(host.id);
+          await waitForSshReady(host.id, SSH_CONNECT_TIMEOUT_MS, (status) => {
+            setSshStatusesById((prev) => ({ ...prev, [status.id]: status }));
+          });
+        }
         const refreshed = (await desktopHostsGet()).hosts.find((entry) => entry.id === host.id);
-        if (refreshed) host = refreshed;
+        if (selectionToken !== selectionTokenRef.current) return;
+        if (!refreshed) throw new Error('SSH host is no longer available');
+        host = refreshed;
       } catch (err) {
+        if (selectionToken !== selectionTokenRef.current) return;
         const message = err instanceof Error ? err.message : String(err);
         if (message !== SSH_CONNECT_CANCELLED_ERROR) {
           toast.error(t('desktopHostSwitcher.toast.sshFailedToConnect', { host: redactSensitiveUrl(host.label) }), {
@@ -834,6 +849,9 @@ export function DesktopHostSwitcherDialog({
         }));
       });
       if (readyStatus.phase === 'ready') {
+        const refreshed = (await desktopHostsGet()).hosts.find((entry) => entry.id === host.id);
+        if (!refreshed) throw new Error('SSH host is no longer available');
+        setConfigHosts((previous) => previous.map((entry) => entry.id === host.id ? refreshed : entry));
         toast.success(t('desktopHostSwitcher.toast.sshConnected', { host: redactSensitiveUrl(host.label) }));
       }
     } catch (err) {
@@ -932,7 +950,7 @@ export function DesktopHostSwitcherDialog({
           </div>
         )}
 
-        <div className="flex-1 min-h-0 overflow-y-auto">
+        <ScrollableOverlay outerClassName="flex-1 min-h-0" disableHorizontal>
           <div className={cn('space-y-1', embedded && 'space-y-1.5 px-3 py-1')}>
             {isLoading ? (
               <div className="px-2 py-2 text-muted-foreground text-sm">{t('desktopHostSwitcher.state.loading')}</div>
@@ -1022,7 +1040,7 @@ export function DesktopHostSwitcherDialog({
 
                     <div className="flex items-center gap-2 flex-shrink-0">
                       {isSsh && !isLocal && (
-                        (sshStatus?.phase === 'idle' || !sshStatus?.phase) ? (
+                        (sshStatus?.phase === 'idle' || sshStatus?.phase === 'error' || !sshStatus?.phase) ? (
                           <Button
                             type="button"
                             variant="outline"
@@ -1099,7 +1117,7 @@ export function DesktopHostSwitcherDialog({
               })
             )}
           </div>
-        </div>
+        </ScrollableOverlay>
 
         {desktopAvailable && editingId && editingId !== LOCAL_HOST_ID && (
           <div className="flex-shrink-0 rounded-lg border border-edge bg-muted/20 p-3">

@@ -135,6 +135,7 @@ export type SessionMaterializationReason =
   | "child-session-discovered"
   | "ensure-session-messages"
   | "stream-reconnect"
+  | "stream-replayed"
   | "transport-switch"
   | "stale-status-resync"
   | "settled-running-tool"
@@ -233,7 +234,10 @@ function applyMessagePatch(message: Message, patch: MessagePatch): Message {
     return next
   }
   if (patch.time?.created !== undefined) {
-    return { ...message, time: { ...message.time, created: patch.time.created } }
+    const next = { ...message, time: { ...message.time, created: patch.time.created } }
+    // Only delivery out of the inbox moves a synthetic message's time.
+    if (next.role === "synthetic") delete next.pending
+    return next
   }
   return message
 }
@@ -351,23 +355,6 @@ export function applyDirectoryEvent(
         // A create echo for a session we already hold (optimistic create, or
         // a replayed event) must not erase title/usage learned since.
         sessions[result.index] = { ...info, ...sessions[result.index] }
-      } else {
-        sessions.splice(result.index, 0, info)
-        trimSessions(draft)
-        if (!info.parentID) draft.sessionTotal += 1
-      }
-      markSessionEvent(info.id, false)
-      return true
-    }
-
-    case "session.refreshed": {
-      const info = event.properties.info
-      const sessions = draft.session
-      const result = Binary.search(sessions, info.id, (session) => session.id)
-      if (result.found) {
-        if (shouldSkipStaleSessionEvent(sessions[result.index], info)) return false
-        if (areJsonEquivalent(sessions[result.index], info)) return false
-        sessions[result.index] = info
       } else {
         sessions.splice(result.index, 0, info)
         trimSessions(draft)

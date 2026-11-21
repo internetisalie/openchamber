@@ -1,19 +1,112 @@
 import { z } from 'zod';
 import { createRequire } from 'node:module';
 
-import { isAgentMemoryFeatureAvailable } from '../agent-memory/feature-flag.js';
-import { isWorkflowFeatureAvailable } from '../workflows/feature-flag.js';
 import { isOverviewFeatureAvailable } from '../overview/feature-flag.js';
 import { isPermissionMode } from '../permission-auto-accept/modes.js';
 import { asNonEmptyString } from '../shared/guards.js';
 import { idleStopSchema } from '../spaces/idle-stop.js';
 import { sshHostSchema } from '../spaces/places/ssh-host.js';
+import { PROVIDER_LOGO_MIMES } from './provider-logo-routes.js';
 
 // Generated from packages/ui/src/lib/settings/registry.ts by
 // `bun run settings-registry:generate`; `registry.test.ts` fails when stale.
 // The server is plain ESM without a bundler, so the snapshot is read with
 // `createRequire` (import attributes differ across the Node versions we run on).
 const settingsRegistry = createRequire(import.meta.url)('./settings-registry.json');
+
+// The sidebar's sections and pin lists, the same shapes the UI keeps
+// (packages/ui/src/lib/sidebarSections.ts, which also restores missing built-in
+// sections on read). The server keeps what is well formed and drops the rest.
+const SIDEBAR_BUILTIN_SECTION_IDS = ['pages', 'chats', 'pinned', 'work', 'projects'];
+// The user's sections (SIDEBAR_SECTIONS_MAX in the UI) and every built-in one.
+const SIDEBAR_SECTIONS_STORED_MAX = 24 + SIDEBAR_BUILTIN_SECTION_IDS.length;
+const sidebarSectionIdSchema = z.string().trim().min(1).max(64);
+const sidebarSectionNameSchema = z.string().trim().min(1).transform((value) => value.slice(0, 60));
+const sidebarChips = (values) => z.array(z.unknown()).transform((entries) => (
+  [...new Set(entries.flatMap((entry) => {
+    const parsed = z.enum(values).safeParse(entry);
+    return parsed.success ? [parsed.data] : [];
+  }))]
+));
+const sidebarIdList = (schema) => z.array(z.unknown()).transform((entries) => (
+  [...new Set(entries.flatMap((entry) => {
+    const parsed = schema.safeParse(entry);
+    return parsed.success ? [parsed.data] : [];
+  }))]
+));
+const sidebarIds = sidebarIdList(sidebarSectionIdSchema);
+// A project's id names its folder (`path_` and the path encoded), so it grows with the path.
+const sidebarProjectIds = sidebarIdList(z.string().trim().min(1).max(4096));
+const sidebarSectionSchema = z.union([
+  z.object({ kind: z.literal('builtin'), id: z.enum(SIDEBAR_BUILTIN_SECTION_IDS) }),
+  z.object({
+    kind: z.literal('custom'),
+    id: sidebarSectionIdSchema,
+    name: sidebarSectionNameSchema,
+    grouping: z.enum(['time', 'project']).catch('time'),
+    filter: z.object({
+      states: sidebarChips(['running', 'needs-answer', 'unread', 'failed', 'looks-done']).catch([]),
+      work: sidebarChips(['in-work', 'done']).catch([]),
+      pins: sidebarIds.catch([]),
+      kinds: sidebarChips(['session', 'worktree', 'space', 'run', 'scheduled']).catch([]),
+      links: sidebarChips(['pr', 'issue', 'tracker', 'plan', 'goal']).catch([]),
+      projectIds: sidebarProjectIds.catch([]),
+      folders: sidebarIds.catch([]),
+      activity: z.enum(['any', 'today', 'two-days', 'week', 'stalled']).catch('any'),
+      // A list of phrases; a build before lists kept one phrase as a string.
+      text: z.union([z.string().transform((value) => [value]), z.array(z.unknown())]).transform((entries) => (
+        [...new Set(entries.flatMap((entry) => {
+          const phrase = z.string().trim().transform((value) => value.slice(0, 100)).safeParse(entry);
+          return phrase.success && phrase.data ? [phrase.data] : [];
+        }))].slice(0, 12)
+      )).catch([]),
+    }).partial().catch({}),
+    claims: z.boolean().catch(false),
+    hideWhenEmpty: z.boolean().catch(true),
+  }),
+]);
+
+const sanitizeSidebarSections = (entries) => {
+  const result = [];
+  const seen = new Set();
+  for (const entry of entries) {
+    const parsed = sidebarSectionSchema.safeParse(entry);
+    if (!parsed.success || seen.has(parsed.data.id) || result.length >= SIDEBAR_SECTIONS_STORED_MAX) continue;
+    if (parsed.data.kind === 'custom' && SIDEBAR_BUILTIN_SECTION_IDS.includes(parsed.data.id)) continue;
+    seen.add(parsed.data.id);
+    result.push(parsed.data);
+  }
+  return result;
+};
+
+// A client saves the whole sections order, and one older than a built-in
+// section does not list it. Its save keeps the stored entry of each built-in
+// it omits, after the stored neighbour it followed (first when none did), so
+// the user's placement survives a save from an older client. A client that
+// lists the built-in decides where it goes.
+const keepOmittedBuiltinSections = (stored, incoming) => {
+  const result = [...incoming];
+  const has = (id) => result.some((entry) => entry.id === id);
+  stored.forEach((entry, index) => {
+    if (entry?.kind !== 'builtin' || has(entry.id)) return;
+    const previous = stored.slice(0, index).reverse().find((candidate) => has(candidate?.id));
+    const at = previous ? result.findIndex((candidate) => candidate.id === previous.id) + 1 : 0;
+    result.splice(at, 0, entry);
+  });
+  return result;
+};
+
+const sanitizeSidebarPinLists = (entries) => {
+  const result = [];
+  const seen = new Set(['pinned']);
+  for (const entry of entries) {
+    const parsed = z.object({ id: sidebarSectionIdSchema, name: sidebarSectionNameSchema }).safeParse(entry);
+    if (!parsed.success || seen.has(parsed.data.id) || result.length >= 24) continue;
+    seen.add(parsed.data.id);
+    result.push(parsed.data);
+  }
+  return result;
+};
 
 /**
  * Whether a client may persist this key through PUT /api/config/settings:
@@ -34,12 +127,16 @@ const SECRET_SETTINGS_KEYS = Object.freeze(
     .filter(([, field]) => field.secret === true)
     .map(([key]) => key),
 );
+
 import {
   DEFAULT_INPUT_HISTORY_LIMIT,
   DEFAULT_INPUT_HISTORY_SCOPE,
   isInputHistoryLimit,
   isInputHistoryScope,
 } from './input-history-scope.js';
+
+/** `provider/model` dreaming runs on, or empty for the default model. */
+const dreamingModelSchema = z.string().trim().refine((value) => value === '' || /^[^/\s]+\/\S+$/.test(value));
 
 // Icons a custom provider may show instead of its logo; mirrors
 // CUSTOM_PROVIDER_ICONS in packages/ui/src/lib/customProviderIcons.ts.
@@ -62,6 +159,34 @@ const sanitizeCustomProviderIcons = (value) => {
   }
   return result;
 };
+
+// What `provider-logo-routes.js` stores for an uploaded logo; the bytes stay in its folder.
+const customProviderLogosSchema = z.record(
+  z.string().trim().min(1).max(128),
+  z.object({
+    mime: z.enum(PROVIDER_LOGO_MIMES),
+    updatedAt: z.number().int().positive(),
+  }),
+);
+
+/** Provider id -> `{ mime, updatedAt }`; malformed entries are dropped one by one. */
+const sanitizeCustomProviderLogos = (value) => {
+  const record = z.record(z.string(), z.unknown()).safeParse(value);
+  if (!record.success) return undefined;
+  const result = {};
+  for (const [providerID, logo] of Object.entries(record.data).slice(0, CUSTOM_PROVIDER_ICONS_MAX)) {
+    const entry = customProviderLogosSchema.safeParse({ [providerID]: logo });
+    if (entry.success) Object.assign(result, entry.data);
+  }
+  return result;
+};
+
+/**
+ * Message search is on unless the user turned it off. A settings file that
+ * never mentions it is a user who never chose, and gets the default; an
+ * explicit `false` is a choice and stays.
+ */
+export const isMessageSearchEnabled = (settings) => settings?.messageSearchEnabled !== false;
 
 export const createSettingsHelpers = (dependencies) => {
   const {
@@ -295,8 +420,8 @@ export const createSettingsHelpers = (dependencies) => {
         ...new Set(candidate.workStatusHiddenSections.filter((entry) => typeof entry === 'string' && entry.length > 0)),
       ];
     }
-    if (typeof candidate.workStatusHiddenSectionsExplicit === 'boolean') {
-      result.workStatusHiddenSectionsExplicit = candidate.workStatusHiddenSectionsExplicit;
+    for (const key of ['workStatusHiddenSectionsExplicit', 'workStatusSectionOrderExplicit']) {
+      if (typeof candidate[key] === 'boolean') result[key] = candidate[key];
     }
     if (Array.isArray(candidate.workStatusSectionOrder)) {
       result.workStatusSectionOrder = [
@@ -311,6 +436,12 @@ export const createSettingsHelpers = (dependencies) => {
     }
     if (typeof candidate.desktopMinimizeToTrayEnabled === 'boolean') {
       result.desktopMinimizeToTrayEnabled = candidate.desktopMinimizeToTrayEnabled;
+    }
+    if (candidate.desktopUpdateChannel === 'stable' || candidate.desktopUpdateChannel === 'canary') {
+      result.desktopUpdateChannel = candidate.desktopUpdateChannel;
+    }
+    if (candidate.serverUpdateChannel === 'stable' || candidate.serverUpdateChannel === 'canary') {
+      result.serverUpdateChannel = candidate.serverUpdateChannel;
     }
     if (typeof candidate.desktopMacMenuBarEnabled === 'boolean') {
       result.desktopMacMenuBarEnabled = candidate.desktopMacMenuBarEnabled;
@@ -387,6 +518,13 @@ export const createSettingsHelpers = (dependencies) => {
     if (typeof candidate.sidebarKeepWorkInPlace === 'boolean') {
       result.sidebarKeepWorkInPlace = candidate.sidebarKeepWorkInPlace;
     }
+    if (typeof candidate.sidebarKeepPinnedInPlace === 'boolean') {
+      result.sidebarKeepPinnedInPlace = candidate.sidebarKeepPinnedInPlace;
+    }
+    if (Number.isFinite(candidate.sidebarSessionBatchSize)) {
+      // The range of `SIDEBAR_SESSION_BATCH_MIN`/`MAX` in the UI's sidebarSections.ts.
+      result.sidebarSessionBatchSize = Math.max(3, Math.min(50, Math.round(candidate.sidebarSessionBatchSize)));
+    }
     if (SIDEBAR_PROJECT_SORT_ORDER_VALUES.has(candidate.sidebarProjectSortOrder)) {
       result.sidebarProjectSortOrder = candidate.sidebarProjectSortOrder;
     }
@@ -404,6 +542,18 @@ export const createSettingsHelpers = (dependencies) => {
     }
     if (candidate.sidebarWorktreeNameByBranch === true || candidate.sidebarWorktreeNameByBranch === false) {
       result.sidebarWorktreeNameByBranch = candidate.sidebarWorktreeNameByBranch;
+    }
+    if (Array.isArray(candidate.sidebarSections)) {
+      result.sidebarSections = sanitizeSidebarSections(candidate.sidebarSections);
+    }
+    if (Array.isArray(candidate.sidebarPinLists)) {
+      result.sidebarPinLists = sanitizeSidebarPinLists(candidate.sidebarPinLists);
+    }
+    if (Array.isArray(candidate.sidebarHiddenSections)) {
+      result.sidebarHiddenSections = [...new Set(candidate.sidebarHiddenSections.flatMap((entry) => {
+        const parsed = sidebarSectionIdSchema.safeParse(entry);
+        return parsed.success ? [parsed.data] : [];
+      }))];
     }
 
     if (Array.isArray(candidate.securityScopedBookmarks)) {
@@ -491,11 +641,18 @@ export const createSettingsHelpers = (dependencies) => {
     if (typeof candidate.tableCellWrap === 'boolean') {
       result.tableCellWrap = candidate.tableCellWrap;
     }
+    const selectionApprovalText = z.string().transform((value) => value.slice(0, 1000)).safeParse(candidate.selectionApprovalText);
+    if (selectionApprovalText.success) {
+      result.selectionApprovalText = selectionApprovalText.data;
+    }
     if (typeof candidate.copyMessagesAsPlainText === 'boolean') {
       result.copyMessagesAsPlainText = candidate.copyMessagesAsPlainText;
     }
     if (typeof candidate.autoSaveEnabled === 'boolean') {
       result.autoSaveEnabled = candidate.autoSaveEnabled;
+    }
+    if (candidate.fileEditorWrapLines === true || candidate.fileEditorWrapLines === false) {
+      result.fileEditorWrapLines = candidate.fileEditorWrapLines;
     }
     if (candidate.confirmFileTreeMove === true || candidate.confirmFileTreeMove === false) {
       result.confirmFileTreeMove = candidate.confirmFileTreeMove;
@@ -505,6 +662,9 @@ export const createSettingsHelpers = (dependencies) => {
     }
     if (candidate.openLinksInBrowserPanel === true || candidate.openLinksInBrowserPanel === false) {
       result.openLinksInBrowserPanel = candidate.openLinksInBrowserPanel;
+    }
+    if (candidate.agentBrowserSharesLogins === true || candidate.agentBrowserSharesLogins === false) {
+      result.agentBrowserSharesLogins = candidate.agentBrowserSharesLogins;
     }
     if (Number.isInteger(candidate.liveBrowserTabLimit) && candidate.liveBrowserTabLimit >= 1 && candidate.liveBrowserTabLimit <= 20) {
       result.liveBrowserTabLimit = candidate.liveBrowserTabLimit;
@@ -538,6 +698,9 @@ export const createSettingsHelpers = (dependencies) => {
     }
     if (candidate.terminalCloseOnExit === true || candidate.terminalCloseOnExit === false) {
       result.terminalCloseOnExit = candidate.terminalCloseOnExit;
+    }
+    if (candidate.terminalOpenOnProjectAction === true || candidate.terminalOpenOnProjectAction === false) {
+      result.terminalOpenOnProjectAction = candidate.terminalOpenOnProjectAction;
     }
     if (typeof candidate.largeTextPasteBehavior === 'string') {
       const mode = candidate.largeTextPasteBehavior.trim();
@@ -608,6 +771,9 @@ export const createSettingsHelpers = (dependencies) => {
     if (typeof candidate.notifyOnCompletion === 'boolean') {
       result.notifyOnCompletion = candidate.notifyOnCompletion;
     }
+    if (candidate.notifyOnPullRequests === true || candidate.notifyOnPullRequests === false) {
+      result.notifyOnPullRequests = candidate.notifyOnPullRequests;
+    }
     if (typeof candidate.notifyOnError === 'boolean') {
       result.notifyOnError = candidate.notifyOnError;
     }
@@ -647,6 +813,9 @@ export const createSettingsHelpers = (dependencies) => {
     }
     if (typeof candidate.sessionRetentionOnlyArchived === 'boolean') {
       result.sessionRetentionOnlyArchived = candidate.sessionRetentionOnlyArchived;
+    }
+    if (candidate.sessionRetentionIncludeInWork === true || candidate.sessionRetentionIncludeInWork === false) {
+      result.sessionRetentionIncludeInWork = candidate.sessionRetentionIncludeInWork;
     }
     if (typeof candidate.mergedWorktreeCleanupEnabled === 'boolean') {
       result.mergedWorktreeCleanupEnabled = candidate.mergedWorktreeCleanupEnabled;
@@ -806,6 +975,14 @@ export const createSettingsHelpers = (dependencies) => {
     if (typeof candidate.agentMemoryToolEnabled === 'boolean') {
       result.agentMemoryToolEnabled = candidate.agentMemoryToolEnabled;
     }
+    if (candidate.agentMemoryDreamingEnabled === true || candidate.agentMemoryDreamingEnabled === false) {
+      result.agentMemoryDreamingEnabled = candidate.agentMemoryDreamingEnabled;
+    }
+    // Empty is a choice: dreaming then runs on the default model, so it is kept, not dropped.
+    const dreamingModel = dreamingModelSchema.safeParse(candidate.agentMemoryDreamingModel);
+    if (dreamingModel.success) result.agentMemoryDreamingModel = dreamingModel.data;
+    const dreamingVariant = z.string().trim().safeParse(candidate.agentMemoryDreamingVariant);
+    if (dreamingVariant.success) result.agentMemoryDreamingVariant = dreamingVariant.data;
     if (candidate.agentKnowledgeToolEnabled === true || candidate.agentKnowledgeToolEnabled === false) {
       result.agentKnowledgeToolEnabled = candidate.agentKnowledgeToolEnabled;
     }
@@ -829,8 +1006,8 @@ export const createSettingsHelpers = (dependencies) => {
     if (candidate.agentSecretToolEnabled === true || candidate.agentSecretToolEnabled === false) {
       result.agentSecretToolEnabled = candidate.agentSecretToolEnabled;
     }
-    if (typeof candidate.agentToolsCodeMode === 'boolean') {
-      result.agentToolsCodeMode = candidate.agentToolsCodeMode;
+    if (candidate.agentUsageToolEnabled === true || candidate.agentUsageToolEnabled === false) {
+      result.agentUsageToolEnabled = candidate.agentUsageToolEnabled;
     }
     if (typeof candidate.isolatedSpacesEnabled === 'boolean') {
       result.isolatedSpacesEnabled = candidate.isolatedSpacesEnabled;
@@ -841,10 +1018,6 @@ export const createSettingsHelpers = (dependencies) => {
     // The machine of the Docker over SSH place; the empty string takes that place away.
     const sshHost = sshHostSchema.safeParse(candidate.isolatedSpacesSshHost);
     if (sshHost.success) result.isolatedSpacesSshHost = sshHost.data;
-    const projectImportCompleted = z.boolean().safeParse(candidate.openCodeProjectImportCompleted);
-    if (projectImportCompleted.success) {
-      result.openCodeProjectImportCompleted = projectImportCompleted.data;
-    }
     if (typeof candidate.openCodeUpdateToastDismissedVersion === 'string') {
       const version = candidate.openCodeUpdateToastDismissedVersion.trim();
       result.openCodeUpdateToastDismissedVersion = version.slice(0, VERSION_STRING_MAX_LENGTH);
@@ -906,6 +1079,10 @@ export const createSettingsHelpers = (dependencies) => {
     if (typeof candidate.promptNavigatorEnabled === 'boolean') {
       result.promptNavigatorEnabled = candidate.promptNavigatorEnabled;
     }
+    if (candidate.chatWidth === 'default' || candidate.chatWidth === 'wider' || candidate.chatWidth === 'full') {
+      result.chatWidth = candidate.chatWidth;
+    }
+    // Legacy: older clients still write the boolean; the UI reads it as chatWidth.
     if (typeof candidate.wideChatLayoutEnabled === 'boolean') {
       result.wideChatLayoutEnabled = candidate.wideChatLayoutEnabled;
     }
@@ -914,6 +1091,9 @@ export const createSettingsHelpers = (dependencies) => {
     }
     if (typeof candidate.fontSize === 'number' && Number.isFinite(candidate.fontSize)) {
       result.fontSize = Math.max(50, Math.min(200, Math.round(candidate.fontSize)));
+    }
+    if (Number.isFinite(candidate.chatFontSize)) {
+      result.chatFontSize = Math.max(50, Math.min(200, Math.round(candidate.chatFontSize)));
     }
     if (typeof candidate.terminalFontSize === 'number' && Number.isFinite(candidate.terminalFontSize)) {
       result.terminalFontSize = Math.max(9, Math.min(52, Math.round(candidate.terminalFontSize)));
@@ -972,6 +1152,11 @@ export const createSettingsHelpers = (dependencies) => {
     const customProviderIcons = sanitizeCustomProviderIcons(candidate.customProviderIcons);
     if (customProviderIcons) {
       result.customProviderIcons = customProviderIcons;
+    }
+
+    const customProviderLogos = sanitizeCustomProviderLogos(candidate.customProviderLogos);
+    if (customProviderLogos) {
+      result.customProviderLogos = customProviderLogos;
     }
 
     if (Array.isArray(candidate.recentAgents)) {
@@ -1243,6 +1428,10 @@ export const createSettingsHelpers = (dependencies) => {
       ),
     };
 
+    if (Array.isArray(changes.sidebarSections) && Array.isArray(current.sidebarSections)) {
+      next.sidebarSections = keepOmittedBuiltinSections(sanitizeSidebarSections(current.sidebarSections), changes.sidebarSections);
+    }
+
     return next;
   };
 
@@ -1264,11 +1453,10 @@ export const createSettingsHelpers = (dependencies) => {
       ...sanitized,
       hasManagedRemoteTunnelToken,
       hasDesktopUiPassword,
-      // Tells the client whether agent memory exists in this build at all, so
-      // its settings row and panel tab can be absent rather than merely off.
-      agentMemoryFeatureAvailable: isAgentMemoryFeatureAvailable(),
-      // The same for agent workflows (`OPENCHAMBER_WORKFLOWS_ENABLE`).
-      agentWorkflowFeatureAvailable: isWorkflowFeatureAvailable(),
+      // Agent memory needs the OpenChamber server, like routing below.
+      agentMemoryFeatureAvailable: true,
+      // The same for agent workflows.
+      agentWorkflowFeatureAvailable: true,
       // The overview page ships dark until `OPENCHAMBER_OVERVIEW_ENABLED` is set.
       overviewFeatureAvailable: isOverviewFeatureAvailable(),
       // Jev routing needs the OpenChamber server, so it is present here and
@@ -1279,6 +1467,8 @@ export const createSettingsHelpers = (dependencies) => {
       mobileKeyboardMode,
       inputHistoryScope,
       inputHistoryLimit,
+      // Always sent, resolved: the client holds its own copy of this switch and must follow the server's.
+      messageSearchEnabled: isMessageSearchEnabled(sanitized),
       securityScopedBookmarks: bookmarks,
       pinnedDirectories: normalizeStringArray(settings.pinnedDirectories),
       ...(process.env.OPENCHAMBER_RUNTIME === 'desktop'

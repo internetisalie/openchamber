@@ -53,4 +53,7 @@ jobs:
           bun run lint:web
 
       - name: Run tests
-        run: bun run test
+        run: |
+          export OPENCHAMBER_TEST_CHROME="$(command -v google-chrome)"
+          "$OPENCHAMBER_TEST_CHROME" --version
+          bun run test

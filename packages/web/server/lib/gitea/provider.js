@@ -2,7 +2,9 @@ import { createPatAccountAuth } from '../source-control/pat-account-auth.js';
 import { createStandardMutations } from '../source-control/standard-mutations.js';
 import { classifyGiteaFailure, createGiteaClient } from './client.js';
 import { giteaDescriptor } from './descriptor.js';
+import { createGtCli } from './gt-cli.js';
 import { createGiteaResourceService } from './resources.js';
+import { normalizeSshUrl, parseSshUrl } from '../source-control/ssh-url.js';
 import { isForgejoVersion, probeGiteaVersion, verifyGiteaToken } from './verify.js';
 
 /**
@@ -79,8 +81,28 @@ function mutationOperations() {
       perform: (service, _normalized, resolved) => service.readyChangeRequest(call(resolved)),
       reconcile: (service, resolved) => service.reconcileChangeRequestMutation(resolved.providerTarget, 'change-request-ready'),
     },
+    '/pr/draft': {
+      perform: (service, _normalized, resolved) => service.draftChangeRequest(call(resolved)),
+      reconcile: (service, resolved) => service.reconcileChangeRequestMutation(resolved.providerTarget, 'change-request-draft'),
+    },
     '/pr/review': {
       perform: (service, normalized, resolved) => service.reviewChangeRequest(call(resolved, { verdict: normalized.verdict, body: normalized.body })),
+      reconcile: unknownOutcome,
+    },
+    '/pr/review/comment': {
+      perform: (service, normalized, resolved) => service.addReviewComment(call(resolved, { position: normalized.position, body: normalized.body })),
+      reconcile: unknownOutcome,
+    },
+    '/pr/review/comment/update': {
+      perform: (service, normalized, resolved) => service.updateReviewComment(call(resolved, { commentId: normalized.commentId, body: normalized.body })),
+      reconcile: unknownOutcome,
+    },
+    '/pr/review/comment/delete': {
+      perform: (service, normalized, resolved) => service.deleteReviewComment(call(resolved, { commentId: normalized.commentId })),
+      reconcile: unknownOutcome,
+    },
+    '/pr/review/discard': {
+      perform: (service, _normalized, resolved) => service.discardReview(call(resolved)),
       reconcile: unknownOutcome,
     },
   };
@@ -115,7 +137,8 @@ const otherEditions = (edition) => Object.values(GITEA_EDITIONS).filter((other) 
 /**
  * `edition` is the server this provider serves (`GITEA_EDITIONS`); `store` is
  * its origin-keyed section of the source-control auth store; `events`
- * receives account lifecycle reports. The rest are test seams.
+ * receives account lifecycle reports; `cli` is the CLI login a descriptor
+ * that names one reads (`gt-cli.js` for Gitea). The rest are test seams.
  */
 export function createGiteaFamilyProvider({
   edition,
@@ -123,6 +146,7 @@ export function createGiteaFamilyProvider({
   authStore,
   store = authStore?.section instanceof Function ? authStore.section(descriptor.id) : authStore,
   events,
+  cli = null,
   fetch: fetchImpl = (input, init) => fetch(input, init),
   timeoutMs = 15_000,
   createClient = createGiteaClient,
@@ -146,7 +170,10 @@ export function createGiteaFamilyProvider({
     ? null
     : otherEditions(edition).find((other) => servesEdition(other, probeResult)) ?? null);
   const identityFor = (origin, accountId) => ({ provider: descriptor.id, instance: origin, accountId });
-  const accounts = createPatAccountAuth({ descriptor, store, events, verify, probe, classifyFailure: classifyGiteaFailure, ownerElsewhere });
+  const accounts = createPatAccountAuth({
+    descriptor, store, events, verify, probe, classifyFailure: classifyGiteaFailure, ownerElsewhere,
+    normalizeSshUrl: (value) => normalizeSshUrl(value, { label }), parseSshUrl, cli,
+  });
 
   // One resource service per session, so a request's reads, mutation target
   // and provider call share one client. Errors carry the acting account for
@@ -160,6 +187,7 @@ export function createGiteaFamilyProvider({
       client: createClient({ origin: session.instance, token: accounts.tokenFor(session), fetch: fetchImpl, timeoutMs, label }),
       provider: descriptor.id,
       providerLabel: label,
+      sshUrl: accounts.sshUrlFor(session),
     };
     if (resolveRepos) options.resolveRepos = resolveRepos;
     const service = createResourceService(options);
@@ -195,20 +223,21 @@ export function createGiteaFamilyProvider({
       changeRequestStatus: ({ session, directory, branch, remote }) => serviceFor(session).changeRequestStatus(directory, branch, remote),
       listChangeRequests: ({ session, directory, page, query, state, people, remote }) => serviceFor(session)
         .listChangeRequests(directory, { page, query, state, people, remote }),
-      changeRequestContext: ({ session, directory, number, project, remote, includeDiff, includeCIDetails, includeTimeline }) => serviceFor(session)
-        .changeRequestContext(directory, number, { includeDiff, includeCIDetails, includeTimeline, project, remote }),
+      changeRequestContext: ({ session, context, directory, number, project, remote, includeDiff, includeCIDetails, includeTimeline }) => serviceFor(session)
+        .changeRequestContext(directory, number, { includeDiff, includeCIDetails, includeTimeline, project, remote, linked: context?.linked }),
+      reviewState: ({ session, directory, project, number, remote }) => serviceFor(session).reviewState(directory, number, project, remote),
       listIssues: ({ session, directory, page, query, state, people, remote }) => serviceFor(session)
         .listIssues(directory, { page, query, state, people, remote }),
-      getIssue: ({ session, directory, number, project, remote }) => serviceFor(session).getIssue(directory, number, project, remote),
-      issueComments: ({ session, directory, number, project, remote }) => serviceFor(session).issueComments(directory, number, project, remote),
+      getIssue: ({ session, context, directory, number, project, remote }) => serviceFor(session).getIssue(directory, number, project, remote, { linked: context?.linked }),
+      issueComments: ({ session, context, directory, number, project, remote }) => serviceFor(session).issueComments(directory, number, project, remote, { linked: context?.linked }),
       projectUpstream: ({ session, directory, remote }) => serviceFor(session).projectUpstream(directory, remote),
       projectBranches: ({ session, directory, project, remote }) => serviceFor(session).projectBranches(directory, project, remote),
       listLabels: ({ session, directory, project, remote }) => serviceFor(session).listLabels(directory, project, remote),
       listReviewerCandidates: ({ session, directory, project, remote }) => serviceFor(session).listReviewerCandidates(directory, project, remote),
-      readChangeRequestPatch: ({ session, directory, number, sourceRepo, remote }) => serviceFor(session)
-        .changeRequestPatch(directory, number, { project: projectSelector(sourceRepo), remote }),
-      readChangeRequestFile: ({ session, directory, number, sourceRepo, remote, path, previousPath, status }) => serviceFor(session)
-        .changeRequestFileContents(directory, number, { project: projectSelector(sourceRepo), remote, path, previousPath, status }),
+      readChangeRequestPatch: ({ session, directory, number, sourceRepo, remote, linked }) => serviceFor(session)
+        .changeRequestPatch(directory, number, { project: projectSelector(sourceRepo), remote, linked }),
+      readChangeRequestFile: ({ session, directory, number, sourceRepo, remote, path, previousPath, status, binary, linked }) => serviceFor(session)
+        .changeRequestFileContents(directory, number, { project: projectSelector(sourceRepo), remote, path, previousPath, status, binary, linked }),
       liveSummaries: ({ session, refs, issueRefs }) => serviceFor(session).liveSummaries({ refs, issueRefs }),
       /** A pull request's head on the context's primary repository network, for a worktree made from it. */
       readChangeRequestHead: async ({ session, directory, remote, number }) => {
@@ -275,7 +304,8 @@ export function createGiteaFamilyProvider({
   });
 }
 
-/** Gitea, as the registry loads it. */
-export function createProvider({ descriptor = giteaDescriptor, ...services }) {
-  return createGiteaFamilyProvider({ ...services, descriptor, edition: GITEA_EDITIONS.gitea });
+/** Gitea, as the registry loads it, with the `gt` login. `execFile`, `readFile` and `cliTimeoutMs` are test seams. */
+export function createProvider({ descriptor = giteaDescriptor, execFile, readFile, cliTimeoutMs, ...services }) {
+  const cli = createGtCli({ execFile, readFile, timeoutMs: cliTimeoutMs });
+  return createGiteaFamilyProvider({ ...services, descriptor, edition: GITEA_EDITIONS.gitea, cli });
 }

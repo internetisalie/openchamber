@@ -54,13 +54,28 @@ Full-screen extension pages are separate from this rail registry. `contributes.p
   Navigation) and stays aligned there at its saved width during the panel's
   collapse transition. The header's two layout icons keep their places and
   toggle whichever column stands on their side.
+- A zone's resize follows the pointer exactly, whatever the zone shows. Once
+  per frame the drag writes the size of the zone's slot and card, with their
+  size transition off, and stores the size on release. It writes neither the
+  size variable (a custom property inherits, and on the slot it restyled
+  every element of the surface on every frame) nor a cursor on the document
+  (an inherited `cursor` restyled the whole document as the drag began and
+  ended): a layer over the window carries the cursor and keeps an embedded
+  page from taking the pointer's moves. The drag holds the layout animation
+  (`holdLayoutAnimation` in `lib/layoutAnimation.ts`), so the work that
+  follows a width (markdown tables, scroll shadows, the active-turn spy)
+  waits for the release, and the chat skips laying out its off-screen
+  messages meanwhile (`components/chat/lib/scroll/DOCUMENTATION.md`). The
+  session sidebar's drag holds it too.
 - Rail order is user-reorderable and persisted globally in
   `useUIStore.contextRailOrder`; `sortContextSurfaces` applies it on top of the
   registry's default order and appends any missing surfaces.
   `ContextRailSurfacesDialog` edits this same order with drag handles beside
   the visibility checkboxes (`SettingsSortableVisibilityList`, which the phone's
   workspace tab settings also use; those tabs keep their own per-device order
-  and hidden set, `lib/mobileWorkspaceTabs.ts`), including hidden panels. Mouse, touch and keyboard
+  and hidden set, `lib/mobileWorkspaceTabs.ts`, and an extension that opted
+  its panel into the phone is one of them under the same `plugin:<id>` id),
+  including hidden panels. Mouse, touch and keyboard
   drops update the rail immediately; visibility changes and "Show all" preserve
   the order. Dialog reorders retain saved ids of unavailable extensions at the
   end of the preference. Escape cancels a drag before closing the dialog.
@@ -108,12 +123,21 @@ keep the full height). The chat is always the centre and cannot move.
 - In a narrow window the chat keeps 320 px: a side zone that opens without
   room folds the session sidebar, then closes the other side zone, and both
   come back when it closes (`ZoneFitArbiter`, `lib/workspace/zoneFit.ts`).
-- Expanding a zone never covers the chat. The zone stays in the layout at
-  the largest size that leaves the chat a column as wide as the session
-  sidebar and at least 320 px (200 px of height beside the bottom zone; a
-  row under 640 px wide leaves less, since a zone keeps 320 px), and
-  the session sidebar folds while it is expanded so that column is where the
-  sidebar was. Collapsing gives the sidebar back unless the user toggled it
+- Expanding a zone never covers the chat. The zone stays in the layout and
+  leaves the chat a column: the one the user resized it to while expanded
+  (`useUIStore.contextZoneExpandedChatSizes`, px per zone), else as wide as
+  the session sidebar; at least 320 px either way (200 px of height beside
+  the bottom zone; a row under 640 px wide leaves less, since a zone keeps
+  320 px). The expanded zone keeps its resize handle; a drag there sets what
+  the chat keeps and leaves the docked size alone, so the docked and the
+  expanded zone each keep the size the user gave them. The chat's size is
+  stored, not the zone's, so a wider window goes to the zone. `Mod+Shift+F`
+  (`toggle_context_panel_expanded`, also the desktop View menu; a no-op in
+  VS Code, which renders no context panel) expands the
+  zone holding focus, else the first one on screen, else opens the right one
+  expanded, and collapses an expanded one (`lib/workspace/toggleExpandedZone.ts`).
+  The session sidebar folds while a zone is expanded, so the chat column
+  takes the sidebar's place. Collapsing gives the sidebar back unless the user toggled it
   in between (`ZoneFitArbiter`). The zone takes the row as it will be once
   the sidebar has folded, so it grows in one move with it.
 - Another window's move is adopted through the `storage` event
@@ -127,6 +151,16 @@ a diff or a page next to the agent's work and still want to write to it.
 The float existed because collapsing straight back into the layout squeezed
 the chat to nothing and the transcript measured its rows at that width; with
 the chat column never below its minimum that cannot happen.
+
+### Why the drag is not deferred
+
+The zone used to apply its size at most every 100 ms and let its 240 ms size
+transition carry each step, so a reflow of the chat and the surface would not
+run on every pointer move. The edge trailed the pointer by 60 to 90 px, and
+the transition re-laid out the chat and the surface on every frame anyway.
+Following the pointer each frame costs about a fifth of the main thread with
+a 120-turn session and an open editor, once the work that reacts to widths
+waits for the release.
 
 ## Adding a surface
 
@@ -180,6 +214,23 @@ failed read shows Retry. A tracker answers a missing item and a failed read
 the same way, so a tracker item's tab, for every tracker, falls back only on
 that first read.
 
+An item tab's icon is its item's state glyph, the one the preview's state pill
+draws (`repositoryStateLook`, `trackerStateGlyph`), and a tab in the background
+colours it, so a PR merged or an issue closed meanwhile reads from the strip.
+The active tab keeps the strip's text colour beside the coloured pill. Each
+item tab follows its link's item while the panel is open (`useTrackedItems`,
+`lib/trackedItems`); until the server first answers, the tab shows its kind
+icon.
+
+### Why each tab follows its item and not the open view handing its state over
+
+Only the active tab's view is mounted, so a state it handed over would freeze
+the moment another tab opened, and a PR merged in the background would keep
+reading open. The server's followed items are pushed as they change, read on a
+cadence per state (a merged PR is never read again), shared with the sidebar's
+link badges and kept across launches, so a tab costs one followed item and not
+a read of its own.
+
 Changes and the walkthrough opened from another project's PR keep that
 project's folder as their tab's `targetDirectory`, so they read the PR through
 that project's binding beside the chat on screen. Changes then shows that PR
@@ -224,9 +275,36 @@ reaches every client as an event, and a read on its way never brings it back.
 
 Its rail icon shows while the project (worktrees included) has a run or a saved workflow or a
 Workflows tab is open (`useWorkflowsSurfaceShown`, and `isWorkflowsSurfaceShown`
-for the shortcut), never in VS Code, and in a build without workflows it is
-absent from the rail and from the rail's surfaces dialog, so the unreleased
-feature is not named anywhere.
+for the shortcut). While workflows are not shown (`selectWorkflowsShown`: VS
+Code, or the workflow tool off) it is absent from the rail and from the rail's
+surfaces dialog, and turning the tool off closes open Workflows tabs, as
+memory's tab goes with its tool.
+
+## Shared pages
+
+The `pages` surface holds pages other people shared with the user by link
+(`components/chat/sharePages/received/`, decisions 0013 and 0018). It is on
+the rail while the server holds any received page (`receivedPagesShown`, the
+list fed by `receivedPagesStore.ts`), or a tab of it is open. Opened with no
+tab, it shows the list tab (no `targetPath`): every received page, newest
+first, with its title, the link's host (until pages carry a sender's name)
+and where it stands: not opened (sent without its PIN), waiting for your
+answer, answer sent, read only, expired, withdrawn, locked after wrong PINs,
+already answered elsewhere, or a link that no longer works
+(`received/status.ts`); a row opens the page's tab. A page tab keeps its
+`receivedId` as `targetPath` and its title as the label (a tab opened before
+the PIN takes the title once the page opens), so persisted tabs reopen from
+the server's store. Each page tab is a keep-alive pane in
+`ContextSurfacePanes`, mounted the first time it shows, so a form's unsent
+choices survive switching away; the list tab is rendered by the zone and
+remounts. Received pages belong to the server, not a project: a link names
+no folder, so every project lists them all.
+
+On the phone the list is a tab of the workspace drawer (`pages` in
+`lib/mobileWorkspaceTabs.ts`, never stored in the user's order), shown while
+the server holds any page, always right after Status (first when Status is
+hidden) so the strip, which scrolls past five tabs, never hides it; a row opens the page full screen with Back to the
+drawer, as a card's Open does from the chat.
 
 ## Panel header
 

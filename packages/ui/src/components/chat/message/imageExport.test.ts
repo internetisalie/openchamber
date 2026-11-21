@@ -7,7 +7,7 @@ const browser = new Window({ url: 'http://localhost/' });
 browser.document.write('<!doctype html><html><head></head><body></body></html>');
 Object.assign(globalThis, {
     window: browser,
-    document: browser.document,
+    document: browser.document, Event: browser.Event, CustomEvent: browser.CustomEvent,
     navigator: browser.navigator,
     localStorage: browser.localStorage,
     sessionStorage: browser.sessionStorage,
@@ -23,6 +23,8 @@ Object.assign(globalThis, {
     XMLSerializer: browser.XMLSerializer,
     IntersectionObserver: browser.IntersectionObserver,
     ResizeObserver: browser.ResizeObserver,
+    requestAnimationFrame: browser.requestAnimationFrame.bind(browser),
+    cancelAnimationFrame: browser.cancelAnimationFrame.bind(browser),
     customElements: browser.customElements,
 });
 const requests: string[] = [];

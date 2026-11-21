@@ -2,15 +2,17 @@ import React from 'react';
 
 import type { Extension } from '@codemirror/state';
 import { Compartment, EditorState, RangeSetBuilder, StateField, type StateEffect } from '@codemirror/state';
-import { Decoration, type DecorationSet, EditorView, type KeyBinding, ViewPlugin, WidgetType, gutters, keymap, lineNumbers } from '@codemirror/view';
+import { Decoration, type DecorationSet, EditorView, ViewPlugin, WidgetType, gutters, keymap, lineNumbers } from '@codemirror/view';
 import { defaultKeymap, indentWithTab, history, historyKeymap } from '@codemirror/commands';
 import { forceParsing, indentUnit } from '@codemirror/language';
-import { search, searchKeymap, openSearchPanel, closeSearchPanel, searchPanelOpen, getSearchQuery } from '@codemirror/search';
+import { search, openSearchPanel, closeSearchPanel, searchPanelOpen, getSearchQuery } from '@codemirror/search';
 import { createPortal } from 'react-dom';
 
+import { AttachedOverlayScrollbar } from '@/components/ui/AttachedOverlayScrollbar';
 import { searchPanelSpace } from '@/lib/codemirror/searchPanelSpace';
 import { createVimModeExtensions } from '@/lib/codemirror/vimModeExtension';
 import { cn } from '@/lib/utils';
+import { searchKeymapWithFindShortcut } from '@/lib/codemirror/findShortcut';
 
 /** Patches `title` attributes onto CodeMirror search-panel controls for icon-only tooltips. */
 const buttonTooltips: Record<string, string> = {
@@ -157,15 +159,22 @@ type CodeMirrorEditorProps = {
 const gutterWidthMeasureKey = {};
 const lineNumbersCompartment = new Compartment();
 const editableCompartment = new Compartment();
+/**
+ * Read-only both ways: not editable by the pointer and keyboard input, and a
+ * read-only state, so commands such as undo or indent cannot change it either.
+ * `editable` alone left those keybindings working.
+ */
+const readOnlyExtensions = (readOnly: boolean | undefined) => [
+  EditorView.editable.of(!readOnly),
+  EditorState.readOnly.of(Boolean(readOnly)),
+];
 const externalExtensionsCompartment = new Compartment();
 const highlightLinesCompartment = new Compartment();
 const blockWidgetsCompartment = new Compartment();
 const searchCompartment = new Compartment();
 const vimCompartment = new Compartment();
 
-const toViewKeyBindings = (bindings: readonly unknown[]): readonly KeyBinding[] => {
-  return bindings as readonly KeyBinding[];
-};
+const createSearchExtensions = () => [search({ top: true }), searchPanelSpace(), searchKeymapWithFindShortcut()];
 
 const forceParsingCompat = forceParsing as unknown as (view: EditorView, upto?: number, timeout?: number) => boolean;
 const openSearchPanelCompat = openSearchPanel as unknown as (view: EditorView) => void;
@@ -337,6 +346,11 @@ export function CodeMirrorEditor({
   // measure phase: read on every update, it forced a layout of the page on
   // each keystroke and each reconfigure.
   const gutterWidthRef = React.useRef<string | null>(null);
+  // The scrollbar frame stops above bottom panels (the vim status line), so
+  // the horizontal thumb sits at the scroller's own bottom edge.
+  const bottomPanelsHeightRef = React.useRef<string | null>(null);
+  const scrollbarFrameRef = React.useRef<HTMLDivElement | null>(null);
+  const [scroller, setScroller] = React.useState<HTMLElement | null>(null);
   const syncEditorCssVars = React.useCallback((view?: EditorView | null) => {
     const resolvedView = view ?? viewRef.current;
     if (!hostRef.current || !resolvedView) {
@@ -346,18 +360,28 @@ export function CodeMirrorEditor({
     resolvedView.requestMeasure({
       key: gutterWidthMeasureKey,
       read: (measuredView) => {
+        // Hidden or detached, everything measures zero: keep the last real sizes.
+        if (!measuredView.dom.isConnected || measuredView.dom.offsetParent === null) return null;
         const gutters = measuredView.dom.querySelector('.cm-gutters');
-        if (!(gutters instanceof HTMLElement)) return 0;
-        // Hidden or detached, it measures zero: keep the last real width.
-        return gutters.isConnected && gutters.offsetParent !== null ? gutters.getBoundingClientRect().width : null;
+        const bottomPanels = measuredView.dom.querySelector('.cm-panels-bottom');
+        return {
+          gutterWidth: gutters instanceof HTMLElement ? gutters.getBoundingClientRect().width : 0,
+          bottomPanelsHeight: bottomPanels instanceof HTMLElement ? bottomPanels.getBoundingClientRect().height : 0,
+        };
       },
-      write: (gutterWidth) => {
+      write: (sizes) => {
         const host = hostRef.current;
-        if (!host || gutterWidth === null) return;
-        const next = `${gutterWidth}px`;
-        if (gutterWidthRef.current === next) return;
-        gutterWidthRef.current = next;
-        host.style.setProperty('--oc-editor-gutter-width', next);
+        if (!host || sizes === null) return;
+        const nextGutterWidth = `${sizes.gutterWidth}px`;
+        if (gutterWidthRef.current !== nextGutterWidth) {
+          gutterWidthRef.current = nextGutterWidth;
+          host.style.setProperty('--oc-editor-gutter-width', nextGutterWidth);
+        }
+        const nextBottomPanelsHeight = `${sizes.bottomPanelsHeight}px`;
+        if (bottomPanelsHeightRef.current !== nextBottomPanelsHeight) {
+          bottomPanelsHeightRef.current = nextBottomPanelsHeight;
+          scrollbarFrameRef.current?.style.setProperty('bottom', nextBottomPanelsHeight);
+        }
       },
     });
   }, []);
@@ -437,11 +461,11 @@ export function CodeMirrorEditor({
           onChangeRef.current(next);
           syncPortalWidgets(blockWidgetsRef.current);
         }),
-        editableCompartment.of(EditorView.editable.of(!readOnly)),
+        editableCompartment.of(readOnlyExtensions(readOnly)),
         externalExtensionsCompartment.of(extensions ?? []),
         highlightLinesCompartment.of(createHighlightLinesExtension(highlightLines)),
         blockWidgetsCompartment.of(createBlockWidgetsExtension(blockWidgets, widgetContainersRef.current)),
-        searchCompartment.of(enableSearch ? [search({ top: true }), searchPanelSpace(), keymap.of(toViewKeyBindings(searchKeymap))] : []),
+        searchCompartment.of(enableSearch ? createSearchExtensions() : []),
       ],
     });
 
@@ -457,6 +481,7 @@ export function CodeMirrorEditor({
       scrollSnapshotRef.current = scrolledView.scrollSnapshot();
     };
     scrolledView.scrollDOM.addEventListener('scroll', recordScroll, { passive: true });
+    setScroller(scrolledView.scrollDOM);
 
     forceParsingCompat(viewRef.current, viewRef.current.state.doc.length, 200);
     viewRef.current.requestMeasure();
@@ -474,6 +499,7 @@ export function CodeMirrorEditor({
       onViewDestroyRef.current?.();
       viewRef.current?.destroy();
       viewRef.current = null;
+      setScroller(null);
       setPortalWidgets([]);
     };
     // oxlint-disable-next-line react-hooks/exhaustive-deps
@@ -495,7 +521,7 @@ export function CodeMirrorEditor({
       effects.push(lineNumbersCompartment.reconfigure(lineNumbers(lineNumbersConfig)));
     }
     if (applied.readOnly !== readOnly) {
-      effects.push(editableCompartment.reconfigure(EditorView.editable.of(!readOnly)));
+      effects.push(editableCompartment.reconfigure(readOnlyExtensions(readOnly)));
     }
     if (applied.extensions !== extensions) {
       effects.push(externalExtensionsCompartment.reconfigure(extensions ?? []));
@@ -507,7 +533,7 @@ export function CodeMirrorEditor({
       effects.push(blockWidgetsCompartment.reconfigure(createBlockWidgetsExtension(blockWidgets, widgetContainersRef.current)));
     }
     if (applied.enableSearch !== enableSearch) {
-      effects.push(searchCompartment.reconfigure(enableSearch ? [search({ top: true }), searchPanelSpace(), keymap.of(toViewKeyBindings(searchKeymap))] : []));
+      effects.push(searchCompartment.reconfigure(enableSearch ? createSearchExtensions() : []));
     }
     if (effects.length === 0) {
       return;
@@ -598,7 +624,7 @@ export function CodeMirrorEditor({
   }, [value, syncEditorCssVars]);
 
   return (
-    <>
+    <div className="relative h-full w-full">
       <div
         ref={hostRef}
         // Code reads left to right in every UI language; gutters stay on the left.
@@ -610,9 +636,12 @@ export function CodeMirrorEditor({
           className,
         )}
       />
+      <div ref={scrollbarFrameRef} className="pointer-events-none absolute inset-0">
+        <AttachedOverlayScrollbar scroller={detached ? null : scroller} />
+      </div>
       {portalWidgets.map((widget) => {
         return createPortal(widget.content, widget.container, widget.id);
       })}
-    </>
+    </div>
   );
 }

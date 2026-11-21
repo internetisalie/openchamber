@@ -178,7 +178,7 @@ interface SkillsStore {
   /** Every directory loaded so far, including the ambient one. Holds switched-off skills too. */
   skillsByDirectory: Record<string, DiscoveredSkill[]>;
   /**
-   * The `integration.use` statements OpenCode applies per directory, which
+   * The `skill.use` and `mcp.use` statements OpenCode applies per directory, which
    * decide the skills agents can use (`skillSwitch.ts`). A failed read keeps
    * the last ones known; a directory never read has no entry.
    */
@@ -332,6 +332,15 @@ export const selectSkillsForDirectory = (
   const cacheKey = getSkillsCacheKey(resolveDirectory(directory));
   return state.skillsByDirectory[cacheKey] ?? EMPTY_SKILLS;
 };
+
+/**
+ * Whether one project's skills have been read; until then its empty list is
+ * not an answer. A failed read settles it to the skills known before.
+ */
+export const selectSkillsLoadedForDirectory = (
+  state: Pick<SkillsStore, 'skillsByDirectory'>,
+  directory?: string | null,
+): boolean => Object.hasOwn(state.skillsByDirectory, getSkillsCacheKey(resolveDirectory(directory)));
 
 /**
  * The policy statements of one project, or null while none could be read; an
