@@ -21,10 +21,11 @@ export const isSessionAdmitted = (directory: string | null | undefined, session?
 const ADMISSION_WAIT_MS = 10_000;
 
 const waitUntilAdmitted = (directory: string): Promise<void> => new Promise((resolve) => {
-  const finish = () => { clearTimeout(timer); stopProjects(); stopTopology(); resolve(); };
+  const finish = () => { clearTimeout(timer); stopProjects(); stopGlobal(); stopTopology(); resolve(); };
   const check = () => { if (isSessionAdmitted(directory)) finish(); };
   const timer = setTimeout(finish, ADMISSION_WAIT_MS);
   const stopProjects = useProjectsStore.subscribe((state, previous) => { if (state.projects !== previous.projects) check(); });
+  const stopGlobal = useGlobalSyncStore.subscribe((state, previous) => { if (state.projects !== previous.projects) check(); });
   const stopTopology = useSessionUIStore.subscribe((state, previous) => {
     if (state.availableWorktreesByProject !== previous.availableWorktreesByProject) check();
   });
@@ -162,7 +163,7 @@ export const subscribeSessionAdmission = (): (() => void) => {
   // The viewed session, put aside while its folder is not admitted. It comes
   // back once a live move admits the folder; re-opening it here would count as
   // the user's choice and register any folder, a removed project included.
-  let parked: { id: string; revision: number } | null = null;
+  let parked: { id: string; revision: number; keepSingleProject: boolean } | null = null;
   const gateSelection = () => {
     if (!current()) return;
     const ui = useSessionUIStore.getState();
@@ -173,9 +174,9 @@ export const subscribeSessionAdmission = (): (() => void) => {
       // Any navigation since, a draft included, replaces the parked session.
       if (ui.currentSessionId || parked.revision !== getAdmissionNavigationRevision() || !directory) parked = null;
       else if (isSessionAdmitted(directory, record)) {
-        const { id } = parked;
+        const { id, keepSingleProject } = parked;
         parked = null;
-        void ui.setCurrentSession(id, directory);
+        void ui.setCurrentSession(id, directory, { keepSingleProject });
         return;
       }
     }
@@ -184,13 +185,14 @@ export const subscribeSessionAdmission = (): (() => void) => {
     if (ui.currentSessionId && selectedDirectory && !isSessionAdmitted(selectedDirectory, selectedRecord)) {
       const id = ui.currentSessionId;
       ui.setCurrentSession(null);
-      parked = { id, revision: getAdmissionNavigationRevision() };
+      parked = { id, revision: getAdmissionNavigationRevision(), keepSingleProject: ui.currentSessionKeepsSingleProject };
     }
   };
   const stopSessions = useGlobalSessionsStore.subscribe((state, previous) => {
     if (state.entityById !== previous.entityById) gateSelection();
   });
   const stopProjects = useProjectsStore.subscribe((state, previous) => { if (state.projects !== previous.projects) gateSelection(); });
+  const stopGlobal = useGlobalSyncStore.subscribe((state, previous) => { if (state.projects !== previous.projects) gateSelection(); });
   const stopUI = useSessionUIStore.subscribe((state, previous) => {
     if (state.currentSessionId !== previous.currentSessionId || state.currentSessionDirectory !== previous.currentSessionDirectory || state.availableWorktreesByProject !== previous.availableWorktreesByProject) gateSelection();
   });
@@ -198,6 +200,6 @@ export const subscribeSessionAdmission = (): (() => void) => {
   return () => {
     disposed = true;
     for (const directory of attempted.keys()) forgetAttempt(directory);
-    stopMoves(); stopSessions(); stopProjects(); stopUI();
+    stopMoves(); stopSessions(); stopProjects(); stopGlobal(); stopUI();
   };
 };

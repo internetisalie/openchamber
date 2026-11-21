@@ -411,16 +411,19 @@ a trust answer holds no network slot.
 
 Launch restore (`last-session-restore.ts`) and runtime-memory restoration do
 not reopen a session outside every project, because opening it would register
-its folder without the user choosing it.
+its folder without the user choosing it. Launch restore can wait briefly for
+global OpenCode projects to identify a registered project's workspace. It
+never registers a folder, and any new navigation cancels the wait.
 
 `setCurrentSession` gates unknown destinations before fetching messages,
 publishing selection or changing directories. Unknown links resolve session
 detail without starting an OpenCode location. A newer navigation or runtime
 switch invalidates the continuation. When the viewed session's folder stops
 being admitted (a move, a removed project), `subscribeSessionAdmission` clears
-the selection and keeps the session aside; it reopens the session only once
-the folder is admitted, never through a deliberate open that would register
-it. Sidebar projections, the switcher and tray never use pins or work state as
+the selection and keeps the session aside; it checks again when either the
+registered projects or OpenCode's workspace catalog changes. It reopens only
+once the folder is admitted, preserving the single-project selection option.
+Sidebar projections, the switcher and tray never use pins or work state as
 admission. Pinned chat columns gate their rendered session identity and
 directory and never admit: pins persist across launches, so admitting from a
 column would register folders nobody opened.

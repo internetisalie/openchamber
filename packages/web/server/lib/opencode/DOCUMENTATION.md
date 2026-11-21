@@ -318,6 +318,11 @@ managed v1 CLI requires manual installation of a verified fork release.
 before fetching, changing a binary, selecting a path or restarting a server.
 Existing executable files remain unchanged after a refused request.
 
+`OPENCODE_SKIP_START` requires an external endpoint: set `OPENCODE_HOST` with
+an explicit port or set `OPENCODE_PORT`. Without an effective port, startup
+records a configuration error. Startup retry and restart cannot launch a local
+OpenCode as a fallback.
+
 ## Public exports (response-envelope.js)
 - `unwrapOpenCodeResponse(body)`: strips OpenCode 2.x's response envelope. A single record (`GET /api/session/:id`, one message) arrives as `{ data }`, some routes as `{ location, data }`, pages as `{ data, cursor }`. Records and plain lists are unwrapped; pages keep the envelope for their cursor. Every server-side OpenCode read goes through it: unwrapping only on `location` left record envelopes in place, so `parentID` and message ids read as missing.
 

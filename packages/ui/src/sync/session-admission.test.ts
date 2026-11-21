@@ -14,6 +14,10 @@ import { isGlobalSessionTarget, isSessionTargetAdmitted } from './session-admiss
 import { useSpaceArchivesStore } from '@/lib/spaces/space-archives';
 import { applySessionEventsToGlobalSessions } from './session-event-router';
 import type { SyncEvent } from '@/lib/opencode/events';
+import { useGlobalSyncStore } from './global-sync-store';
+import { beginLastSessionRestore } from './last-session-restore';
+import { clearLastActiveSession, persistLastActiveSession, readLastActiveSession } from './last-session-cache';
+import { getRuntimeKey } from '@/lib/runtime-switch';
 
 const session = (id: string, directory: string): Session => ({
   id, directory, projectID: 'external', title: id, time: { created: 1, updated: 1 },
@@ -31,6 +35,7 @@ const originalResolver = getRuntimeUrlResolver();
 const originalProjects = useProjectsStore.getState();
 const originalGlobal = useGlobalSessionsStore.getState();
 const originalUI = useSessionUIStore.getState();
+const originalGlobalSync = useGlobalSyncStore.getState();
 let trusted = false;
 let runsCode = true;
 let registrations: string[];
@@ -89,9 +94,67 @@ afterEach(async () => {
   useProjectsStore.setState(originalProjects, true);
   useGlobalSessionsStore.setState(originalGlobal, true);
   useSessionUIStore.setState(originalUI, true);
+  useGlobalSyncStore.setState(originalGlobalSync, true);
 });
 
 describe('session admission', () => {
+  const linkedProject = { id: 'linked-project', worktree: '/kept', sandboxes: ['/linked'], time: { created: 1, updated: 1 } };
+
+  test('restores the real saved selection when global projects load after mount', async () => {
+    const saved = session('saved-linked-session', '/linked');
+    const runtimeKey = getRuntimeKey();
+    useGlobalSyncStore.setState({ projects: [], ready: false });
+    useGlobalSessionsStore.getState().applySnapshot([saved], []);
+    persistLastActiveSession(runtimeKey, { sessionId: saved.id, directory: '/linked' });
+    const stop = subscribeSessionAdmission();
+    try {
+      const attempt = beginLastSessionRestore({ selectNow: true, refresh: false })();
+      await settle();
+      expect(useSessionUIStore.getState().currentSessionId).toBeNull();
+      useGlobalSyncStore.setState({ projects: [linkedProject], ready: true });
+      expect(await attempt).toBe('restored');
+      expect(useSessionUIStore.getState().currentSessionId).toBe(saved.id);
+      expect(useSessionUIStore.getState().currentSessionDirectory).toBe('/linked');
+      expect(useSessionUIStore.getState().currentSessionKeepsSingleProject).toBe(true);
+
+      useGlobalSyncStore.setState({ projects: [] });
+      expect(useSessionUIStore.getState().currentSessionId).toBeNull();
+      expect(readLastActiveSession(runtimeKey)?.sessionId).toBe(saved.id);
+      useGlobalSyncStore.setState({ projects: [linkedProject] });
+      expect(useSessionUIStore.getState().currentSessionId).toBe(saved.id);
+      expect(useSessionUIStore.getState().currentSessionKeepsSingleProject).toBe(true);
+      expect(trustReads).toBe(0);
+      expect(registrationReads).toBe(0);
+    } finally {
+      stop();
+      clearLastActiveSession(runtimeKey);
+    }
+  });
+
+  test('late global projects do not override a draft the user opens during saved-session restore', async () => {
+    const saved = session('saved-before-draft', '/linked');
+    const runtimeKey = getRuntimeKey();
+    useGlobalSyncStore.setState({ projects: [], ready: false });
+    useGlobalSessionsStore.getState().applySnapshot([saved], []);
+    persistLastActiveSession(runtimeKey, { sessionId: saved.id, directory: '/linked' });
+    const stop = subscribeSessionAdmission();
+    try {
+      const attempt = beginLastSessionRestore({ selectNow: true, refresh: false })();
+      await settle();
+      useSessionUIStore.getState().openNewSessionDraft();
+      expect(await attempt).toBe('none');
+      useGlobalSyncStore.setState({ projects: [linkedProject], ready: true });
+      expect(useSessionUIStore.getState().currentSessionId).toBeNull();
+      expect(useSessionUIStore.getState().newSessionDraft.open).toBe(true);
+      expect(readLastActiveSession(runtimeKey)).toBeNull();
+      expect(trustReads).toBe(0);
+      expect(registrationReads).toBe(0);
+    } finally {
+      stop();
+      clearLastActiveSession(runtimeKey);
+    }
+  });
+
   test('Global active and archived records need no project registration or trust prompt', async () => {
     const active = { ...session('global-active', '/outside'), projectID: 'global' };
     const archived = { ...session('global-archived', '/archive-outside'), projectID: 'global', time: { created: 1, updated: 1, archived: 2 } };

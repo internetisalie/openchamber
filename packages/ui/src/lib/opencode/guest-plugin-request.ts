@@ -29,6 +29,7 @@ const readBoundedBody = async (response: Response): Promise<string> => {
 };
 
 export const isGuestPluginRoutePath = (pluginId: string, path: string): boolean => {
+  if (path.includes('?') || path.includes('#')) return false;
   const prefix = `/api/plugins/${encodeURIComponent(pluginId)}`;
   return new URL(`${prefix}${path}`, 'http://openchamber.invalid').pathname.startsWith(`${prefix}/`);
 };
@@ -43,6 +44,10 @@ export const requestGuestPluginRoute = async (
   if (!isGuestPluginRoutePath(request.pluginId, request.path)) throw new Error('Plugin route escaped its declared prefix.');
   for (const [key, value] of Object.entries(request.query ?? {})) {
     if (!key) throw new Error('Plugin request query is malformed.');
+    // Only the host supplies location scope, through the directory header.
+    if (key === 'directory' || key === 'location[directory]') {
+      throw new Error('Plugin request cannot specify a directory.');
+    }
     url.searchParams.set(key, value);
   }
 

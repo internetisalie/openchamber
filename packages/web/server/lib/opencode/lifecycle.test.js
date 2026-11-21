@@ -5,6 +5,7 @@ import path from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { injectedEnvKeys } from '../injected-env.js';
+import { resolveOpenCodeEnvConfig } from './env-config.js';
 
 const spawnMock = vi.fn();
 const spawnSyncMock = vi.fn();
@@ -136,6 +137,29 @@ const createRuntime = (overrides = {}, stateOverrides = {}, envOverrides = {}) =
 };
 
 describe('OpenCode lifecycle', () => {
+  it.each([{}, { OPENCODE_HOST: 'http://opencode' }])('never starts managed OpenCode in skip-start mode without a usable endpoint (%j)', async (settings) => {
+    const logger = { warn: vi.fn() };
+    const config = resolveOpenCodeEnvConfig({ env: settings, logger });
+    const ensureOpencodeCliEnv = vi.fn(() => '/fake/bin/opencode');
+    const reapManagedOrphanedProcesses = vi.fn(async () => ({ reaped: 0 }));
+    globalThis.fetch = vi.fn(async () => { throw new Error('Unexpected fetch'); });
+    const runtime = createRuntime({ ensureOpencodeCliEnv, reapManagedOrphanedProcesses }, {}, {
+      ENV_CONFIGURED_OPENCODE_HOST: config.configuredOpenCodeHost,
+      ENV_CONFIGURED_OPENCODE_PORT: config.configuredOpenCodePort,
+      ENV_EFFECTIVE_PORT: config.effectivePort,
+      ENV_SKIP_OPENCODE_START: true,
+    });
+
+    await runtime.bootstrapOpenCodeAtStartup();
+    expect(runtime.testState.lastOpenCodeError).toMatch(/OPENCODE_SKIP_START.*OPENCODE_HOST/);
+    expect(runtime.testState.isOpenCodeReady).toBe(false);
+    expect(runtime.scheduleBootstrapRetry(vi.fn())).toBe(false);
+    await expect(runtime.restartOpenCode()).rejects.toThrow(/OPENCODE_SKIP_START.*OPENCODE_HOST/);
+    expect(ensureOpencodeCliEnv).not.toHaveBeenCalled();
+    expect(spawnMock).not.toHaveBeenCalled();
+    expect(globalThis.fetch).not.toHaveBeenCalled();
+  });
+
   it('uses the resolved binary directly on startup and managed restart without an env override', async () => {
     delete process.env.OPENCODE_BINARY;
     const binaries = ['/bundle one/opencode-cli/opencode', '/bundle two/opencode-cli/opencode'];

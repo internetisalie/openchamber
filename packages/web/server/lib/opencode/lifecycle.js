@@ -893,8 +893,15 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
   // `whileStopped` runs after the managed process has exited and before the
   // new one starts. Its failure is reported after the restart, so the server
   // comes back either way.
+  const requireExternalEndpoint = () => {
+    if (env.ENV_SKIP_OPENCODE_START && !env.ENV_EFFECTIVE_PORT) {
+      throw new Error('OPENCODE_SKIP_START requires an OPENCODE_HOST with an explicit port or an OPENCODE_PORT.');
+    }
+  };
+
   const restartOpenCode = async (reason = 'managed-restart', { whileStopped } = {}) => {
     if (state.isShuttingDown) return;
+    requireExternalEndpoint();
     if (whileStopped && state.isExternalOpenCode) throw new Error('An external OpenCode server cannot be stopped by OpenChamber.');
     if (state.currentRestartPromise) {
       if (!whileStopped) {
@@ -1162,6 +1169,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
     let unsupportedExternalVersion = null;
     recordStartupPerformance('opencode.bootstrap.start');
     try {
+      requireExternalEndpoint();
       // Before doing anything, reap any OpenCode process WE spawned in a prior
       // run that was orphaned by a crash/hard-exit. Verified + scoped to our own
       // pids, so it never touches a live instance's or the user's own server.
@@ -1296,6 +1304,7 @@ export const createOpenCodeLifecycleRuntime = (deps) => {
   const scheduleBootstrapRetry = (bootstrap, onAlreadyRunning) => {
     if (
       !lastBootstrapError
+      || env.ENV_SKIP_OPENCODE_START
       || isBinaryRejected(lastBootstrapError)
       || state.openCodeProcess
       || state.isExternalOpenCode
