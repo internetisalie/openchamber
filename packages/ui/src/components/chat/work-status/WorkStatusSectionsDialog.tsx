@@ -20,6 +20,7 @@ import {
   areAllWorkStatusSectionsHidden,
   isExtensionSectionId,
   isWorkStatusSectionVisible,
+  mergeWorkStatusSectionOrder,
   resolveWorkStatusSectionOrder,
   type WorkStatusPanelSectionId,
 } from './sections';
@@ -107,11 +108,9 @@ export const WorkStatusSectionsDialog: React.FC<{
     const from = sectionOrder.findIndex((id) => id === active.id);
     const to = sectionOrder.findIndex((id) => id === over.id);
     if (from < 0 || to < 0) return;
-    // Sections of extensions that are paused or not loaded right now keep
-    // their saved slot at the end instead of being forgotten.
-    const next = arrayMove(sectionOrder, from, to);
-    const shown = new Set<string>(next);
-    setSectionOrder([...next, ...storedOrder.filter((id) => !shown.has(id))]);
+    // Sections that are not listed right now (paused extensions, sections
+    // this runtime or the phone does not offer) keep their saved slots.
+    setSectionOrder(mergeWorkStatusSectionOrder(storedOrder, arrayMove(sectionOrder, from, to)));
   };
   const accessibility = React.useMemo(() => {
     const position = (activeId: string | number, overId: string | number = activeId) => {

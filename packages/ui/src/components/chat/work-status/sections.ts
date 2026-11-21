@@ -151,6 +151,31 @@ export const resolveWorkStatusSectionOrder = (
 };
 
 /**
+ * The saved order after the listed sections were rearranged to `shown`.
+ * Saved ids that are not listed (paused extensions, sections this runtime or
+ * the phone does not offer) keep their saved slots, and the listed ones fill
+ * the remaining slots in their new order. Listed ids the saved order did not
+ * know follow at the end.
+ */
+export const mergeWorkStatusSectionOrder = (
+  stored: readonly string[],
+  shown: readonly string[],
+): string[] => {
+  const listed = new Set<string>(shown);
+  const merged: string[] = [];
+  let next = 0;
+  for (const id of stored) {
+    if (!listed.has(id)) merged.push(id);
+    else if (next < shown.length) merged.push(shown[next++]);
+  }
+  const placed = new Set<string>(merged);
+  for (; next < shown.length; next += 1) {
+    if (!placed.has(shown[next])) merged.push(shown[next]);
+  }
+  return merged;
+};
+
+/**
  * Hidden sections are stored, not visible ones. Every section is on by default.
  */
 export const isWorkStatusSectionVisible = (

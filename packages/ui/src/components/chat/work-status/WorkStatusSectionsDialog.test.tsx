@@ -157,6 +157,20 @@ describe('section arrangement dialog', () => {
     expect(order()).toContain('ptys');
   });
 
+  test('a phone drag leaves the unavailable Usage and Agent PTYs where the saved order has them', async () => {
+    const saved = [...WORK_STATUS_SECTION_IDS];
+    await act(async () => useUIStore.setState({ isMobile: true, workStatusSectionOrder: saved }));
+    await render();
+    await act(async () => handle(0).dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0, clientX: 12, clientY: 18 })));
+    await act(async () => document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 12, clientY: 30 })));
+    await act(async () => document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 12, clientY: 90 })));
+    await act(async () => document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })));
+    const next = useUIStore.getState().workStatusSectionOrder;
+    expect(next).not.toEqual(saved);
+    expect(next.indexOf('usage')).toBe(saved.indexOf('usage'));
+    expect(next.indexOf('ptys')).toBe(saved.indexOf('ptys'));
+  });
+
   test('touch requires a hold and commits the same order as mouse dragging', async () => {
     const first = handle(0);
     const touch = (y: number) => new Touch({ identifier: 1, target: first, clientX: 12, clientY: y });

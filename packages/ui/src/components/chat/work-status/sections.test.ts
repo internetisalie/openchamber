@@ -5,12 +5,29 @@ import {
   areAllWorkStatusSectionsHidden,
   getWorkStatusPanelPresentation,
   isWorkStatusSectionVisible,
+  mergeWorkStatusSectionOrder,
   resolveWorkStatusSectionOrder,
   sanitizeWorkStatusHiddenSections,
   sanitizeWorkStatusSectionOrder,
 } from './sections';
 
 describe('section registry', () => {
+  test('a phone drag keeps the unavailable ids where they were saved', () => {
+    const stored = [...WORK_STATUS_SECTION_IDS];
+    const phone = resolveWorkStatusSectionOrder(stored, [], ['usage', 'ptys']);
+    const dragged = [phone[1], phone[0], ...phone.slice(2)];
+    const merged = mergeWorkStatusSectionOrder(stored, dragged);
+    expect(merged.indexOf('usage')).toBe(stored.indexOf('usage'));
+    expect(merged.indexOf('ptys')).toBe(stored.indexOf('ptys'));
+    expect(merged.slice(0, 3)).toEqual(['repository', 'session', 'usage']);
+    expect(merged).toHaveLength(stored.length);
+    expect([...merged].sort()).toEqual([...stored].sort());
+  });
+
+  test('a listed section the saved order did not know follows at the end', () => {
+    expect(mergeWorkStatusSectionOrder(['ext:gone', 'a', 'b'], ['b', 'a', 'ext:new'])).toEqual(['ext:gone', 'b', 'a', 'ext:new']);
+  });
+
   test('restores defaults for missing or empty saved order', () => {
     for (const value of [undefined, null, []]) {
       expect(sanitizeWorkStatusSectionOrder(value)).toEqual(['session', 'repository', 'usage', 'contextSources', 'telemetry', 'subagents', 'ptys', 'tasks', 'workflows', 'mcp', 'pinned']);
