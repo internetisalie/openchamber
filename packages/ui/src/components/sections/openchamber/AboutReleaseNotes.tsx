@@ -53,7 +53,7 @@ export const AboutReleaseNotes: React.FC<AboutReleaseNotesProps> = ({ version, s
 
   React.useEffect(() => {
     const controller = new AbortController();
-    void fetchReleaseNotes(version, since, controller.signal).then((releases) => {
+    void fetchReleaseNotes().then((releases) => {
       if (!controller.signal.aborted) setLoaded(releases ? { key: requestKey, releases } : null);
     });
     return () => controller.abort();

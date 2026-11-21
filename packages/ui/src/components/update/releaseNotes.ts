@@ -1,5 +1,4 @@
 import { z } from 'zod';
-import { runtimeFetch } from '@/lib/runtime-fetch';
 import { getCurrentIntlLocale } from '@/lib/i18n';
 
 const releaseNotesResponseSchema = z.object({
@@ -61,24 +60,13 @@ export function parseReleaseNotesMarkdown(content: string): ReleaseNotesContent 
 }
 
 /**
- * The releases of `version`, newest first: what an update from `since`
- * brings, or `version` alone. Null when the server could not read the notes
- * (offline, GitHub down, a server without the route); an empty list when the
- * changelog has none for it.
+ * The releases of `version`, newest first. This fork's server registers no
+ * `/api/openchamber/release-notes` route (the notes come from the upstream
+ * changelog, and the fork's updates are manual), so nothing is requested and
+ * the answer is always null, which Settings > About shows as no notes.
  */
-export async function fetchReleaseNotes(version: string, since: string | null, signal?: AbortSignal): Promise<ReleaseNotesRelease[] | null> {
-  try {
-    const response = await runtimeFetch('/api/openchamber/release-notes', {
-      query: since ? { version, since } : { version },
-      headers: { Accept: 'application/json' },
-      signal,
-    });
-    if (!response.ok) return null;
-    const parsed = releaseNotesResponseSchema.safeParse(await response.json());
-    return parsed.success ? parsed.data.releases : null;
-  } catch {
-    return null;
-  }
+export async function fetchReleaseNotes(): Promise<ReleaseNotesRelease[] | null> {
+  return null;
 }
 
 /** "Nov 8, 2026" for 2026-11-08 in the UI locale; the input as is when it is no date. */

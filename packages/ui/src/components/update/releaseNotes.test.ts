@@ -1,5 +1,19 @@
 import { describe, expect, test } from 'bun:test';
-import { parseReleaseNotesMarkdown } from './releaseNotes';
+import { fetchReleaseNotes, parseReleaseNotesMarkdown } from './releaseNotes';
+
+describe('fetchReleaseNotes', () => {
+  test('requests nothing from a fork server that has no release-notes route', async () => {
+    const original = globalThis.fetch;
+    const calls: unknown[] = [];
+    globalThis.fetch = (async (...args: unknown[]) => { calls.push(args); return new Response('', { status: 404 }); }) as unknown as typeof fetch;
+    try {
+      expect(await fetchReleaseNotes()).toBeNull();
+      expect(calls).toEqual([]);
+    } finally {
+      globalThis.fetch = original;
+    }
+  });
+});
 
 describe('parseReleaseNotesMarkdown', () => {
   test('reads the title, intro and groups the server writes for a release', () => {
