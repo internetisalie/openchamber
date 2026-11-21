@@ -8,7 +8,23 @@ import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { execFileSync } from 'node:child_process';
 
-import { ElectronSshManager } from './ssh-manager.mjs';
+import { ElectronSshManager, parseVersionToken } from './ssh-manager.mjs';
+
+describe('parseVersionToken', () => {
+  test('reads stable, fork and PoC-stamped versions from the remote --version output', () => {
+    expect(parseVersionToken('2.7.2')).toBe('2.7.2');
+    expect(parseVersionToken('v2.7.2-internetisalie.1')).toBe('2.7.2-internetisalie.1');
+    expect(parseVersionToken('2.7.2-internetisalie.1-poc.5')).toBe('2.7.2-internetisalie.1-poc.5');
+    expect(parseVersionToken('openchamber 2.7.2-internetisalie.1-poc.5 (build)')).toBe('2.7.2-internetisalie.1-poc.5');
+    expect(parseVersionToken('2.5.4-canary.20261030.1')).toBe('2.5.4-canary.20261030.1');
+  });
+
+  test('rejects text that is not a version', () => {
+    expect(parseVersionToken('')).toBeNull();
+    expect(parseVersionToken('2.7.2-')).toBeNull();
+    expect(parseVersionToken('2.7.2-poc..5')).toBeNull();
+  });
+});
 
 const servers = [];
 const tempDirs = [];
