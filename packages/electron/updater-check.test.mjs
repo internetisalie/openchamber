@@ -10,6 +10,10 @@ const originalFetch = globalThis.fetch;
 const disabled = process.env.OPENCHAMBER_DISABLE_UPDATES;
 afterEach(() => { globalThis.fetch = originalFetch; if (disabled === undefined) delete process.env.OPENCHAMBER_DISABLE_UPDATES; else process.env.OPENCHAMBER_DISABLE_UPDATES = disabled; });
 
+test('the checked-in fork release is the dev value, so the incomparable branch below runs in PR CI', () => {
+  assert.equal(webPackage.forkRelease, `${webPackage.version}-internetisalie.dev`);
+});
+
 test('checks only the fork without arming electron-updater or a cached payload', async () => {
   delete process.env.OPENCHAMBER_DISABLE_UPDATES;
   const calls = [];
