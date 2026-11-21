@@ -50,6 +50,43 @@ describe('telemetry settings migration', () => {
     });
   });
 
+  test('migrates a v26 arrangement to v31: Agent PTYs and Tasks join after Subagents, the phone list is kept', async () => {
+    const writes: PersistedUI[] = [];
+    const arranged = ['mcp', 'session', 'repository', 'usage', 'subagents', 'telemetry', 'contextSources', 'workflows', 'pinned'];
+    useUIStore.persist.setOptions({ storage: {
+      getItem: () => ({ version: 26, state: {
+        workStatusSectionOrder: arranged,
+        workStatusSectionOrderExplicit: true,
+        workStatusHiddenSections: ['mcp'],
+        workStatusHiddenSectionsExplicit: true,
+        mobileWorkStatusHiddenSections: ['mcp', 'subagents'],
+      } }),
+      setItem: (_name, value) => { writes.push(value); },
+      removeItem: () => undefined,
+    } });
+    await useUIStore.persist.rehydrate();
+    const expected = ['mcp', 'session', 'repository', 'usage', 'subagents', 'ptys', 'tasks', 'telemetry', 'contextSources', 'workflows', 'pinned'];
+    expect(useUIStore.getState().workStatusSectionOrder).toEqual(expected);
+    expect(useUIStore.getState().workStatusHiddenSections).toEqual(['mcp']);
+    expect(useUIStore.getState().mobileWorkStatusHiddenSections).toEqual(['mcp', 'subagents']);
+    expect(writes.at(-1)).toMatchObject({
+      version: 31,
+      state: { workStatusSectionOrder: expected, mobileWorkStatusHiddenSections: ['mcp', 'subagents'] },
+    });
+  });
+
+  test('a v26 state with no phone list starts the phone with Subagents hidden and no Usage or Agent PTYs entry', async () => {
+    useUIStore.persist.setOptions({ storage: {
+      getItem: () => ({ version: 26, state: { workStatusHiddenSections: [], workStatusHiddenSectionsExplicit: true } }),
+      setItem: () => undefined,
+      removeItem: () => undefined,
+    } });
+    await useUIStore.persist.rehydrate();
+    expect(useUIStore.getState().mobileWorkStatusHiddenSections).toEqual(['subagents']);
+    expect(useUIStore.getState().mobileWorkStatusHiddenSections).not.toContain('ptys');
+    expect(useUIStore.getState().workStatusHiddenSections).not.toContain('ptys');
+  });
+
   test('explicit hiding round-trips through the actual persisted projection and hydration', async () => {
     let saved: PersistedUI = { state: useUIStore.getInitialState(), version: originalOptions.version };
     useUIStore.persist.setOptions({ storage: {
