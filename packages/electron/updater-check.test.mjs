@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
 import { afterEach, test } from 'node:test';
 import { checkForDesktopUpdate } from './updater-check.mjs';
 import webPackage from '../web/package.json' with { type: 'json' };
@@ -33,8 +34,10 @@ test('checks only the fork without arming electron-updater or a cached payload',
   assert.equal(calls.length, 1);
 });
 
-test('the checked-in forkRelease is the dev value; the tag workflows stamp releases in CI', () => {
-  assert.equal(webPackage.forkRelease, `${webPackage.version}-internetisalie.dev`);
+test('the committed forkRelease is the dev value; the tag workflows stamp releases in CI', () => {
+  // The tag release workflow stamps the working tree before the tests run, so read the committed file.
+  const committed = JSON.parse(execFileSync('git', ['show', 'HEAD:packages/web/package.json'], { cwd: import.meta.dirname, encoding: 'utf8' }));
+  assert.equal(committed.forkRelease, `${committed.version}-internetisalie.dev`);
 });
 
 test('does not fetch release metadata when checks are disabled', async () => {
