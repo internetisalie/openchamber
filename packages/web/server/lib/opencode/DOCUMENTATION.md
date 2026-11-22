@@ -1175,28 +1175,20 @@ or shutdown, including requests to an embedded desktop host. See
 `../DOCUMENTATION.md` for the shared fork policy.
 
 - `registerOpenChamberRoutes(app, dependencies)`: registers OpenChamber endpoints:
+  - `GET /api/openchamber/enterprise-policy`
+    - Returns the public enterprise policy.
   - `GET /api/openchamber/update-check`
-    - A server installed from npm follows the update channel picked in
-      Settings → About (`serverUpdateChannel` in `settings.json`; without a
-      pick, Canary for a Canary build and Stable otherwise). On Canary the
-      target is the `canary` npm dist-tag, published nightly by
-      `.github/workflows/canary.yml`; Stable from a Canary build offers the
-      `latest` dist-tag even though it is older, which is the way back. Both
-      read npm, since the website API serves only the release; it still gets
-      the check-in. The install route and `openchamber update` read the same
-      channel through `checkForUpdates`. The desktop app keeps its own
-      `desktopUpdateChannel`. The Android app ships only as Canary until it
-      has a store release: every Android build, an APK from an earlier release
-      included, is offered the newest APK of the `canary` GitHub pre-release, downloaded from the R2 mirror (`downloads.openchamber.dev/desktop/canary/`) once canary.yml put it there. Other app types stay on releases.
-  - `GET /api/openchamber/release-notes?version=&since=`
-    - Settings → About shows these. The answer is the releases of `version` as data, `{ releases: [{ version, date, title, intro, groups: [{ key, bullets }] }] }`,
-      read from the website API's `/v1/changelog/full`, which keeps the last
-      good copy through a GitHub outage, else from `changelog/index.json` on
-      `main`; a Canary version reads the Canary nights
-      (`lib/changelog/update-notes.js`). With an older `since`
-      it lists what an update brings, `(since, version]`; otherwise `version`
-      alone. An empty list means the changelog has no notes for it; 502 means
-      no source could be read, so the page never shows an outage as "no notes".
+    - Takes no request parameters. Answers `checkForUpdates()`: the latest
+      non-draft, non-prerelease GitHub release of `internetisalie/openchamber`,
+      `{ version, repository, releaseUrl, body, date, installBlocked: 'manual-install', currentVersion, available }`.
+      `available` is `true` when the release is a higher numbered fork revision
+      than the installed `forkRelease`, `false` when not, and `null` when the
+      installed identity is a dev or candidate build that cannot be ordered.
+      With `OPENCHAMBER_DISABLE_UPDATES` set, it answers
+      `{ available: false, disabled: true, currentVersion, installBlocked }`
+      without a network request. A failed or malformed release lookup answers
+      HTTP 502 `{ available: null, error }`.
+    - There are no update channels, npm dist-tags or release-notes route.
   - `POST /api/openchamber/update-install`
     - Always answers HTTP 409 `FORK_MANUAL_UPDATE_REQUIRED` with a fork release link.
     - `OPENCHAMBER_DISABLE_UPDATES=1` or `true` suppresses release checks. It does not enable installation. OpenCode checks also honor `OPENCODE_DISABLE_AUTOUPDATE`; OpenCode installation routes independently refuse with HTTP 409.

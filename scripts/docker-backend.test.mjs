@@ -85,7 +85,7 @@ test('Docker verification rejects bare versions and extra version text', () => {
 });
 
 test('numbered candidate image tags accept the checked-in backend pin', () => {
-  assert.doesNotThrow(() => checkForkReleaseTag('v2.7.2-internetisalie.1-poc.2', '2.7.2', electron.opencodeCli, dockerfile, nixTag));
+  assert.doesNotThrow(() => checkForkReleaseTag({ tag: 'v2.7.2-internetisalie.1-poc.2', appVersion: '2.7.2', electronPin: electron.opencodeCli, dockerfile, nixTag }));
 });
 
 test('production tags reject PoC and dev pins even when both packages agree', () => {
@@ -93,12 +93,12 @@ test('production tags reject PoC and dev pins even when both packages agree', ()
   const candidateTag = 'v2.7.2-internetisalie.1-poc.2';
   const poc = { ...electron.opencodeCli, version: '2.3.2-internetisalie.42-poc.1' };
   const pocDockerfile = dockerfile.replace(pin[1], poc.version);
-  assert.doesNotThrow(() => checkForkReleaseTag(candidateTag, '2.7.2', poc, pocDockerfile, `v${poc.version}`));
-  assert.throws(() => checkForkReleaseTag(stableTag, '2.7.2', poc, pocDockerfile, `v${poc.version}`), /exact stable/);
+  assert.doesNotThrow(() => checkForkReleaseTag({ tag: candidateTag, appVersion: '2.7.2', electronPin: poc, dockerfile: pocDockerfile, nixTag: `v${poc.version}` }));
+  assert.throws(() => checkForkReleaseTag({ tag: stableTag, appVersion: '2.7.2', electronPin: poc, dockerfile: pocDockerfile, nixTag: `v${poc.version}` }), /exact stable/);
   const dev = { ...electron.opencodeCli, version: '2.3.2-internetisalie.dev' };
   const devDockerfile = dockerfile.replace(pin[1], dev.version);
-  assert.throws(() => checkForkReleaseTag(stableTag, '2.7.2', dev, devDockerfile, `v${dev.version}`), /exact stable/);
-  assert.throws(() => checkForkReleaseTag(candidateTag, '2.7.2', dev, devDockerfile, `v${dev.version}`), /exact numbered/);
+  assert.throws(() => checkForkReleaseTag({ tag: stableTag, appVersion: '2.7.2', electronPin: dev, dockerfile: devDockerfile, nixTag: `v${dev.version}` }), /exact stable/);
+  assert.throws(() => checkForkReleaseTag({ tag: candidateTag, appVersion: '2.7.2', electronPin: dev, dockerfile: devDockerfile, nixTag: `v${dev.version}` }), /exact numbered/);
 });
 
 test('production tag requires an exact stable fork pin and matching nonzero checksum', () => {
@@ -106,12 +106,12 @@ test('production tag requires an exact stable fork pin and matching nonzero chec
   const fixture = { version: '2.3.2-internetisalie.42', sha256: sha256('release policy fixture') };
   const fixtureDockerfile = dockerfile.replace(pin[1], fixture.version).replace(pin[2], fixture.sha256);
   const check = (overrides, docker = fixtureDockerfile, tag = 'v2.3.2-internetisalie.42') =>
-    checkForkReleaseTag('v2.7.2-internetisalie.1', '2.7.2', { ...fixture, ...overrides }, docker, tag);
+    checkForkReleaseTag({ tag: 'v2.7.2-internetisalie.1', appVersion: '2.7.2', electronPin: { ...fixture, ...overrides }, dockerfile: docker, nixTag: tag });
   assert.doesNotThrow(() => check({}));
   assert.throws(() => check({ sha256: undefined }), /requires a nonzero SHA-256/);
   assert.throws(() => check({ sha256: '0'.repeat(64) }), /requires a nonzero SHA-256/);
   assert.throws(() => check({}, fixtureDockerfile.replace(fixture.sha256, sha256('different'))), /same OpenCode version and SHA-256/);
   assert.throws(() => check({}, fixtureDockerfile.replace(fixture.version, '2.3.2-internetisalie.43')), /same OpenCode version and SHA-256/);
   assert.throws(() => check({}, fixtureDockerfile, 'v2.3.2-internetisalie.42-poc.1'), /same OpenCode tag/);
-  assert.throws(() => checkForkReleaseTag('v2.7.3-internetisalie.1', '2.7.2', fixture, fixtureDockerfile, 'v2.3.2-internetisalie.42'), /Expected a numbered fork tag/);
+  assert.throws(() => checkForkReleaseTag({ tag: 'v2.7.3-internetisalie.1', appVersion: '2.7.2', electronPin: fixture, dockerfile: fixtureDockerfile, nixTag: 'v2.3.2-internetisalie.42' }), /Expected a numbered fork tag/);
 });

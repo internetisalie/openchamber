@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 const exactVersion = '(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)';
 const forkVersion = new RegExp(`^(${exactVersion})-internetisalie\\.[1-9]\\d*(-poc\\.[1-9]\\d*)?$`);
 
-export function checkForkReleaseTag(tag, appVersion, electronPin, dockerfile, nixTag) {
+export function checkForkReleaseTag({ tag, appVersion, electronPin, dockerfile, nixTag }) {
   const release = tag.startsWith('v') && forkVersion.exec(tag.slice(1));
   if (!release || release[1] !== appVersion) {
     throw new Error(`Expected a numbered fork tag for OpenChamber ${appVersion}, got ${tag}`);
@@ -29,5 +29,5 @@ if (import.meta.main) {
   const appVersion = JSON.parse(read('packages/web/package.json')).version;
   const { opencodeCli } = JSON.parse(read('packages/electron/package.json'));
   const nixTag = JSON.parse(read('flake.lock')).nodes.opencode.original.ref;
-  checkForkReleaseTag(process.argv[2] ?? '', appVersion, opencodeCli, read('Dockerfile'), nixTag);
+  checkForkReleaseTag({ tag: process.argv[2] ?? '', appVersion, electronPin: opencodeCli, dockerfile: read('Dockerfile'), nixTag });
 }

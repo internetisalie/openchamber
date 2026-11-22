@@ -33,6 +33,10 @@ test('checks only the fork without arming electron-updater or a cached payload',
   assert.equal(calls.length, 1);
 });
 
+test('the checked-in forkRelease is the dev value; the tag workflows stamp releases in CI', () => {
+  assert.equal(webPackage.forkRelease, `${webPackage.version}-internetisalie.dev`);
+});
+
 test('does not fetch release metadata when checks are disabled', async () => {
   process.env.OPENCHAMBER_DISABLE_UPDATES = '1';
   globalThis.fetch = async () => assert.fail('Release metadata requested with updates disabled');
