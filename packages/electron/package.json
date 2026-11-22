@@ -8,8 +8,8 @@
   "type": "module",
   "main": "./dist-bundle/entry.mjs",
   "opencodeCli": {
-    "version": "2.3.2-internetisalie.1-poc.6",
-    "sha256": "e4ceb8a30c892e9003b0b441404c8533a889b8c23d85c3d6fd94c2446502d727"
+    "version": "2.3.2-internetisalie.1",
+    "sha256": "1ad27563118985930cc6ba0dd48a918036c40fa7c5c63cd6c18fb3272f461c36"
   },
   "dependencies": {
     "@openchamber/web": "workspace:*",
