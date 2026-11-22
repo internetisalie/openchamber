@@ -46,11 +46,11 @@
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1790323409,
-        "narHash": "sha256-VVTPf+Hyd5ebpjBMHmrLMSBIeW6ls48Bqtosj7CNKLA=",
+        "lastModified": 1794042290,
+        "narHash": "sha256-ziZn2PvCJE5JEEpqTdxXwJpPB+L3YqoCpTAMCzyaP3U=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "e94cb152ed51bd6e24eb4a41f1460252beb52cd2",
+        "rev": "f4a03c008967841f2a0b3cb7c436fc6fc31671f6",
         "type": "github"
       },
       "original": {
@@ -81,16 +81,16 @@
         "nixpkgs": "nixpkgs_2"
       },
       "locked": {
-        "lastModified": 1793248032,
-        "narHash": "sha256-7SMutix/nhKC+JgAVq6TbrGLZwqbB+6wSKzTBzLmN1o=",
-        "owner": "anomalyco",
+        "lastModified": 1795268667,
+        "narHash": "sha256-sKIS9imyCGC2NBSoz/IDfhKuUKB8Q/fB1jhXkvtzQ9E=",
+        "owner": "internetisalie",
         "repo": "opencode",
-        "rev": "3ebcf9a32c7b28f658cfee80775448929361727a",
+        "rev": "43e089abcb7b4666b8114a327c1b7d8942e5307f",
         "type": "github"
       },
       "original": {
-        "owner": "anomalyco",
-        "ref": "v2.2.1",
+        "owner": "internetisalie",
+        "ref": "v2.3.2-internetisalie.1-poc.6",
         "repo": "opencode",
         "type": "github"
       }

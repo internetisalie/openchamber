@@ -11,7 +11,7 @@ const guest = (overrides: Partial<InstalledGuest> = {}): InstalledGuest => ({
   icon: 'apps',
   entry: 'panel/index.html',
   openCode: { plugins: [{ id: 'example-plugin', methods: ['GET', 'POST'] }] },
-  capabilities: { requested: ['opencode'], granted: ['opencode'] },
+  capabilities: { requested: ['opencode-plugin'], granted: ['opencode-plugin'] },
   ...overrides,
 });
 
@@ -49,7 +49,7 @@ describe('proxyGuestOpenCodeRequest', () => {
     };
     const attempts = [
       proxyGuestOpenCodeRequest(guest({ enabled: false }), request(), '/repo', requester),
-      proxyGuestOpenCodeRequest(guest({ capabilities: { requested: ['opencode'], granted: [] } }), request(), '/repo', requester),
+      proxyGuestOpenCodeRequest(guest({ capabilities: { requested: ['opencode-plugin'], granted: [] } }), request(), '/repo', requester),
       proxyGuestOpenCodeRequest(guest(), request({ pluginId: 'other' }), '/repo', requester),
       proxyGuestOpenCodeRequest(guest(), request({ method: 'DELETE' }), '/repo', requester),
       proxyGuestOpenCodeRequest(guest(), request({ path: '/../config' }), '/repo', requester),

@@ -6,22 +6,35 @@ import { getDefaultTheme } from '@/lib/theme/themes';
 import { legacyChatQuoteAnchor, resolveChatQuoteAnchor } from '@/lib/chatQuoteAnchor';
 
 const browser = new Window({ url: 'http://localhost/' });
-Object.assign(globalThis, { window: browser, document: browser.document, navigator: browser.navigator,
+Object.assign(globalThis, { window: browser, document: browser.document, CustomEvent: browser.CustomEvent, navigator: browser.navigator,
   localStorage: browser.localStorage, sessionStorage: browser.sessionStorage, HTMLElement: browser.HTMLElement,
   HTMLAnchorElement: browser.HTMLAnchorElement, Element: browser.Element, Node: browser.Node, Text: browser.Text,
   SVGElement: browser.SVGElement, MutationObserver: browser.MutationObserver, DOMParser: browser.DOMParser,
-  Event: browser.Event,
+  Event: browser.Event, MouseEvent: browser.MouseEvent, PointerEvent: browser.PointerEvent,
   Range: browser.Range,
-  XMLSerializer: browser.XMLSerializer, IntersectionObserver: browser.IntersectionObserver, ResizeObserver: browser.ResizeObserver });
+  XMLSerializer: browser.XMLSerializer, IntersectionObserver: browser.IntersectionObserver, ResizeObserver: browser.ResizeObserver,
+  requestAnimationFrame: browser.requestAnimationFrame.bind(browser), cancelAnimationFrame: browser.cancelAnimationFrame.bind(browser) });
 Object.defineProperty(globalThis, 'IS_REACT_ACT_ENVIRONMENT', { configurable: true, value: true });
 Object.defineProperty(globalThis, 'customElements', { configurable: true, value: browser.customElements });
 const state = { codeBlockLineWrap: false, tableCellWrap: true, copyMessagesAsPlainText: false, mermaidRenderingMode: 'svg', setCodeBlockLineWrap: () => undefined, setTableCellWrap: () => undefined, openContextFile: (_directory: string, _path: string) => undefined, openContextFileAtLine: (_directory: string, _path: string, _line: number, _column: number) => undefined };
-mock.module('@/stores/useUIStore', () => ({ useUIStore: Object.assign((select: (value: typeof state) => never) => select(state), { getState: () => state }) }));
+mock.module('@/stores/useUIStore', () => ({ useUIStore: Object.assign((select: (value: typeof state) => never) => select(state), { getState: () => state }), normalizeContextPanelDirectoryKey: (value: string) => value }));
 mock.module('@/lib/router/openSessionFromRoute', () => ({
   openSession: async () => undefined,
   openSessionLink: async () => undefined,
 }));
 mock.module('@/hooks/useEffectiveDirectory', () => ({ useEffectiveDirectory: () => '/project' }));
+// Its hooks pull in the session side panel and the stores behind it; these tests draw no tracker chips.
+mock.module('@/components/sourceBoard/openTrackerItem', () => ({
+  trackerTargetOfUrl: () => null,
+  repositoryUrlOfItemLink: () => null,
+  isSameRepositoryItemLink: (left: string, right: string) => left === right,
+  trackerItemLabel: () => null,
+  wasTrackerItemRequested: () => false,
+  settleTrackerItemRequest: () => undefined,
+  useShowTrackerItem: () => null,
+  useOpenProjectOnBoard: () => null,
+  useOpenTrackerItem: () => () => undefined,
+}));
 mock.module('@/hooks/useRuntimeAPIs', () => ({ useRuntimeAPIs: () => ({ runtime: { isVSCode: false }, editor: undefined }) }));
 const openedLinks: string[] = [];
 mock.module('./useOpenChatLink', () => ({ useOpenChatLink: () => (href: string) => { openedLinks.push(href); } }));
@@ -46,6 +59,14 @@ const render = async (content: string, isStreaming = false, allowRawHtml = false
   });
   void isStreaming;
 };
+
+test('chat prose resolves each paragraph, list item and quote by most of its words', async () => {
+  await render('- **nao** — رخصة Apache 2.0 مفتوحة المصدر\n- Run the tests first\n- 42\n\n> Lightdash بيان مفتوح المصدر مبني على dbt\n\nThe Arabic label is مرحبا, and this paragraph is English.');
+  expect(Array.from(host.querySelectorAll('li'), (item) => item.getAttribute('dir'))).toEqual(['rtl', 'ltr', 'auto']);
+  expect(host.querySelector('ul')?.getAttribute('dir')).toBeNull();
+  expect(host.querySelector('blockquote')?.getAttribute('dir')).toBe('rtl');
+  expect(Array.from(host.querySelectorAll('p'), (paragraph) => paragraph.getAttribute('dir'))).toContain('ltr');
+});
 
 test('renders semantic Markdown through native Streamdown code and table components', async () => {
   await render('**bold**\n\n`inline`\n\n```text\nfirst\nsecond\n```\n\n| name | value |\n| --- | --- |\n| [link](https://example.com) | 2 |');
@@ -161,7 +182,7 @@ test('on the phone a file link also opens the files drawer (#5486)', async () =>
   const open = spyOn(state, 'openContextFile');
   const { DedicatedMobileAppProvider } = await import('@/apps/mobileAppContext');
   let filesOpened = 0;
-  const actions = { openChanges: () => undefined, openFiles: () => { filesOpened += 1; }, openSourceBoard: () => undefined };
+  const actions = { openChanges: () => undefined, openFiles: () => { filesOpened += 1; }, openSourceBoard: () => undefined, openPlan: () => undefined, openReceivedPage: () => undefined };
   try {
     const content = React.createElement(Renderer.MarkdownContent, { content: '[View README.md](README.md)', directory: '/project', enableFileReferences: true, settled: true });
     await act(() => root.render(React.createElement(I18nProvider, null, React.createElement(DedicatedMobileAppProvider, { actions, children: content }))));
@@ -236,6 +257,16 @@ test('links keep the old renderer behaviour: inert when unsafe, bare URLs LTR, f
   expect(openedLinks).toEqual([]);
 });
 
+test('a bare link takes the same way as a named one', async () => {
+  openedLinks.length = 0;
+  const url = 'https://github.com/openchamber/openchamber/pull/6206';
+  await render(`${url} and [#6206](${url})`);
+  for (const anchor of host.querySelectorAll('a')) {
+    anchor.dispatchEvent(new window.MouseEvent('click', { bubbles: true, cancelable: true }));
+  }
+  expect(openedLinks).toEqual([url, url]);
+});
+
 test('a code block without a language is labelled text', async () => {
   await render('```\nplain\n```');
   expect(host.querySelector('[data-streamdown="code-block-header"]')?.textContent).toContain('text');
@@ -269,13 +300,17 @@ test('code rows and selection preserve intentional trailing blank lines', async 
 test('table columns preserve short content and allocate remaining width to long content', async () => {
   const clientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
   const bounds = spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
+    // A heading measured at min-content is as wide as its longest word.
+    if (this.style.width === 'min-content') return new window.DOMRect(0, 0, 60, 30);
     const width = this.tagName === 'TH' || this.tagName === 'TD' ? this.textContent?.includes('long') ? 600 : 120 : 502;
     return new window.DOMRect(0, 0, width, 30);
   });
   Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 502 });
   try {
+    // The long heading breaks between its words, so its column stays at the
+    // narrow minimum, plus the pixel a heading keeps against subpixel wrapping.
     await render('| long heading over short values | long |\n| --- | --- |\n| `id` | `long description` |');
-    expect(Array.from(host.querySelectorAll('col'), (col) => col.style.width)).toEqual(['120px', '380px']);
+    expect(Array.from(host.querySelectorAll('col'), (col) => col.style.width)).toEqual(['121px', '379px']);
     expect(host.querySelector('td')?.style.getPropertyValue('--oc-table-code-wrap')).toBe('nowrap');
     expect(host.querySelector<HTMLElement>('td:last-child')?.style.getPropertyValue('--oc-table-code-wrap')).toBe('normal');
   } finally {
@@ -332,9 +367,49 @@ test('fitTables fits dialog columns without changing the saved table wrap prefer
     expect(Array.from(host.querySelectorAll('col'), (col) => col.style.width)).toEqual(['120px', '380px']);
     expect(host.querySelector('[data-markdown-content]')?.getAttribute('data-table-wrap')).toBe('true');
     expect(host.querySelector<HTMLElement>('td:last-child')?.style.getPropertyValue('--oc-table-code-wrap')).toBe('normal');
+    expect(host.querySelector('[data-streamdown="table-controls"] button[aria-pressed]')).toBeNull();
     expect(state.tableCellWrap).toBe(false);
   } finally {
     state.tableCellWrap = previousWrap;
+    bounds.mockRestore();
+    if (clientWidth) Object.defineProperty(HTMLElement.prototype, 'clientWidth', clientWidth);
+    else Reflect.deleteProperty(HTMLElement.prototype, 'clientWidth');
+    await act(() => root.render(null));
+  }
+});
+
+test('a resized Markdown column keeps its width on remount and double-click resets it', async () => {
+  const clientWidth = Object.getOwnPropertyDescriptor(HTMLElement.prototype, 'clientWidth');
+  const bounds = spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(() => new window.DOMRect(0, 0, 120, 30));
+  Object.defineProperty(HTMLElement.prototype, 'clientWidth', { configurable: true, get: () => 502 });
+  const draw = () => act(() => root.render(React.createElement(I18nProvider, null,
+    React.createElement(Renderer.MarkdownContent, {
+      content: '| name | value |\n| --- | --- |\n| A | B |',
+      tableWidthScope: '/column-width-test.md', enableFileReferences: false,
+    }))));
+  const widths = () => Array.from(host.querySelectorAll('col'), (col) => col.style.width);
+  const resizeHandle = () => {
+    const handle = host.querySelector('th [role="separator"]');
+    if (!handle) throw new Error('Column resize handle missing');
+    return handle;
+  };
+  try {
+    await draw();
+    expect(widths()).toEqual(['120px', '120px']);
+    const handle = resizeHandle();
+    await act(() => {
+      for (const [type, clientX] of [['pointerdown', 120], ['pointermove', 190], ['pointerup', 190]] as const) {
+        handle.dispatchEvent(new window.PointerEvent(type, { bubbles: true, button: 0, pointerId: 1, clientX }));
+      }
+    });
+    expect(widths()).toEqual(['190px', '120px']);
+    await act(() => root.render(null));
+    await draw();
+    expect(widths()).toEqual(['190px', '120px']);
+    await act(() => { resizeHandle().dispatchEvent(new window.MouseEvent('dblclick', { bubbles: true })); });
+    expect(widths()).toEqual(['120px', '120px']);
+  } finally {
+    browser.localStorage.removeItem('openchamber.columnWidths.v1');
     bounds.mockRestore();
     if (clientWidth) Object.defineProperty(HTMLElement.prototype, 'clientWidth', clientWidth);
     else Reflect.deleteProperty(HTMLElement.prototype, 'clientWidth');
@@ -716,6 +791,34 @@ test('wrap settings update the actual Markdown root without replacing content', 
   expect(host.querySelector('p') === stable).toBe(true);
   expect(paragraph?.textContent).toBe('same source');
   state.tableCellWrap = true;
+});
+
+test('wrap toggle buttons show their pressed fill while active (#6042)', async () => {
+  const source = '```js\nconst x = 1;\n```\n\n| a | b |\n| --- | --- |\n| 1 | 2 |';
+  const rerender = () => act(async () => {
+    root.render(React.createElement(I18nProvider, null, React.createElement(Renderer.MarkdownContent, { content: source, enableFileReferences: false })));
+  });
+  await render(source);
+
+  state.codeBlockLineWrap = true;
+  state.tableCellWrap = true;
+  await rerender();
+  const codeWrap = host.querySelector('[data-streamdown="code-block-actions"] button[aria-pressed="true"]');
+  expect(codeWrap).not.toBeNull();
+  // The pressed fill is what tells the user the toggle is on; aria-pressed
+  // alone was invisible on the ghost variant (#6042).
+  expect(codeWrap?.className).toContain('bg-interactive-selection');
+  const tableWrap = host.querySelector('[data-streamdown="table-controls"] button[aria-pressed="true"]');
+  expect(tableWrap).not.toBeNull();
+  expect(tableWrap?.className).toContain('bg-interactive-selection');
+
+  state.codeBlockLineWrap = false;
+  state.tableCellWrap = false;
+  await rerender();
+  const restingCodeWrap = host.querySelector('[data-streamdown="code-block-actions"] button[aria-pressed="false"]');
+  expect(restingCodeWrap?.className).not.toContain('bg-interactive-selection');
+  const restingTableWrap = host.querySelector('[data-streamdown="table-controls"] button[aria-pressed="false"]');
+  expect(restingTableWrap?.className).not.toContain('bg-interactive-selection');
 });
 
 test('same-source theme repaint keeps nodes and publishes syntax variables on the consumer root', async () => {

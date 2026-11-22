@@ -27,10 +27,15 @@ import type {
   Project,
   ProjectUpstream,
   ReadyChangeRequestInput,
+  DraftChangeRequestInput,
   CommentInput,
   DiscussionCloseReason,
   DiscussionCommentInput,
   ReviewChangeRequestInput,
+  ReviewCommentDeleteInput,
+  ReviewCommentInput,
+  ReviewCommentUpdateInput,
+  ReviewDiscardInput,
   SetDiscussionAnswerInput,
   SetDiscussionStateInput,
   SetStateInput,
@@ -54,6 +59,7 @@ import type {
   SourceControlMutationContext,
   SourceControlMutationReceipt,
   SourceControlReadyMutationResult,
+  SourceControlDraftMutationResult,
   SourceControlReviewMutationResult,
   SourceControlStateMutationResult,
   SourceControlResolvedMutationTarget,
@@ -69,12 +75,13 @@ import type {
   RepositoryReferenceReviewer,
   RepositorySelector,
 } from '@openchamber/ui/lib/api/types';
-import { SourceControlInstanceOtherProviderError } from '@openchamber/ui/lib/api/types';
+import { SourceControlInstanceAliasError, SourceControlInstanceOtherProviderError } from '@openchamber/ui/lib/api/types';
 import { runtimeFetch } from '@openchamber/ui/lib/runtime-fetch';
 import type { RuntimeFetchOptions } from '@openchamber/ui/lib/runtime-fetch';
 import { isSafeRepositoryEndpoint, parseBindingResponse, resolveBindingReadiness } from '../../server/lib/source-control/binding-contract.js';
+import { isExtensionProviderId, isProviderUserId } from '../../server/lib/source-control/provider-id.js';
 import type { SourceControlProviderDescriptor } from '@openchamber/ui/lib/source-control/providers/descriptor';
-import { fetchChangeRequestListStatuses, fetchRepositoryReferenceDetail, fetchRepositoryReferences, fetchRepositoryReferencesAcross } from './repository-references';
+import { fetchChangeRequestListStatuses, fetchChangeRequestReviewState, fetchRepositoryReferenceDetail, fetchRepositoryReferences, fetchRepositoryReferencesAcross } from './repository-references';
 import { BUILT_IN_SOURCE_CONTROL_PROVIDERS, fetchSourceControlProviders, providerPath } from './source-control-providers';
 
 interface ErrorResponse {
@@ -183,6 +190,7 @@ interface MutationResultDTO {
   outcome?: string;
   stacked?: boolean;
   ready?: boolean;
+  draft?: boolean;
   commented?: boolean;
   state?: string;
 }
@@ -190,18 +198,19 @@ interface MutationResultDTO {
 /** A review on the wire: `{ verdict, body? }` as before, or `{ votes, body? }` for a host that reviews by votes. */
 type ReviewBody = MutationBody<SourceControlExistingMutationTarget> & { body?: string } & (
   | { verdict: NonNullable<ReviewChangeRequestInput['verdict']> }
-  | { votes: Record<string, number> }
+  | { votes: Record<string, number>; publishDrafts?: boolean }
 );
 
 type SourceControlFetch = (input: string, init?: RuntimeFetchOptions) => Promise<Response>;
 type PostBody =
   | { flowId: string }
   | { token: string; username?: string }
+  | { sshUrl: string | null }
   | { accountId: string }
   | { disabled: boolean }
   | CreateBody
   | UpdateBody
-  | (MutationBody<SourceControlExistingMutationTarget> & { method: MergeChangeRequestInput['method'] })
+  | (MutationBody<SourceControlExistingMutationTarget> & { method: MergeChangeRequestInput['method']; cancel?: boolean })
   | (MutationBody<SourceControlExistingMutationTarget> & { body: string })
   | (MutationBody<SourceControlExistingMutationTarget> & { threadId: string; body: string })
   | (MutationBody<SourceControlExistingMutationTarget> & { threadId: string; resolved: boolean })
@@ -284,11 +293,16 @@ const normalizeHostInstance = (identity: SourceControlIdentity): SourceControlId
   return { provider: identity.provider, instance: host };
 };
 
-const normalizeIdentity = (identity: SourceControlIdentity): SourceControlIdentity => (
-  (providerInstances.get(identity.provider)?.format ?? 'origin') === 'host'
+const normalizeIdentity = (identity: SourceControlIdentity): SourceControlIdentity => {
+  const normalized = (providerInstances.get(identity.provider)?.format ?? 'origin') === 'host'
     ? normalizeHostInstance(identity)
-    : normalizeOriginInstance(identity)
-);
+    : normalizeOriginInstance(identity);
+  const result: SourceControlIdentity = identity.instanceSshUrl?.trim()
+    ? { ...normalized, instanceSshUrl: identity.instanceSshUrl.trim() }
+    : normalized;
+  const aliases = Array.isArray(identity.instanceAliases) ? identity.instanceAliases.filter(isNonEmptyString) : [];
+  return aliases.length ? { ...result, instanceAliases: aliases } : result;
+};
 
 const parseRepositoryContext = (payload: RepositoryContextDTO): SourceControlRepositoryContext => {
   if (!payload || !isStringValue(payload.repositoryId) || !payload.repositoryId
@@ -407,13 +421,17 @@ const request = async <TResult extends ErrorResponse | null>(
   return payload;
 };
 
-const boundReadQuery = (context: SourceControlReadContext): URLSearchParams => new URLSearchParams({
-  directory: context.directory,
-  repositoryId: context.repositoryId,
-  accountId: context.accountId,
-  bindingRevision: String(context.bindingRevision),
-  primaryRemote: context.primaryRemote,
-});
+const boundReadQuery = (context: SourceControlReadContext): URLSearchParams => {
+  const query = new URLSearchParams({
+    directory: context.directory,
+    repositoryId: context.repositoryId,
+    accountId: context.accountId,
+    bindingRevision: String(context.bindingRevision),
+    primaryRemote: context.primaryRemote,
+  });
+  if (context.linked) query.set('linked', '1');
+  return query;
+};
 
 /** The projects a multi-project list could not read; their earlier items stay where the caller keeps them. */
 const parseIncompleteProjectIds = (ids: PageResult<never>['incompleteProjectIds']): string[] | undefined => {
@@ -523,12 +541,6 @@ const mutationTargetMatches = (
   && (context.target.base === undefined || target.base === context.target.base)
   && (context.target.headSha === undefined || target.headSha === context.target.headSha);
 
-/** A provider user is `<instance>#<numeric user id>` on every provider, host and origin instances alike. */
-const providerAccountMatches = (identity: SourceControlIdentity, providerAccountId: string): boolean => (
-  providerAccountId.startsWith(`${identity.instance}#`)
-    && /^\d+$/.test(providerAccountId.slice(identity.instance.length + 1))
-);
-
 const parseMutationReceipt = <TResult>(
   payload: MutationReceiptDTO,
   context: SourceControlMutationContext,
@@ -542,7 +554,7 @@ const parseMutationReceipt = <TResult>(
     || payload.status !== 'succeeded' || !isBooleanValue(payload.replayed)
     || !actor || !hasExactKeys(actor, ['provider', 'instance', 'providerAccountId'])
     || actor.provider !== identity.provider || actor.instance !== identity.instance
-    || !isNonEmptyString(actor.providerAccountId) || !providerAccountMatches(identity, actor.providerAccountId)
+    || !isNonEmptyString(actor.providerAccountId) || !isProviderUserId(identity.provider, identity.instance, actor.providerAccountId)
     || !target || !hasExactKeys(target, [
       'repositoryId', 'bindingRevision', 'primaryRemote', 'project',
       ...(['number', 'head', 'base', 'headSha'] as const).filter((key) => target[key] !== undefined),
@@ -582,7 +594,7 @@ const parseEmptyMutationResult = (result: MutationResultDTO): SourceControlEmpty
   return {};
 };
 
-const MERGE_OUTCOMES = ['queued', 'merging'] as const;
+const MERGE_OUTCOMES = ['queued', 'merging', 'auto-merge', 'cancelled'] as const;
 const mergeOutcomeOf = (value: string): SourceControlMergeMutationResult['outcome'] | null => (
   MERGE_OUTCOMES.find((outcome) => outcome === value) ?? null
 );
@@ -665,9 +677,19 @@ const parseReadyMutationResult = (result: MutationResultDTO): SourceControlReady
   return { ready: result.ready };
 };
 
+const parseDraftMutationResult = (result: MutationResultDTO): SourceControlDraftMutationResult => {
+  if (!hasExactKeys(result, ['draft']) || !isBooleanValue(result.draft)) {
+    throw new Error('Source control response contained an invalid draft result');
+  }
+  return { draft: result.draft };
+};
+
 const parseSourceUser = (user: SourceUserDTO, identity: SourceControlIdentity): SourceControlUser => {
   const username = user?.username || user?.login;
-  if (!user || !isValidId(user.id) || !isNonEmptyString(username)
+  const validId = isExtensionProviderId(identity.provider)
+    ? typeof user?.id === 'string' && user.id.length > 0 && user.id.length <= 256 || isPositiveSafeInteger(user?.id)
+    : user && isValidId(user.id);
+  if (!user || !validId || !isNonEmptyString(username)
     || !hasCompatibleIdentity(user, identity)
     || (user.avatarUrl !== undefined && !isHttpUrl(user.avatarUrl))
     || (user.name !== undefined && !isStringValue(user.name))
@@ -1242,6 +1264,7 @@ export const createWebSourceControlAPI = (options: WebSourceControlAPIOptions = 
         issues: payload.issues,
         changeRequests: payload.changeRequests,
         draftChangeRequests: payload.draftChangeRequests,
+        draftConversion: payload.draftConversion === true,
         mergeChangeRequests: payload.mergeChangeRequests,
         mergeMethods: payload.mergeMethods ? [...payload.mergeMethods] : undefined,
         ci: payload.ci,
@@ -1299,6 +1322,34 @@ export const createWebSourceControlAPI = (options: WebSourceControlAPIOptions = 
       await post<ErrorResponse>(fetch, normalized, '/auth/token', tokenOptions?.username ? { token, username: tokenOptions.username } : { token });
       return parseProviderAuthStatus(await request<ProviderAuthStatusDTO & ErrorResponse>(fetch, normalized, '/auth/status'), normalized);
     },
+    authSetSshUrl: async (identity, sshUrl) => {
+      const normalized = normalizeIdentity(identity);
+      const payload = await post<{ sshUrl?: string | null; error?: string }>(fetch, normalized, '/auth/ssh-url', { sshUrl });
+      if (payload.sshUrl !== null && !isNonEmptyString(payload.sshUrl)) {
+        throw new Error('Source control response contained an invalid SSH URL');
+      }
+      return { sshUrl: payload.sshUrl ?? null };
+    },
+    setInstanceAliases: async (identity, aliases) => {
+      const normalized = normalizeIdentity(identity);
+      const response = await fetch('/api/source-control/instances/aliases', {
+        method: 'POST',
+        headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider: normalized.provider, instance: normalized.instance, aliases }),
+      });
+      const payload: { aliases?: BoundaryScalar[]; alias?: BoundaryScalar } & ErrorResponse = await response.json();
+      if (!response.ok) {
+        const message = payload.error || response.statusText || 'Failed to save instance aliases';
+        if ((payload.code === 'INVALID_INSTANCE_ALIAS' || payload.code === 'INSTANCE_ALIAS_TAKEN') && isNonEmptyString(payload.alias)) {
+          throw new SourceControlInstanceAliasError(message, payload.code === 'INSTANCE_ALIAS_TAKEN' ? 'taken' : 'invalid', payload.alias);
+        }
+        throw new SourceControlRequestError(message, payload.code);
+      }
+      if (!Array.isArray(payload.aliases) || !payload.aliases.every(isNonEmptyString)) {
+        throw new Error('Source control response contained invalid instance aliases');
+      }
+      return { aliases: [...payload.aliases] };
+    },
     authDisconnect: async (identity, accountId) => {
       if (!isNonEmptyString(accountId) || accountId.trim() !== accountId) {
         throw new Error('Source control credential accountId is required');
@@ -1353,6 +1404,7 @@ export const createWebSourceControlAPI = (options: WebSourceControlAPIOptions = 
       const identity = normalizeIdentity(payload);
       const result = await post<MutationReceiptDTO>(fetch, identity, '/pr/merge', {
         ...mutationBody(payload, identity, 'existing'), method: payload.method,
+        cancel: payload.cancel,
       });
       return parseMutationReceipt(result, payload, identity, parseMergeMutationResult);
     },
@@ -1360,6 +1412,11 @@ export const createWebSourceControlAPI = (options: WebSourceControlAPIOptions = 
       const identity = normalizeIdentity(payload);
       const result = await post<MutationReceiptDTO>(fetch, identity, '/pr/ready', mutationBody(payload, identity, 'existing'));
       return parseMutationReceipt(result, payload, identity, parseReadyMutationResult);
+    },
+    changeRequestDraft: async (payload: DraftChangeRequestInput) => {
+      const identity = normalizeIdentity(payload);
+      const result = await post<MutationReceiptDTO>(fetch, identity, '/pr/draft', mutationBody(payload, identity, 'existing'));
+      return parseMutationReceipt(result, payload, identity, parseDraftMutationResult);
     },
     changeRequestComment: async (payload: CommentInput) => {
       const identity = normalizeIdentity(payload);
@@ -1396,16 +1453,47 @@ export const createWebSourceControlAPI = (options: WebSourceControlAPIOptions = 
       let body: ReviewBody;
       if (payload.votes !== undefined) {
         const entries = Object.entries(payload.votes);
-        if (payload.verdict !== undefined || entries.length === 0 || entries.some(([label, value]) => !isNonEmptyString(label) || !isVoteValue(value))) {
+        if (payload.verdict !== undefined || (entries.length === 0 && payload.publishDrafts !== true)
+          || entries.some(([label, value]) => !isNonEmptyString(label) || !isVoteValue(value))) {
           throw new Error('Source control review input is invalid');
         }
-        body = { ...context, votes: Object.fromEntries(entries) };
+        body = { ...context, votes: Object.fromEntries(entries), publishDrafts: payload.publishDrafts };
       } else {
         body = { ...context, verdict: payload.verdict };
       }
       if (payload.body !== undefined) body.body = payload.body;
       const result = await post<MutationReceiptDTO>(fetch, identity, '/pr/review', body);
       return parseMutationReceipt(result, payload, identity, parseReviewMutationResult);
+    },
+    changeRequestReviewState: (context, ref) => fetchChangeRequestReviewState(fetch, context, ref),
+    changeRequestReviewComment: async (payload: ReviewCommentInput) => {
+      const identity = normalizeIdentity(payload);
+      const position = payload.line === undefined
+        ? { path: payload.path }
+        : { path: payload.path, side: payload.side, line: payload.line, startLine: payload.startLine };
+      const result = await post<MutationReceiptDTO>(fetch, identity, '/pr/review/comment', {
+        ...mutationBody(payload, identity, 'existing'), ...position, body: payload.body,
+      });
+      return parseMutationReceipt(result, payload, identity, parseEmptyMutationResult);
+    },
+    changeRequestReviewCommentUpdate: async (payload: ReviewCommentUpdateInput) => {
+      const identity = normalizeIdentity(payload);
+      const result = await post<MutationReceiptDTO>(fetch, identity, '/pr/review/comment/update', {
+        ...mutationBody(payload, identity, 'existing'), commentId: payload.commentId, body: payload.body,
+      });
+      return parseMutationReceipt(result, payload, identity, parseEmptyMutationResult);
+    },
+    changeRequestReviewCommentDelete: async (payload: ReviewCommentDeleteInput) => {
+      const identity = normalizeIdentity(payload);
+      const result = await post<MutationReceiptDTO>(fetch, identity, '/pr/review/comment/delete', {
+        ...mutationBody(payload, identity, 'existing'), commentId: payload.commentId,
+      });
+      return parseMutationReceipt(result, payload, identity, parseEmptyMutationResult);
+    },
+    changeRequestReviewDiscard: async (payload: ReviewDiscardInput) => {
+      const identity = normalizeIdentity(payload);
+      const result = await post<MutationReceiptDTO>(fetch, identity, '/pr/review/discard', mutationBody(payload, identity, 'existing'));
+      return parseMutationReceipt(result, payload, identity, parseEmptyMutationResult);
     },
     changeRequestSetState: async (payload: SetStateInput) => {
       const identity = normalizeIdentity(payload);

@@ -5,7 +5,7 @@ import path from 'node:path';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 
-import { CdpClient, createPageTarget, launchChrome, reservePort, resolveChrome, wait } from './cdp.mjs';
+import { CdpClient, launchBrowserTestChrome, resolveChrome, wait } from './cdp.mjs';
 
 const repo = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -30,7 +30,7 @@ async function createQuotePopoverFixture() {
       const [editing, setEditing] = React.useState(false);
       return <I18nContext.Provider value={i18n}><ChatQuoteMarkPopover
         anchorRect={new DOMRect(left, 250, 16, 20)} comment={comment} editing={editing}
-        onEditingChange={setEditing} onSave={setComment} onRemove={() => {}}
+        onEditingChange={setEditing} onSave={(text) => { setComment(text); return true; }} onRemove={() => {}}
       /></I18nContext.Provider>;
     }
     let revision = 0;
@@ -45,7 +45,7 @@ async function createQuotePopoverFixture() {
     cacheDir: path.join(fixture, '.vite'),
     css: { postcss: repo },
     resolve: { alias: { '@': path.join(repo, 'packages/ui/src'), '@openchamber/sdk': path.join(repo, 'packages/sdk/src/index.ts') } },
-    optimizeDeps: { noDiscovery: true, include: ['react', 'react/jsx-runtime', 'react/jsx-dev-runtime', 'react-dom', 'react-dom/client', 'clsx', 'tailwind-merge'] },
+    optimizeDeps: { noDiscovery: true, include: ['@base-ui/react/tooltip', 'react', 'react/jsx-runtime', 'react/jsx-dev-runtime', 'react-dom', 'react-dom/client', 'clsx', 'tailwind-merge'] },
     server: { host: '127.0.0.1', port: 0, fs: { allow: [repo, fixture] } },
   });
   try {
@@ -106,14 +106,14 @@ async function assertQuotePopoverBounds(client, url) {
     for (const direction of ['ltr', 'rtl']) {
       for (const left of [12, width - 28]) {
         await evaluate(`window.renderSavedQuote(${left}, ${JSON.stringify(direction)})`);
-        await until(`!!document.querySelector('button[title="Edit comment"]')`);
+        await until(`!!document.querySelector('button[aria-label="Edit comment"]')`);
         await assertFits(`${width}px ${direction} saved preview`);
         for (let edit = 0; edit < 2; edit++) {
-          await click('button[title="Edit comment"]');
+          await click('button[aria-label="Edit comment"]');
           await until('document.querySelector("textarea")?.value === "Short"');
           await assertFits(`${width}px ${direction} edit ${edit + 1}`);
-          await click('button[title="Save comment"]');
-          await until(`!!document.querySelector('button[title="Edit comment"]')`);
+          await click('button[aria-label="Save comment"]');
+          await until(`!!document.querySelector('button[aria-label="Edit comment"]')`);
           await assertFits(`${width}px ${direction} saved edit ${edit + 1}`);
         }
       }
@@ -134,9 +134,9 @@ test('saved quote comments stay on screen through repeated editing', {
   let browser;
   let client;
   try {
-    const port = await reservePort();
-    browser = launchChrome({ chrome, port, profileDir: path.join(fixture.fixture, 'profile'), headless: true, extraArgs: ['--no-sandbox', '--disable-dev-shm-usage'] });
-    const target = await createPageTarget(port);
+    const startup = launchBrowserTestChrome(chrome, path.join(fixture.fixture, 'profile'));
+    browser = startup.browser;
+    const target = await startup.pageTarget();
     client = new CdpClient(target.webSocketDebuggerUrl);
     await client.connect();
     await assertQuotePopoverBounds(client, fixture.url);

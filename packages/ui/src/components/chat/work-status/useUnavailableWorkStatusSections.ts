@@ -1,22 +1,31 @@
+import React from 'react';
+
 import { useUIStore } from '@/stores/useUIStore';
+import { selectWorkflowsShown } from '@/lib/workflows/availability';
+import { selectSessionTodosOn, useSessionTodosStore } from '@/stores/useSessionTodosStore';
+import { useSessionUIStore } from '@/sync/session-ui-store';
 import type { WorkStatusSectionId } from './sections';
 
-const NONE_UNAVAILABLE: readonly WorkStatusSectionId[] = [];
-const WORKFLOWS_UNAVAILABLE: readonly WorkStatusSectionId[] = ['workflows'];
-const MOBILE_UNAVAILABLE: readonly WorkStatusSectionId[] = ['usage', 'ptys'];
-const MOBILE_WORKFLOWS_UNAVAILABLE: readonly WorkStatusSectionId[] = ['usage', 'ptys', 'workflows'];
-
 /**
- * Built-in sections of features this build may not have. A section of a
- * feature the build lacks is listed nowhere, the sections dialog included, so
- * an unreleased feature does not show up by name.
+ * Built-in sections of features this runtime may not have. A section of a
+ * feature the runtime lacks is listed nowhere, the sections dialog included,
+ * so the user is never offered a section that stays empty.
  *
- * The phone's Status tab also leaves out Usage: the phone has its own Usage
- * page, which reads better there than the panel's compact rows.
+ * Tasks shows the agent's list from OpenCode's experimental `todowrite` tool,
+ * so it is listed only once the server says the tool is on in the open
+ * session's directory.
+ *
+ * The phone's Status tab has a separate Usage page and does not mount the
+ * Agent PTYs section. Its section picker omits both.
  */
 export const useUnavailableWorkStatusSections = (): readonly WorkStatusSectionId[] => {
-  const workflows = useUIStore((state) => state.agentWorkflowFeatureAvailable);
+  const workflows = useUIStore(selectWorkflowsShown);
   const isMobile = useUIStore((state) => state.isMobile);
-  if (isMobile) return workflows ? MOBILE_UNAVAILABLE : MOBILE_WORKFLOWS_UNAVAILABLE;
-  return workflows ? NONE_UNAVAILABLE : WORKFLOWS_UNAVAILABLE;
+  const sessionId = useSessionUIStore((state) => state.currentSessionId);
+  const tasks = useSessionTodosStore(selectSessionTodosOn(sessionId));
+  return React.useMemo(() => [
+    ...(isMobile ? ['usage' as const, 'ptys' as const] : []),
+    ...(workflows ? [] : ['workflows' as const]),
+    ...(tasks ? [] : ['tasks' as const]),
+  ], [isMobile, tasks, workflows]);
 };

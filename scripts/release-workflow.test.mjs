@@ -12,6 +12,10 @@ test('manifests combine after partial build failures while publication stays str
     workflow.jobs['combine-electron-manifests'].if,
     "${{ !cancelled() && needs.create-release.result == 'success' }}",
   );
-  // Skipped jobs count as done; any failure still stops the release.
-  assert.equal(workflow.jobs['finalize-release'].if, "${{ !cancelled() && !failure() }}");
+  // Skipped jobs count as done; any failure still stops the release, and a skipped
+  // create-release (a fork has no upstream release to finalize) skips finalization.
+  assert.equal(
+    workflow.jobs['finalize-release'].if,
+    "${{ !cancelled() && !failure() && needs.create-release.result == 'success' }}",
+  );
 });

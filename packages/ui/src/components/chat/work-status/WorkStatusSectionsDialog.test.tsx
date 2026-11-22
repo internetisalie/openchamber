@@ -141,15 +141,34 @@ describe('section arrangement dialog', () => {
     expect(closeCount).toBe(0);
   });
 
-  test('on the phone it edits the Status tab list, which hides Subagents and has no Usage', async () => {
+  test('the phone edits its Status tab list and omits the desktop Usage and Agent PTYs rows', async () => {
+    expect(order()).toContain('ptys');
+    expect(order()).toContain('usage');
     await act(async () => useUIStore.setState({ isMobile: true }));
     expect(order()).not.toContain('usage');
+    expect(order()).not.toContain('ptys');
     const subagents = rows().find((row) => row.dataset.settingsItem?.endsWith('.subagents'));
     if (!subagents) throw new Error('Expected the Subagents row');
     expect(subagents.getAttribute('aria-pressed')).toBe('false');
     await act(async () => subagents.click());
     expect(useUIStore.getState().mobileWorkStatusHiddenSections).toEqual([]);
     expect(useUIStore.getState().workStatusHiddenSections).toEqual([]);
+    await act(async () => useUIStore.setState({ isMobile: false }));
+    expect(order()).toContain('ptys');
+  });
+
+  test('a phone drag leaves the unavailable Usage and Agent PTYs where the saved order has them', async () => {
+    const saved = [...WORK_STATUS_SECTION_IDS];
+    await act(async () => useUIStore.setState({ isMobile: true, workStatusSectionOrder: saved }));
+    await render();
+    await act(async () => handle(0).dispatchEvent(new MouseEvent('mousedown', { bubbles: true, button: 0, clientX: 12, clientY: 18 })));
+    await act(async () => document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 12, clientY: 30 })));
+    await act(async () => document.dispatchEvent(new MouseEvent('mousemove', { bubbles: true, clientX: 12, clientY: 90 })));
+    await act(async () => document.dispatchEvent(new MouseEvent('mouseup', { bubbles: true })));
+    const next = useUIStore.getState().workStatusSectionOrder;
+    expect(next).not.toEqual(saved);
+    expect(next.indexOf('usage')).toBe(saved.indexOf('usage'));
+    expect(next.indexOf('ptys')).toBe(saved.indexOf('ptys'));
   });
 
   test('touch requires a hold and commits the same order as mouse dragging', async () => {
@@ -161,8 +180,9 @@ describe('section arrangement dialog', () => {
     await act(async () => dispatch('touchstart', 18));
     await act(async () => dispatch('touchmove', 90));
     await act(async () => dispatch('touchend', 90));
-    // Workflows are not in this build, so their section is not listed.
-    expect(order()).toEqual(WORK_STATUS_SECTION_IDS.filter((id) => id !== 'workflows'));
+    // Workflows are not in this build and the todo tool is off here, so
+    // neither section is listed.
+    expect(order()).toEqual(WORK_STATUS_SECTION_IDS.filter((id) => id !== 'workflows' && id !== 'tasks'));
     await act(async () => {
       dispatch('touchstart', 18);
       await new Promise((resolve) => setTimeout(resolve, 220));

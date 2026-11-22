@@ -8,9 +8,12 @@ import { getMarkdownProcessingOptions } from '@/components/chat/markdown/streamd
 import {
     captureChatQuoteAnchor,
     chatQuoteAnchorSchema,
+    findChatQuoteRoots,
+    findUiRenderQuoteRoot,
     legacyChatQuoteAnchor,
     locateChatQuote,
     resolveChatQuoteAnchor,
+    resolveChatQuoteRanges,
 } from './chatQuoteAnchor';
 
 const previousDocument = globalThis.document;
@@ -38,6 +41,29 @@ const selectText = (root: Element, text: string, occurrence = 0): Range => {
 };
 
 describe('chat quote anchors', () => {
+    test('a quote on a hoisted UI page follows that page into the final answer', () => {
+        const oldCSS = Object.getOwnPropertyDescriptor(globalThis, 'CSS');
+        Object.defineProperty(globalThis, 'CSS', { configurable: true, value: { escape: (value: string) => value } });
+        try {
+            const scope = renderRoot('<div data-message-id="source"><div data-ui-render-message="source" data-ui-render-part="first">the same text</div><div data-ui-render-message="source" data-ui-render-part="second">the same text</div></div>');
+            const first = findUiRenderQuoteRoot(scope, 'source', 'first')!;
+            const second = findUiRenderQuoteRoot(scope, 'source', 'second')!;
+            const anchor = chatQuoteAnchorSchema.parse({ ...captureChatQuoteAnchor(second, selectText(second, 'same text'))!, page: { partId: 'second', kind: 'ui' } });
+
+            scope.innerHTML = '<div data-message-id="final"><div data-chat-quote-root></div></div>';
+            const finalRoot = scope.querySelector('[data-chat-quote-root]')!;
+            finalRoot.append(first, second);
+            const moved = findUiRenderQuoteRoot(scope, 'source', anchor.page!.partId)!;
+            expect(resolveChatQuoteAnchor(moved, anchor)?.startContainer.parentElement).toBe(second);
+
+            const ordinary = captureChatQuoteAnchor(finalRoot, selectText(second, 'same text'))!;
+            expect(resolveChatQuoteRanges(findChatQuoteRoots(scope, 'final'), ordinary)?.[0].startContainer.parentElement).toBe(second);
+        } finally {
+            if (oldCSS) Object.defineProperty(globalThis, 'CSS', oldCSS);
+            else Reflect.deleteProperty(globalThis, 'CSS');
+        }
+    });
+
     test('a fragment spanning markdown elements is captured and found again', () => {
         const root = renderRoot('<p>Use <strong>bold</strong> text here.</p><p>Second paragraph.</p>');
         const anchor = captureChatQuoteAnchor(root, selectText(root, 'bold text here.Second'));
@@ -123,5 +149,77 @@ describe('chat quote anchor schema', () => {
     test('a malformed page is rejected rather than read as a message anchor', () => {
         expect(chatQuoteAnchorSchema.safeParse({ ...base, page: {} }).success).toBe(false);
         expect(chatQuoteAnchorSchema.safeParse({ ...base, page: 'prt_1' }).success).toBe(false);
+    });
+});
+
+describe('quotes across the rows of a long answer', () => {
+    test('a quote crossing two rows is taken and found as one text, a range per row', () => {
+        const first = renderRoot('<p>The first row ends here.</p>');
+        const second = renderRoot('<p>The second row starts here.</p>');
+        const range = document.createRange();
+        range.setStart(first.querySelector('p')!.firstChild!, 14);
+        range.setEnd(second.querySelector('p')!.firstChild!, 10);
+        const anchor = captureChatQuoteAnchor([first, second], range);
+        expect(anchor?.text).toBe('ends here.The second');
+        const parts = resolveChatQuoteRanges([first, second], anchor!);
+        expect(parts?.map((part) => part.toString())).toEqual(['ends here.', 'The second']);
+    });
+
+    test('tells apart the same sentence in two rows by what surrounds it', () => {
+        const first = renderRoot('<p>Before. The same sentence. After one.</p>');
+        const second = renderRoot('<p>Earlier. The same sentence. After two.</p>');
+        const range = document.createRange();
+        const text = second.querySelector('p')!.firstChild!;
+        range.setStart(text, 9);
+        range.setEnd(text, 27);
+        const anchor = captureChatQuoteAnchor([first, second], range)!;
+        expect(anchor.text).toBe('The same sentence.');
+        const parts = resolveChatQuoteRanges([first, second], anchor);
+        expect(parts?.[0]?.startContainer).toBe(text);
+    });
+
+    test('compares context only as far as the mounted rows reach', () => {
+        // The rows around this one are not mounted: its context runs past the stream.
+        const row = renderRoot('<p>The quoted start of a row, and more. Later, The quoted start again.</p>');
+        const anchor = { text: 'The quoted start', prefix: 'end of the previous row. ', suffix: ' of a row, and more. Later', start: 120 };
+        expect(resolveChatQuoteAnchor(row, anchor)?.startOffset).toBe(0);
+        expect(resolveChatQuoteAnchor(row, { ...anchor, suffix: ' of a column' })).toBeNull();
+    });
+
+    // Rows of one message: `index/count` on the message element around each root.
+    const messageRow = (html: string, row: string) => {
+        const message = document.createElement('div');
+        message.setAttribute('data-message-id', 'message');
+        message.setAttribute('data-message-row', row);
+        const root = document.createElement('div');
+        root.setAttribute('data-chat-quote-root', '');
+        root.innerHTML = html;
+        message.appendChild(root);
+        document.body.appendChild(message);
+        return root;
+    };
+
+    test('with rows not mounted, a lone copy is taken only in its context', () => {
+        // The quote was taken in row 3; row 1 has the same words elsewhere.
+        const anchor = { text: 'the same words', prefix: 'Row three has ', suffix: ' at its start.', start: 900 };
+        const first = messageRow('<p>Row one repeats the same words later on.</p>', '0/3');
+        expect(resolveChatQuoteRanges([first], anchor)).toBeNull();
+        const third = messageRow('<p>Row three has the same words at its start.</p>', '2/3');
+        expect(resolveChatQuoteRanges([third], anchor)?.[0]?.toString()).toBe('the same words');
+    });
+
+    test('finds the part of a quote longer than the rows on the page', () => {
+        const quote = 'A quote that starts in this row and runs on through the next rows, which are not mounted yet.';
+        const anchor = { text: quote, prefix: 'Before it. ', suffix: ' After it.', start: 10 };
+        const row = messageRow('<p>Before it. A quote that starts in this row and runs on</p>', '0/3');
+        expect(resolveChatQuoteRanges([row], anchor)?.map((part) => part.toString())).toEqual(['A quote that starts in this row and runs on']);
+        const tail = messageRow('<p>through the next rows, which are not mounted yet. After it.</p>', '2/3');
+        expect(resolveChatQuoteRanges([tail], anchor)?.map((part) => part.toString())).toEqual(['through the next rows, which are not mounted yet.']);
+        // Sent before anchors existed: no context, found while it is the one match on the page.
+        const legacy = { text: quote, prefix: '', suffix: '', start: 0 };
+        expect(resolveChatQuoteRanges([row], legacy)?.map((part) => part.toString())).toEqual(['A quote that starts in this row and runs on']);
+        // A row holding nothing but the quote's start matches it as a head and as a stretch inside it: one match.
+        const onlyStart = messageRow('<p>A quote that starts in this row and runs on</p>', '0/3');
+        expect(resolveChatQuoteRanges([onlyStart], legacy)?.map((part) => part.toString())).toEqual(['A quote that starts in this row and runs on']);
     });
 });

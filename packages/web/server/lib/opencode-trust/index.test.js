@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { createHash } from 'crypto';
 import os from 'os';
 import path from 'path';
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'fs/promises';
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from 'fs/promises';
 
 import { assessOpenCodeConfig } from './assessment.js';
 import { createOpenCodeTrust, OPENCODE_TRUST_REQUIRED } from './index.js';
@@ -64,6 +64,119 @@ describe('assessOpenCodeConfig', () => {
       ['formatter', 'opencode.jsonc', 'fmt', 'fmt $FILE'],
       ['shell', 'opencode.jsonc', '', '/bin/zsh'],
     ]);
+  });
+
+  it('lists the values a configuration reads from the machine, wherever they stand', async () => {
+    await write('opencode.jsonc', `{
+      "mcp": { "web": { "type": "remote", "url": "https://x.example/{env:HOST_ID}", "headers": { "Authorization": "Bearer {env:GITHUB_TOKEN}" } } },
+      "provider": { "p": { "options": { "apiKey": "{file:~/.ssh/id_rsa}", "header": "{env:GITHUB_TOKEN}" } } },
+      // "{file:./ignored}" on a comment line is left alone
+    }`);
+
+    const { items, fingerprint } = await assessOpenCodeConfig(repo, { homeDirectory: home });
+    expect(fingerprint).toMatch(/^[0-9a-f]{64}$/);
+    expect(items.map(({ kind, source, name }) => [kind, source, name])).toEqual([
+      ['env', 'opencode.jsonc', 'HOST_ID'],
+      ['env', 'opencode.jsonc', 'GITHUB_TOKEN'],
+      ['file', 'opencode.jsonc', '~/.ssh/id_rsa'],
+    ]);
+  });
+
+  const globalConfig = () => path.join(home, '.config', 'opencode');
+  const userRules = async (config) => {
+    await mkdir(globalConfig(), { recursive: true });
+    await writeFile(path.join(globalConfig(), 'opencode.json'), JSON.stringify(config));
+    return { homeDirectory: home, globalConfigDirectories: [globalConfig()] };
+  };
+
+  it('lists the permissions a configuration and its agent files allow, in every shape', async () => {
+    const options = await userRules({ permission: 'ask' });
+    await write('opencode.json', JSON.stringify({
+      permission: { bash: 'allow', edit: 'deny', read: { '*.env': 'allow', '*': 'ask' } },
+      tools: { webfetch: true, write: false },
+      permissions: [{ action: 'shell', resource: 'rm *', effect: 'allow' }, { action: 'edit', resource: '*', effect: 'ask' }],
+      agent: { helper: { permission: 'allow' }, quiet: { permission: { bash: 'deny' } } },
+    }));
+    await write('.opencode/agents/team/reviewer.md', '---\ndescription: Reviews\npermission:\n  bash: allow\n---\nReview things.');
+    await write('.opencode/agents/readonly.md', '---\ndescription: Reads\ntools:\n  write: false\n---\nRead only.');
+    await write('.opencode/agent/plain.md', '---\ndescription: No permissions\n---\nHello.');
+    await write('.opencode/modes/fast.md', '---\npermissions:\n  - action: edit\n    resource: "*"\n    effect: allow\n---\nGo.');
+
+    const { items } = await assessOpenCodeConfig(repo, options);
+    expect(items.map(({ kind, source, name, detail }) => [kind, source, name, detail])).toEqual([
+      ['permission', '.opencode/agents/team/reviewer.md', 'team/reviewer', 'shell *'],
+      ['permission', '.opencode/modes/fast.md', 'fast', 'edit *'],
+      ['permission', 'opencode.json', '', 'webfetch *'],
+      ['permission', 'opencode.json', '', 'shell *'],
+      ['permission', 'opencode.json', '', 'read *.env'],
+      ['permission', 'opencode.json', '', 'shell rm *'],
+      ['permission', 'opencode.json', 'helper', '* *'],
+    ]);
+  });
+
+  it('lists only allows that override one of the user\'s own asks or denies', async () => {
+    await write('opencode.json', JSON.stringify({ permission: { bash: 'allow', read: 'allow', edit: { 'src/*': 'allow' } } }));
+    await write('.opencode/agents/reader.md', '---\npermissions:\n  - { action: "*", resource: "*", effect: deny }\n  - { action: grep, resource: "*", effect: allow }\n---\nRead.');
+    const listed = async (options) => (await assessOpenCodeConfig(repo, options)).items.map(({ name, detail }) => [name, detail]);
+
+    expect(await listed(await userRules({}))).toEqual([]);
+    expect(await listed(await userRules({ permission: { bash: 'ask', read: { '*.env': 'deny' } } }))).toEqual([
+      ['', 'shell *'],
+      ['', 'read *'],
+    ]);
+    expect(await listed(await userRules({ permissions: [{ action: 'edit', resource: 'src/secret.ts', effect: 'ask' }] }))).toEqual([
+      ['', 'edit src/*'],
+    ]);
+    // Resources aren't compared: these two meet on `git push --force`.
+    await write('opencode.json', JSON.stringify({ permission: { bash: { 'git push *': 'allow' } } }));
+    expect(await listed(await userRules({ permission: { bash: { 'git * --force': 'ask' } } }))).toEqual([
+      ['', 'shell git push *'],
+    ]);
+    await write('opencode.json', JSON.stringify({ permission: { bash: 'allow', read: 'allow', edit: { 'src/*': 'allow' } } }));
+    // A user agent's ask counts too: it is still the user's rule.
+    await userRules({});
+    await mkdir(path.join(globalConfig(), 'agent'), { recursive: true });
+    await writeFile(path.join(globalConfig(), 'agent', 'mine.md'), '---\npermission:\n  grep: ask\n---\nMine.');
+    expect(await listed({ homeDirectory: home, globalConfigDirectories: [globalConfig()] })).toEqual([
+      ['reader', 'grep *'],
+    ]);
+  });
+
+  it('reads agent files the way OpenCode does when plain YAML rejects them', async () => {
+    const options = await userRules({ permission: 'ask' });
+    await write('.opencode/agent/simplify.md', '---\nmode: all\ndescription: Clean up code: dead code, leftovers\npermissions:\n  - { action: shell, resource: "bun test *", effect: allow }\n---\nGo.');
+    const { items } = await assessOpenCodeConfig(repo, options);
+    expect(items.map(({ kind, detail }) => [kind, detail])).toEqual([['permission', 'shell bun test *']]);
+  });
+
+  it('finds allows in quoted keys, flow mappings and merge keys, and skips folders OpenCode ignores', async () => {
+    const options = await userRules({ permission: 'ask' });
+    await write('.opencode/agents/quoted.md', '---\n"permissions": [{action: shell, resource: "*", effect: allow}]\n---\nGo.');
+    await write('.opencode/agents/merged.md', '---\npermissions:\n  - <<: {action: edit, resource: "*", effect: allow}\n---\nGo.');
+    await write('.opencode/agents/node_modules/ignored.md', '---\npermission:\n  bash: allow\n---\nGo.');
+
+    const { items } = await assessOpenCodeConfig(repo, options);
+    expect(items.map(({ kind, source, detail }) => [kind, source, detail])).toEqual([
+      ['permission', '.opencode/agents/merged.md', 'edit *'],
+      ['permission', '.opencode/agents/quoted.md', 'shell *'],
+    ]);
+  });
+
+  it('walks agent folders that link back to themselves once', async () => {
+    const options = await userRules({ permission: 'ask' });
+    await write('.opencode/agents/one.md', '---\npermission:\n  bash: allow\n---\nGo.');
+    await symlink('.', path.join(repo, '.opencode', 'agents', 'a'));
+    await symlink('.', path.join(repo, '.opencode', 'agents', 'b'));
+
+    const { items } = await assessOpenCodeConfig(repo, options);
+    expect(items.map(({ source }) => source)).toEqual(['.opencode/agents/one.md']);
+  });
+
+  it('counts an agent file whose permissions it can\'t read', async () => {
+    const options = await userRules({ permission: 'ask' });
+    await write('.opencode/agents/broken.md', '---\npermission: [unclosed\n---\nBody.');
+    const { items } = await assessOpenCodeConfig(repo, options);
+    expect(items.map(({ kind, source }) => [kind, source])).toEqual([['config', '.opencode/agents/broken.md']]);
   });
 
   it('reads configuration from parent folders below home, and none from home up', async () => {
@@ -216,6 +329,42 @@ describe('createOpenCodeTrust', () => {
     expect((await trust.refusalFor(prompt))?.status).toBe(403);
     expect(await trust.refusalFor({ ...prompt, resolveSessionDirectory: async () => null })).toBeNull();
     expect((await trust.refusalFor({ ...prompt, resolveSessionDirectory: async () => { throw new Error('down'); } }))?.status).toBe(503);
+  });
+
+  it('checks the folder a session moves into and the folder it leaves', async () => {
+    await write('.opencode/plugins/probe.js', 'export default {}');
+    const plain = path.join(home, 'projects', 'plain');
+    await mkdir(path.join(plain, 'sub'), { recursive: true });
+    const trust = makeTrust();
+    const move = (from, directory) => trust.refusalFor({
+      method: 'POST',
+      path: '/api/session/ses_1/move',
+      headers: {},
+      resolveSessionDirectory: async () => from,
+      readBody: async () => ({ directory }),
+    });
+
+    const into = await move(plain, repo);
+    expect(into).toMatchObject({ status: 403, body: { code: OPENCODE_TRUST_REQUIRED, directory: repo } });
+    // Relative to the session's folder and from home, the way OpenCode resolves it.
+    expect((await move(path.join(home, 'projects', 'plain'), '../repo'))?.body.directory).toBe(repo);
+    expect((await move(plain, '~/projects/repo'))?.body.directory).toBe(repo);
+    expect((await move(repo, plain))?.body.directory).toBe(repo);
+
+    expect(await move(plain, path.join(plain, 'sub'))).toBeNull();
+    // A folder that is gone opens nothing: OpenChamber moves sessions out of those.
+    expect(await move(path.join(home, 'projects', 'gone'), plain)).toBeNull();
+
+    const shown = await trust.handleRoute({ method: 'GET', query: { directory: repo } });
+    await trust.handleRoute({ method: 'POST', body: { directory: repo, fingerprint: shown.body.fingerprint } });
+    expect(await move(plain, repo)).toBeNull();
+  });
+
+  it('refuses a move whose destination it cannot read', async () => {
+    const move = { method: 'POST', path: '/api/session/ses_1/move', headers: {}, resolveSessionDirectory: async () => repo };
+    expect((await makeTrust().refusalFor({ ...move, readBody: async () => ({}) }))?.status).toBe(400);
+    expect((await makeTrust().refusalFor({ ...move, readBody: async () => { throw new SyntaxError('bad json'); } }))?.status).toBe(400);
+    expect((await makeTrust().refusalFor(move))?.status).toBe(400);
   });
 
   it('checks an MCP form reply against the folder it names, without looking up a session', async () => {

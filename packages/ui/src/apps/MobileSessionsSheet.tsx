@@ -1,4 +1,5 @@
 import React from 'react';
+import { setSidebarSectionHidden } from '@/components/session/sidebar/sections/sectionActions';
 import { createPortal } from 'react-dom';
 import { isIMECompositionEvent } from '@/lib/ime';
 import {
@@ -24,6 +25,11 @@ import type { IconName } from '@/components/icon/icons';
 import { NewWorktreeDialog } from '@/components/session/NewWorktreeDialog';
 import { SessionSidebar } from '@/components/session/SessionSidebar';
 import { SessionSearchInput } from '@/components/session/SessionSearchInput';
+import { SearchInMenu } from '@/components/search/SearchInMenu';
+import { SearchStatusMark } from '@/components/search/SearchStatusMark';
+import { useSearchFailureText } from '@/components/search/searchStatusText';
+import type { ContentSearchStatus } from '@/hooks/useConversationSearch';
+import { searchScopeQuery, type SearchScope } from '@/lib/search/omniQuery';
 import type { SessionProjectListProps } from '@/components/session/sidebar/projects/SessionProjectScroller';
 import { sortProjectsByOrder } from '@/components/session/sidebar/list/projectSort';
 import { Button } from '@/components/ui/button';
@@ -35,23 +41,31 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { ScrollShadow } from '@/components/ui/ScrollShadow';
 import { isChatDirectoryPath } from '@/lib/chatDirectories';
 import { useChatsRoot } from '@/hooks/useChatsRoot';
 import { useSpaceArchivesStore } from '@/lib/spaces/space-archives';
 import { useI18n, type I18nKey } from '@/lib/i18n';
 import { updateDesktopSettings } from '@/lib/persistence';
+import { sessionEvents } from '@/lib/sessionEvents';
 import { cn } from '@/lib/utils';
-import { refreshGlobalSessions, useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
+import { useConfigStore } from '@/stores/useConfigStore';
+import { refreshGlobalSessionsWhenShown, useGlobalSessionsStore } from '@/stores/useGlobalSessionsStore';
+import { GLOBAL_SESSIONS_FULL_REFRESH_INTERVAL_MS } from '@/hooks/useGlobalSessionsPolling';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { resolveSidebarGrouping, useSessionDisplayStore, type ProjectSortOrder } from '@/stores/useSessionDisplayStore';
 import { useUIStore } from '@/stores/useUIStore';
+import { GuestIcon } from '@/components/layout/GuestRailIcon';
+import { useGuestPages } from '@/hooks/useGuestSurfaces';
+import { guestPackageIconSrc, resolveGuestIconName } from '@/lib/guests/icon';
+import { getRuntimeUrlResolver } from '@/lib/runtime-url';
 import { TooltipLabelWithShortcut } from '@/components/ui/action-toolbar';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { formatShortcutForDisplay, getEffectiveShortcutCombo } from '@/lib/shortcuts';
 import { seedGlobalSessionStatusFromHost } from '@/sync/host-session-status-seed';
 import { getSessionAdmissionScope, isGlobalSessionTarget } from '@/sync/session-admission-rule';
 import { useSessionUIStore } from '@/sync/session-ui-store';
+import { markAllSessionsViewed } from '@/sync/notification-store';
+import { useHasUnreadSession } from '@/sync/session-unread';
 import { useAllLiveSessions } from '@/sync/sync-context';
 import type { WorktreeMetadata } from '@/types/worktree';
 
@@ -63,6 +77,8 @@ import { getProjectLabel, normalizePath } from './mobilePaths';
 import { MobileSessionList } from './mobileSidebar/MobileSessionList';
 import { MobileSidebarActionsProvider, useMobileSidebarRowsStore, type MobileSidebarActions } from './mobileSidebar/mobileSidebarState';
 import { useEdgeSwipe } from './useEdgeSwipe';
+import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
+import { MOBILE_HEADER_BUTTON_CLASS, MOBILE_HEADER_CLASS } from '@/components/ui/mobileHeader';
 
 type MobileSessionsSheetProps = {
   open: boolean;
@@ -97,6 +113,20 @@ const GROUPING_OPTIONS = [
 
 const MOBILE_MENU_ITEM_CLASS = 'min-h-10 items-center justify-between';
 
+/** Mounts only with the open menu, so the sheet does not watch every session for it. */
+function MobileMarkAllReadItem(): React.ReactNode {
+  const { t } = useI18n();
+  const hasUnread = useHasUnreadSession();
+  return (
+    <DropdownMenuItem disabled={!hasUnread} onClick={markAllSessionsViewed} className={MOBILE_MENU_ITEM_CLASS}>
+      <span className="flex items-center gap-2">
+        <Icon name="check-double" className="size-4" />
+        {t('sessions.sidebar.header.actions.markAllRead')}
+      </span>
+    </DropdownMenuItem>
+  );
+}
+
 type ReorderProject = {
   id: string;
   label: string;
@@ -106,6 +136,7 @@ type ReorderProject = {
   iconBackground?: string | null;
 };
 
+const IDLE_SEARCH_STATUS: ContentSearchStatus = { kind: 'idle' };
 const renderList = (props: SessionProjectListProps): React.ReactNode => <MobileSessionList {...props} />;
 
 const SortableProjectRow: React.FC<{ project: ReorderProject }> = ({ project }) => {
@@ -154,11 +185,16 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
   const setShowPinnedSection = useSessionDisplayStore((state) => state.setShowPinnedSection);
   const keepWorkInPlace = useSessionDisplayStore((state) => state.keepWorkInPlace);
   const setKeepWorkInPlace = useSessionDisplayStore((state) => state.setKeepWorkInPlace);
+  const keepPinnedInPlace = useSessionDisplayStore((state) => state.keepPinnedInPlace);
+  const setKeepPinnedInPlace = useSessionDisplayStore((state) => state.setKeepPinnedInPlace);
   const detailedZoneRows = useSessionDisplayStore((state) => state.detailedZoneRows);
   const setDetailedZoneRows = useSessionDisplayStore((state) => state.setDetailedZoneRows);
   const worktreeNameByBranch = useSessionDisplayStore((state) => state.worktreeNameByBranch);
   const setWorktreeNameByBranch = useSessionDisplayStore((state) => state.setWorktreeNameByBranch);
   const sessionWorkEnabled = useUIStore((state) => state.sessionWorkEnabled);
+  const savedSections = useSessionDisplayStore((state) => state.sections);
+  const customSections = React.useMemo(() => savedSections.filter((entry) => entry.kind === 'custom'), [savedSections]);
+  const hiddenSections = useSessionDisplayStore((state) => state.hiddenSections);
   const shortcutOverrides = useUIStore((state) => state.shortcutOverrides);
   const admissionScope = getSessionAdmissionScope();
   useChatsRoot();
@@ -167,7 +203,16 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
     isChatDirectoryPath(getSessionDirectory(session))
       || isGlobalSessionTarget({ directory: session.directory, session }, admissionScope)
   )));
-  const [query, setQuery] = React.useState('');
+  const [searchText, setSearchTextState] = React.useState('');
+  const [searchScope, setSearchScope] = React.useState<SearchScope>('everything');
+  const [searchStatus, setSearchStatus] = React.useState<ContentSearchStatus>(IDLE_SEARCH_STATUS);
+  // A cleared search drops its scope too: the next one starts wide.
+  const setSearchText = React.useCallback((text: string) => {
+    setSearchTextState(text);
+    if (text === '') setSearchScope('everything');
+  }, []);
+  const clearSearchText = React.useCallback(() => setSearchText(''), [setSearchText]);
+  const searchFailure = useSearchFailureText(searchStatus, searchScopeQuery(searchScope).searchIn === 'messages');
   const [editingProjectId, setEditingProjectId] = React.useState<string | null>(null);
   const [worktreeToDelete, setWorktreeToDelete] = React.useState<{ project: { id: string; path: string }; worktree: WorktreeMetadata } | null>(null);
   const [directoryDialogOpen, setDirectoryDialogOpen] = React.useState(false);
@@ -179,16 +224,23 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
   const searchShown = variant === 'drawer' || searchOpen;
   const searchInputRef = React.useRef<HTMLInputElement | null>(null);
   const toggleSearch = () => {
-    if (searchOpen) setQuery('');
+    // Closing the field clears its query: no list stays filtered by text
+    // nobody can see.
+    if (searchOpen) clearSearchText();
     setSearchOpen(!searchOpen);
   };
   React.useEffect(() => {
     if (searchOpen && variant === 'sidebar') searchInputRef.current?.focus();
   }, [searchOpen, variant]);
 
+  React.useEffect(
+    () => sessionEvents.onDirectoryRequest(() => setDirectoryDialogOpen(true)),
+    [],
+  );
+
   React.useEffect(() => {
     if (!listActive) {
-      setQuery('');
+      clearSearchText();
       setSearchOpen(false);
       setEditingOrder(false);
       setEditingProjectId(null);
@@ -196,10 +248,31 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
       return;
     }
     setOpenId((id) => id + 1);
-    void refreshGlobalSessions(liveSessions).then(() => seedGlobalSessionStatusFromHost());
-    // intentionally only on open transition; session events keep the list current
+    // The mobile shell has no global poller, so the list is read here: its
+    // head on most openings, the complete snapshot once it is ten minutes old
+    // (`refreshGlobalSessionsWhenShown`). This is also where the host seed
+    // runs, as the poller runs it after each load elsewhere: a
+    // question or permission already waiting at startup is otherwise missing
+    // from the cross-directory index the rows read. The seed resolves
+    // directories from the list just loaded, so it runs after it.
+    void refreshGlobalSessionsWhenShown(GLOBAL_SESSIONS_FULL_REFRESH_INTERVAL_MS, liveSessions).then(() => seedGlobalSessionStatusFromHost());
+    // intentionally only on open transition — session events keep the list current after that
     // oxlint-disable-next-line react-hooks/exhaustive-deps
   }, [listActive]);
+
+  // Events sent while the stream was down are lost, so a list on screen when
+  // it comes back (the iPad's sidebar, a drawer left open in the background)
+  // reads again, as opening it does.
+  const connectionPhase = useConfigStore((state) => state.connectionPhase);
+  const previousConnectionPhaseRef = React.useRef(connectionPhase);
+  React.useEffect(() => {
+    const reconnected = previousConnectionPhaseRef.current === 'reconnecting' && connectionPhase === 'connected';
+    previousConnectionPhaseRef.current = connectionPhase;
+    if (!reconnected || !listActive) return;
+    void refreshGlobalSessionsWhenShown(GLOBAL_SESSIONS_FULL_REFRESH_INTERVAL_MS, liveSessions).then(() => seedGlobalSessionStatusFromHost());
+    // only on the reconnect edge
+    // oxlint-disable-next-line react-hooks/exhaustive-deps
+  }, [connectionPhase]);
 
   const close = React.useCallback(() => onOpenChange(false), [onOpenChange]);
   const sidebarActions = React.useMemo<MobileSidebarActions>(() => ({
@@ -212,8 +285,7 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
     requestWorktreeDelete: (project, worktree) => setWorktreeToDelete({ project, worktree }),
     openId,
   }), [close, openId]);
-  const clearSearch = React.useCallback(() => setQuery(''), []);
-  const phoneList = React.useMemo(() => ({ searchQuery: query, clearSearch, renderList }), [clearSearch, query]);
+  const phoneList = React.useMemo(() => ({ searchQuery: searchShown ? searchText : '', searchScope, clearSearch: clearSearchText, onSearchStatusChange: setSearchStatus, renderList }), [clearSearchText, searchScope, searchShown, searchText]);
 
   const labelledProjects = React.useMemo(() => projects.map((project) => ({
     ...project,
@@ -261,7 +333,9 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
     reorderProjects(fromIndex, toIndex);
   };
 
-  const canEditOrder = !query && projects.length > 1 && projectSortOrder === 'manual' && grouping === 'project';
+  // Drag order IS the manual order: offering it under another sort would let
+  // the user rearrange a list that is about to be re-sorted anyway.
+  const canEditOrder = !searchText && projects.length > 1 && projectSortOrder === 'manual' && grouping === 'project';
 
   const displayMenu = !editingOrder && projects.length > 0 ? (
     <DropdownMenu>
@@ -274,7 +348,7 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
           title={t('sessions.sidebar.header.displayMode.label')}
           style={{ touchAction: 'manipulation' }}
         >
-          <Icon name="equalizer-2" className="size-4" />
+          <Icon name="list-settings" className="size-4" />
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end" className="w-64">
@@ -294,6 +368,17 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
         {sessionWorkEnabled ? renderMenuChoice('work', 'sessions.sidebar.header.displayMode.showWork', showWorkSection, toggleSetting(showWorkSection, setShowWorkSection, (next) => {
           void updateDesktopSettings({ sidebarShowWorkSection: next });
         })) : null}
+        {/* The user's own sections, made on the desktop or the web; the phone only shows or hides them. */}
+        {customSections.map((section) => (
+          <DropdownMenuItem key={`section:${section.id}`} onClick={() => setSidebarSectionHidden(section.id, !hiddenSections.includes(section.id))} className={MOBILE_MENU_ITEM_CLASS}>
+            <span className="min-w-0 truncate" dir="auto">{section.name}</span>
+            {!hiddenSections.includes(section.id) ? <Icon name="check" className="size-4 text-primary" /> : null}
+          </DropdownMenuItem>
+        ))}
+        {/* A pinned work stays in its project unless asked; one in In work leaves it unless asked. */}
+        {showPinnedSection ? renderMenuChoice('pinned-in-place', 'sessions.sidebar.header.displayMode.keepPinnedInPlace', keepPinnedInPlace, toggleSetting(keepPinnedInPlace, setKeepPinnedInPlace, (next) => {
+          void updateDesktopSettings({ sidebarKeepPinnedInPlace: next });
+        })) : null}
         {sessionWorkEnabled && showWorkSection ? renderMenuChoice('in-place', 'sessions.sidebar.header.displayMode.keepWorkInPlace', keepWorkInPlace, toggleSetting(keepWorkInPlace, setKeepWorkInPlace, (next) => {
           void updateDesktopSettings({ sidebarKeepWorkInPlace: next });
         })) : null}
@@ -303,17 +388,17 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
         {renderMenuChoice('branch-names', 'sessions.sidebar.header.displayMode.worktreeNameByBranch', worktreeNameByBranch, toggleSetting(worktreeNameByBranch, setWorktreeNameByBranch, (next) => {
           void updateDesktopSettings({ sidebarWorktreeNameByBranch: next });
         }))}
+        <DropdownMenuSeparator />
         {canEditOrder ? (
-          <>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem onClick={() => setEditingOrder(true)} className={MOBILE_MENU_ITEM_CLASS}>
-              <span className="flex items-center gap-2">
-                <Icon name="drag-move-2" className="size-4" />
-                {t('mobile.sessions.editOrder')}
-              </span>
-            </DropdownMenuItem>
-          </>
+          <DropdownMenuItem onClick={() => setEditingOrder(true)} className={MOBILE_MENU_ITEM_CLASS}>
+            <span className="flex items-center gap-2">
+              <Icon name="drag-move-2" className="size-4" />
+              {t('mobile.sessions.editOrder')}
+            </span>
+          </DropdownMenuItem>
         ) : null}
+        <MobileMarkAllReadItem />
+      
       </DropdownMenuContent>
     </DropdownMenu>
   ) : null;
@@ -371,6 +456,7 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
       </span>
     </DropdownMenuItem>
   );
+  const guestPages = useGuestPages();
   const moreMenu = footer && !editingOrder ? (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
@@ -391,6 +477,19 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
         {pageItem('calendar-schedule', t('sessions.sidebar.header.actions.scheduledTasks'), footer.onOpenScheduled)}
         {pageItem('archive', t('sessions.sidebar.nav.archive'), footer.onOpenArchive)}
         {pageItem('bar-chart', t('usageStats.openAction'), footer.onOpenUsage)}
+        {/* Extension pages that opted into the phone; the shell shows the open one full screen. */}
+        {guestPages.map((guest) => (
+          <DropdownMenuItem key={guest.id} onClick={() => useUIStore.getState().setOpenGuestPage(guest.id)} className={MOBILE_MENU_ITEM_CLASS}>
+            <span className="flex min-w-0 items-center gap-2">
+              <GuestIcon
+                icon={resolveGuestIconName(guest.icon)}
+                iconSrc={guestPackageIconSrc(guest.id, guest.icon, getRuntimeUrlResolver().authenticatedAsset)}
+                className="size-4 shrink-0"
+              />
+              <span className="truncate">{guest.pageTitle ?? guest.name}</span>
+            </span>
+          </DropdownMenuItem>
+        ))}
       </DropdownMenuContent>
     </DropdownMenu>
   ) : null;
@@ -409,17 +508,23 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
   const surfaceContent = (
       <div className="flex min-h-0 flex-1 flex-col">
         {!editingOrder && !empty && searchShown ? (
-          <div className={cn('shrink-0 px-3 pb-2', variant === 'sidebar' ? 'pt-2' : 'pt-1')}>
+          <div className={cn('shrink-0 px-2 pb-1', variant === 'sidebar' ? 'pt-2' : 'pt-1')}>
             <SessionSearchInput
               inputRef={searchInputRef}
-              value={query}
-              onSearch={setQuery}
+              value={searchText}
+              onSearch={setSearchText}
               onClose={variant === 'sidebar' ? toggleSearch : undefined}
               active={open}
               mobile
               placeholder={t('mobile.sessions.search.placeholder')}
               clearLabel={t('mobile.sessions.clearSearchAria')}
+              trailing={searchText !== '' ? <>
+                <SearchStatusMark status={searchStatus} scope={searchScope} />
+                <SearchInMenu mobile scope={searchScope} onChange={setSearchScope} />
+              </> : undefined}
             />
+            {/* A phone has no tooltips, so a failed message search says so in words. */}
+            {searchText !== '' && searchFailure ? <p role="status" className="px-2.5 pt-1 typography-micro text-muted-foreground">{searchFailure}</p> : null}
           </div>
         ) : null}
         {empty ? (
@@ -441,7 +546,7 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
           </div>
         ) : null}
         {editingOrder ? (
-          <ScrollShadow className="min-h-0 flex-1 overflow-y-auto pb-4">
+          <ScrollableOverlay outerClassName="min-h-0 flex-1" className="pb-4" useScrollShadow disableHorizontal>
             <div className="flex flex-col gap-2 px-3 py-2">
               <p className="px-1 typography-micro text-muted-foreground">{t('mobile.sessions.editOrderHint')}</p>
               <DndContext sensors={dndSensors} collisionDetection={closestCenter} onDragEnd={handleReorderDragEnd}>
@@ -452,7 +557,7 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
                 </SortableContext>
               </DndContext>
             </div>
-          </ScrollShadow>
+          </ScrollableOverlay>
         ) : null}
         <div className={cn('flex min-h-0 flex-1 flex-col', (editingOrder || empty) && 'hidden')}>
           <MobileSidebarActionsProvider value={sidebarActions}>
@@ -463,7 +568,7 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
         {footer ? (
           <div
             data-keyboard-rider={variant === 'drawer' ? '' : undefined}
-            className="flex shrink-0 items-center justify-between gap-2 border-t border-edge bg-background px-3 pt-1.5"
+            className="oc-sessions-footer flex shrink-0 items-center justify-between gap-2 border-t border-edge bg-background px-3 pt-1.5"
             style={{ paddingBottom: 'calc(0.375rem + var(--oc-safe-area-bottom, 0px))' }}
           >
             <div className="flex min-w-0 items-center">
@@ -554,7 +659,9 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
   if (variant === 'sidebar') {
     return (
       <div className="flex h-full min-h-0 flex-col">
-        <div className="flex h-[var(--oc-header-height,56px)] shrink-0 items-center gap-2 border-b border-edge px-3">
+        {/* No title: the list below says what this is, and the actions need
+            the width. Search opens from the leading button, as on the desktop. */}
+        <div className={cn(MOBILE_HEADER_CLASS, 'border-b border-edge')}>
           {!editingOrder && !empty ? (
             <Button
               type="button"
@@ -590,10 +697,10 @@ export const MobileSessionsSheet: React.FC<MobileSessionsSheetProps> = ({ open, 
       }}
       ariaLabel={t('mobile.sessions.sheet.title')}
     >
-      <div className="flex h-[var(--oc-header-height,56px)] shrink-0 items-center gap-2 px-3">
+      <div className={MOBILE_HEADER_CLASS}>
         <button
           type="button"
-          className="flex size-10 shrink-0 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-interactive-hover hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          className={MOBILE_HEADER_BUTTON_CLASS}
           aria-label={t('mobile.surface.closeAria')}
           onClick={close}
           style={{ touchAction: 'manipulation' }}
@@ -706,7 +813,7 @@ const MobileSessionsDrawerContainer: React.FC<{
       aria-modal="true"
       aria-label={ariaLabel}
       aria-hidden={!open}
-      className="oc-keyboard-inset-surface fixed inset-0 z-50 flex flex-col bg-background text-foreground"
+      className="oc-keyboard-inset-surface oc-side-safe-area fixed inset-0 z-50 flex flex-col bg-background text-foreground"
       style={{
         paddingTop: 'var(--oc-safe-area-top, 0px)',
         transform: entered ? 'none' : direction === 'rtl' ? 'translateX(100%)' : 'translateX(-100%)',

@@ -20,17 +20,18 @@
  * `CSS.highlights` get the scroll without the highlight.
  *
  * A quote taken inside a page the agent showed (`openchamber_render`) has a
- * `page` in its anchor and lives in the page's frame, out of reach here. Its
- * marks, reveal and clicks go through `pageQuoteBridge.ts` to the frame, which
- * paints, scrolls and hit-tests in the page. Its popover opens on click only:
- * the pointer over a frame is invisible to the app.
+ * `page` in its anchor. A UI page is found in the chat by its source message
+ * and render part; a framed page paints, scrolls and hit-tests through
+ * `pageQuoteBridge.ts`. A frame's popover opens on click only because the
+ * pointer over it is invisible to the app.
  */
 
 import React from 'react';
 
 import {
-    findChatQuoteRoot,
-    resolveChatQuoteAnchor,
+    findChatQuoteRoots,
+    findUiRenderQuoteRoot,
+    resolveChatQuoteRanges,
     type ChatQuoteAnchor,
 } from '@/lib/chatQuoteAnchor';
 
@@ -39,6 +40,7 @@ import { ChatColumnSessionContext } from '../chatColumnSession';
 import { ChatQuoteMarkPopover } from './ChatQuoteMarkPopover';
 import type { HtmlRenderMark } from './parts/htmlRender';
 import { onPageMarkClick, revealPageMark, setPageMarks } from './pageQuoteBridge';
+import { dispatchNavigationRelease } from '../lib/scroll/timelineScrollIntent';
 
 const MARK_HIGHLIGHT = 'oc-chat-quote';
 const FOCUS_HIGHLIGHT = 'oc-chat-quote-focus';
@@ -89,16 +91,33 @@ interface ChatQuoteHighlightLayerProps {
     scrollNode: HTMLElement | null;
     loadHistoryUntilMessage: (messageId: string) => Promise<boolean>;
     scrollToMessage: (messageId: string, options?: { behavior?: ScrollBehavior }) => Promise<boolean>;
+    resolveUiPageMessageId?: (messageId: string, partId: string) => string;
+    scrollToUiPageRow?: (messageId: string) => boolean;
 }
 
-function markAtPoint(ranges: Map<string, Range>, x: number, y: number): string | null {
-    for (const [id, range] of ranges) {
-        for (const rect of range.getClientRects()) {
-            if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) return id;
+function markAtPoint(ranges: Map<string, Range[]>, x: number, y: number): string | null {
+    for (const [id, parts] of ranges) {
+        for (const range of parts) {
+            for (const rect of range.getClientRects()) {
+                if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) return id;
+            }
         }
     }
     return null;
 }
+
+// The box around a quote; one that crosses a long answer's rows has a Range per row.
+const boundsOf = (parts: Range[]): DOMRect => {
+    const [first, ...rest] = parts.map((range) => range.getBoundingClientRect());
+    let { left, top, right, bottom } = first;
+    for (const rect of rest) {
+        left = Math.min(left, rect.left);
+        top = Math.min(top, rect.top);
+        right = Math.max(right, rect.right);
+        bottom = Math.max(bottom, rect.bottom);
+    }
+    return new DOMRect(left, top, right - left, bottom - top);
+};
 
 // A mark inside a page's frame has no Range here: its popover opens from the
 // frame's click report, follows the frame through `measure`, and renders in
@@ -110,11 +129,33 @@ type PopoverState = {
     portal?: HTMLElement | null;
 };
 
+
+// A long answer's rows: the lowest one drawn says whether the message goes
+// on below it (`data-message-continues`); scrolling past it mounts the next.
+const lowestRowOf = (scrollNode: HTMLElement, messageId: string): Element | null => {
+    let lowest: Element | null = null;
+    for (const message of scrollNode.querySelectorAll(`[data-message-id="${CSS.escape(messageId)}"]`)) {
+        if (!lowest || message.getBoundingClientRect().bottom > lowest.getBoundingClientRect().bottom) lowest = message;
+    }
+    return lowest;
+};
+
+const messageContinuesBelow = (scrollNode: HTMLElement, messageId: string): boolean => (
+    lowestRowOf(scrollNode, messageId)?.hasAttribute('data-message-continues') === true
+);
+
+const scrollToNextSlice = (scrollNode: HTMLElement, messageId: string): void => {
+    const lowest = lowestRowOf(scrollNode, messageId);
+    if (lowest) scrollNode.scrollTop += lowest.getBoundingClientRect().bottom - scrollNode.getBoundingClientRect().top;
+};
+
 export const ChatQuoteHighlightLayer = React.memo(function ChatQuoteHighlightLayer({
     store,
     scrollNode,
     loadHistoryUntilMessage,
     scrollToMessage,
+    resolveUiPageMessageId,
+    scrollToUiPageRow,
 }: ChatQuoteHighlightLayerProps) {
     const session = React.useContext(ChatColumnSessionContext);
     const marks = React.useSyncExternalStore(store.subscribe, store.getMarks);
@@ -123,7 +164,7 @@ export const ChatQuoteHighlightLayer = React.memo(function ChatQuoteHighlightLay
     const [editing, setEditing] = React.useState(false);
     const focusedMarkId = chipFocusedMarkId ?? popover?.markId ?? null;
     // Resolved ranges of the marks currently mounted, for hit-testing.
-    const rangesRef = React.useRef(new Map<string, Range>());
+    const rangesRef = React.useRef(new Map<string, Range[]>());
     const [owners] = React.useState(() => ({
         marks: { layer: 'marks' } satisfies PaintOwner,
         focus: { layer: 'focus' } satisfies PaintOwner,
@@ -137,6 +178,10 @@ export const ChatQuoteHighlightLayer = React.memo(function ChatQuoteHighlightLay
     scrollNodeRef.current = scrollNode;
     const scrollToMessageRef = React.useRef(scrollToMessage);
     scrollToMessageRef.current = scrollToMessage;
+    const resolveUiPageMessageIdRef = React.useRef(resolveUiPageMessageId);
+    resolveUiPageMessageIdRef.current = resolveUiPageMessageId;
+    const scrollToUiPageRowRef = React.useRef(scrollToUiPageRow);
+    scrollToUiPageRowRef.current = scrollToUiPageRow;
     const loadHistoryUntilMessageRef = React.useRef(loadHistoryUntilMessage);
     loadHistoryUntilMessageRef.current = loadHistoryUntilMessage;
     const revealGenerationRef = React.useRef(0);
@@ -160,13 +205,13 @@ export const ChatQuoteHighlightLayer = React.memo(function ChatQuoteHighlightLay
             const focused: Range[] = [];
             ranges.clear();
             for (const mark of marks) {
-                if (mark.anchor.page) continue;
-                const root = findChatQuoteRoot(scrollNode, mark.messageId);
-                const range = root ? resolveChatQuoteAnchor(root, mark.anchor) : null;
-                if (!range) continue;
-                ranges.set(mark.id, range);
-                marked.push(range);
-                if (mark.id === focusedMarkId) focused.push(range);
+                if (mark.anchor.page && mark.anchor.page.kind !== 'ui') continue;
+                const root = mark.anchor.page ? findUiRenderQuoteRoot(scrollNode, mark.messageId, mark.anchor.page.partId) : null;
+                const parts = resolveChatQuoteRanges(mark.anchor.page ? root ? [root] : [] : findChatQuoteRoots(scrollNode, mark.messageId), mark.anchor);
+                if (!parts) continue;
+                ranges.set(mark.id, parts);
+                marked.push(...parts);
+                if (mark.id === focusedMarkId) focused.push(...parts);
             }
             paint(MARK_HIGHLIGHT, owners.marks, marked);
             paint(FOCUS_HIGHLIGHT, owners.focus, focused);
@@ -180,7 +225,8 @@ export const ChatQuoteHighlightLayer = React.memo(function ChatQuoteHighlightLay
             const relevant = records.some((record) => {
                 const element = record.target instanceof Element ? record.target : record.target.parentElement;
                 const messageId = element?.closest('[data-message-id]')?.getAttribute('data-message-id');
-                return messageId === undefined || messageId === null || markedMessageIds.has(messageId);
+                const pageMessageId = element?.closest('[data-ui-render-message]')?.getAttribute('data-ui-render-message');
+                return messageId === undefined || messageId === null || markedMessageIds.has(messageId) || (pageMessageId != null && markedMessageIds.has(pageMessageId));
             });
             if (relevant) frame = window.requestAnimationFrame(repaint);
         });
@@ -201,7 +247,7 @@ export const ChatQuoteHighlightLayer = React.memo(function ChatQuoteHighlightLay
         const byPart = new Map<string, HtmlRenderMark[]>();
         for (const mark of marks) {
             const partId = mark.anchor.page?.partId;
-            if (!partId) continue;
+            if (!partId || mark.anchor.page?.kind === 'ui') continue;
             const forPart = byPart.get(partId) ?? [];
             forPart.push({ id: mark.id, anchor: mark.anchor, focused: mark.id === focusedMarkId });
             byPart.set(partId, forPart);
@@ -254,7 +300,7 @@ export const ChatQuoteHighlightLayer = React.memo(function ChatQuoteHighlightLay
             const loaded = await loadHistoryUntilMessageRef.current(messageId).catch(() => false);
             if (!loaded || !isCurrent()) return;
 
-            if (anchor.page) {
+            if (anchor.page && anchor.page.kind !== 'ui') {
                 // Scroll to the frame before revealing the quote inside it.
                 // The row may still be mounting after the scroll request.
                 const { partId } = anchor.page;
@@ -266,39 +312,67 @@ export const ChatQuoteHighlightLayer = React.memo(function ChatQuoteHighlightLay
                 }
                 return;
             }
+            const targetMessageId = anchor.page?.kind === 'ui'
+                ? resolveUiPageMessageIdRef.current?.(messageId, anchor.page.partId) ?? messageId
+                : messageId;
             // Scrolling through the timeline controller releases live follow
             // and mounts the row when the virtualized list dropped it.
-            const mounted = scrollNodeRef.current ? findChatQuoteRoot(scrollNodeRef.current, messageId) : null;
-            const scrolled = await scrollToMessage(messageId, { behavior: 'auto' }).catch(() => false);
+            const uiRoot = anchor.page && scrollNode ? findUiRenderQuoteRoot(scrollNode, messageId, anchor.page.partId) : null;
+            const mounted = uiRoot !== null || (scrollNodeRef.current ? findChatQuoteRoots(scrollNodeRef.current, messageId).length > 0 : false);
+            let pageRowRequested = anchor.page?.kind === 'ui' && uiRoot === null && scrollToUiPageRowRef.current?.(messageId) === true;
+            const scrolled = uiRoot !== null || pageRowRequested
+                || await scrollToMessage(targetMessageId, { behavior: 'auto' }).catch(() => false);
             if (!isCurrent() || !scrollNode) return;
             if (!scrolled && !mounted) return;
+            let steps = 0;
             const tryReveal = () => {
                 frame = null;
                 if (!isCurrent()) { cancel(); return; }
-                const root = findChatQuoteRoot(scrollNode, messageId);
+                const pageRoot = anchor.page ? findUiRenderQuoteRoot(scrollNode, messageId, anchor.page.partId) : null;
+                const roots = anchor.page ? pageRoot ? [pageRoot] : [] : findChatQuoteRoots(scrollNode, messageId);
+                if (anchor.page?.kind === 'ui' && roots.length === 0 && !pageRowRequested && scrollToUiPageRowRef.current?.(messageId)) {
+                    pageRowRequested = true;
+                    return;
+                }
                 // A lazy fallback can contain raw Markdown on mobile. Wait for
                 // the renderer before treating a failed match as final.
-                if (!root || root.querySelector('[data-chat-quote-pending]')) return;
-                const range = resolveChatQuoteAnchor(root, anchor);
+                if (roots.length === 0 || roots.some((root) => root.querySelector('[data-chat-quote-pending]'))) return;
+                const parts = resolveChatQuoteRanges(roots, anchor);
+                // A long answer's later rows mount as they near the view: step
+                // down past the lowest one drawn while the message continues.
+                if (!parts && steps < REVEAL_ATTEMPTS && messageContinuesBelow(scrollNode, targetMessageId)) {
+                    // Navigation holds the message's first row in place
+                    // (`settleNavigationTarget`); it lets go first, or the
+                    // two would fight.
+                    dispatchNavigationRelease(scrollNode);
+                    scrollToNextSlice(scrollNode, targetMessageId);
+                    steps += 1;
+                    return;
+                }
                 cancel();
-                if (!range) return;
-                range.startContainer.parentElement?.scrollIntoView({ block: 'center', inline: 'nearest' });
+                if (!parts) return;
+                parts[0].startContainer.parentElement?.scrollIntoView({ block: 'center', inline: 'nearest' });
                 if (flashTimerRef.current !== null) window.clearTimeout(flashTimerRef.current);
-                paintFlash([range]);
+                paintFlash(parts);
                 flashTimerRef.current = window.setTimeout(() => {
                     flashTimerRef.current = null;
                     paintFlash([]);
                 }, FLASH_DURATION_MS);
             };
-            const selector = `[data-message-id="${CSS.escape(messageId)}"]`;
+            const selector = `[data-message-id="${CSS.escape(targetMessageId)}"]`;
+            const pageSelector = anchor.page?.kind === 'ui'
+                ? `[data-ui-render-message="${CSS.escape(messageId)}"][data-ui-render-part="${CSS.escape(anchor.page.partId)}"]`
+                : null;
             observer = new MutationObserver((records) => {
                 if (frame !== null) return;
                 const relevant = records.some((record) => {
                     const element = record.target instanceof Element ? record.target : record.target.parentElement;
+                    if (pageSelector && element?.closest(pageSelector)) return true;
                     const message = element?.closest('[data-message-id]');
-                    if (message) return message.getAttribute('data-message-id') === messageId;
+                    if (message?.getAttribute('data-message-id') === targetMessageId) return true;
                     return [...record.addedNodes].some((node) => node instanceof Element
-                        && (node.matches(selector) || node.querySelector(selector)));
+                        && (node.matches(selector) || node.querySelector(selector)
+                            || (pageSelector && (node.matches(pageSelector) || node.querySelector(pageSelector)))));
                 });
                 if (relevant) frame = window.requestAnimationFrame(tryReveal);
             });
@@ -329,10 +403,10 @@ export const ChatQuoteHighlightLayer = React.memo(function ChatQuoteHighlightLay
     // must not start the close.
     const isInPopoverCorridor = React.useCallback((x: number, y: number): boolean => {
         const open = popoverRef.current;
-        const range = open ? rangesRef.current.get(open.markId) : null;
+        const parts = open ? rangesRef.current.get(open.markId) : null;
         const box = popoverElementRef.current?.getBoundingClientRect();
-        if (!range || !box) return false;
-        const mark = range.getBoundingClientRect();
+        if (!parts || !box) return false;
+        const mark = boundsOf(parts);
         return x >= Math.min(mark.left, box.left) - CORRIDOR_PADDING_PX
             && x <= Math.max(mark.right, box.right) + CORRIDOR_PADDING_PX
             && y >= Math.min(mark.top, box.top) - CORRIDOR_PADDING_PX
@@ -372,9 +446,9 @@ export const ChatQuoteHighlightLayer = React.memo(function ChatQuoteHighlightLay
     }), [clearTimers, closePopover]);
 
     const showPopover = React.useCallback((markId: string) => {
-        const range = rangesRef.current.get(markId);
-        if (!range) return;
-        setPopover({ markId, rect: range.getBoundingClientRect() });
+        const parts = rangesRef.current.get(markId);
+        if (!parts) return;
+        setPopover({ markId, rect: boundsOf(parts) });
     }, []);
 
     const scheduleClose = React.useCallback(() => {
@@ -461,8 +535,8 @@ export const ChatQuoteHighlightLayer = React.memo(function ChatQuoteHighlightLay
             if (frame !== null) return;
             frame = window.requestAnimationFrame(() => {
                 frame = null;
-                const range = rangesRef.current.get(openMarkId);
-                const rect = range ? range.getBoundingClientRect() : popoverRef.current?.measure?.();
+                const parts = rangesRef.current.get(openMarkId);
+                const rect = parts ? boundsOf(parts) : popoverRef.current?.measure?.();
                 if (!rect) {
                     closePopover();
                     return;

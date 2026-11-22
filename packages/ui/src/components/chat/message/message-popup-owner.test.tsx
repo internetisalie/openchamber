@@ -18,6 +18,7 @@ Object.assign(globalThis, {
   DOMParser: browser.DOMParser, DOMRect: browser.DOMRect, XMLSerializer: browser.XMLSerializer,
   IntersectionObserver: browser.IntersectionObserver, ResizeObserver: browser.ResizeObserver,
   customElements: browser.customElements, Event: browser.Event, MouseEvent: browser.MouseEvent,
+  CustomEvent: browser.CustomEvent,
   KeyboardEvent: browser.KeyboardEvent, getComputedStyle: browser.getComputedStyle.bind(browser),
   requestAnimationFrame: browser.requestAnimationFrame.bind(browser), cancelAnimationFrame: browser.cancelAnimationFrame.bind(browser),
 });

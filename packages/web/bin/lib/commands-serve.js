@@ -26,9 +26,8 @@ const DAEMON_READY_TIMEOUT_MS = 30000;
 
 function createServeCommand({
   serverPath,
-  bunBin,
   checkOpenCodeCLI,
-  getPreferredServerRuntime,
+  getServerRuntimeBinary,
   setForegroundServerActive,
   setForegroundShutdown,
 }) {
@@ -101,9 +100,10 @@ async function serveCommand(options) {
       }
     }
 
-    const opencodeBinary = await checkOpenCodeCLI(emitNotice);
-    const preferredRuntime = getPreferredServerRuntime();
-    const runtimeBin = preferredRuntime === 'bun' ? bunBin : process.execPath;
+    const serverEnv = withoutInjectedEnv(process.env);
+    const skipOpenCodeStart = serverEnv.OPENCODE_SKIP_START === 'true' || serverEnv.OPENCHAMBER_SKIP_OPENCODE_START === 'true';
+    const opencodeBinary = skipOpenCodeStart ? undefined : await checkOpenCodeCLI(emitNotice);
+    const runtimeBin = getServerRuntimeBinary();
 
     ensureLogsDir();
     const initialLogPort = targetPort === 0 ? 'auto' : String(targetPort);
@@ -289,13 +289,13 @@ async function serveCommand(options) {
       // Same as the foreground path above: what the shell's own OpenChamber
       // put there goes, the server's own settings are recorded as
       // OpenChamber's, the binary path is not.
-      env: assignInjectedEnv({ ...withoutInjectedEnv(process.env), OPENCODE_BINARY: opencodeBinary }, {
+      env: assignInjectedEnv({ ...withoutInjectedEnv(process.env), OPENCODE_BINARY: opencodeBinary ?? serverEnv.OPENCODE_BINARY }, {
         OPENCHAMBER_PORT: String(targetPort),
         OPENCHAMBER_RUNTIME: 'web',
         OPENCHAMBER_HOST: effectiveHost,
         OPENCHAMBER_UI_PASSWORD: effectiveUiPassword || undefined,
         OPENCHAMBER_API_ONLY: options.apiOnly === true ? 'true' : undefined,
-        OPENCHAMBER_SKIP_OPENCODE_START: process.env.OPENCODE_SKIP_START || undefined,
+        OPENCHAMBER_SKIP_OPENCODE_START: skipOpenCodeStart ? 'true' : undefined,
       }),
     });
 

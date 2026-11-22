@@ -2,12 +2,13 @@ import { EventEmitter } from 'node:events';
 import http from 'node:http';
 import net from 'node:net';
 import crypto from 'node:crypto';
+import { gunzipSync } from 'node:zlib';
 import fs from 'node:fs';
 import path from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import { WebSocket } from 'ws';
 
-import { createTerminalRuntime } from './runtime.js';
+import { createTerminalRuntime, loadTerminalPtyProvider } from './runtime.js';
 import { createTerminalWsControlFrame, readTerminalWsControlFrame } from './terminal-ws-protocol.js';
 
 // Drives the raw upgrade handler by hand. A `ws` client hides the HTTP response
@@ -46,7 +47,9 @@ function createResponse() {
 async function openTerminalSocket(socketUrl) {
   const socket = new WebSocket(socketUrl);
   const messages = [];
-  socket.on('message', (raw) => messages.push(readTerminalWsControlFrame(raw)));
+  socket.on('message', (raw) => messages.push(raw[0] === 2
+    ? { ...JSON.parse(gunzipSync(raw.subarray(1)).toString('utf8')), gzipped: true }
+    : readTerminalWsControlFrame(raw)));
   await new Promise((resolve, reject) => {
     socket.once('open', resolve);
     socket.once('error', reject);
@@ -211,6 +214,31 @@ describe('terminal runtime', () => {
     });
     return { routes, processes, runtime };
   };
+
+  it.each([
+    [undefined, 'node-pty'],
+    ['1.3.14', 'node-pty'],
+    ['1.4.0-canary.1', 'node-pty'],
+    ['1.4.0', 'bun-pty'],
+    ['1.10.0', 'bun-pty'],
+    ['2.0.0', 'bun-pty'],
+  ])('selects %s Bun terminals through %s before caching the provider', async (version, expectedBackend) => {
+    const spawn = () => {};
+    const importPty = vi.fn(async () => ({ spawn }));
+    const provider = await loadTerminalPtyProvider(version, importPty);
+    expect(provider).toEqual({ backend: expectedBackend, spawn });
+    expect(importPty).toHaveBeenCalledExactlyOnceWith(expectedBackend);
+  });
+
+  it('uses node-pty when bun-pty cannot import on a supported Bun', async () => {
+    const spawn = () => {};
+    const importPty = vi.fn(async (name) => {
+      if (name === 'bun-pty') throw new Error('Native backend unavailable');
+      return { spawn };
+    });
+    expect(await loadTerminalPtyProvider('1.4.0', importPty)).toEqual({ backend: 'node-pty', spawn });
+    expect(importPty.mock.calls).toEqual([['bun-pty'], ['node-pty']]);
+  });
 
   it('replaces only exited action runs and keeps session capacity available across reruns', async () => {
     const harness = createHarness();
@@ -732,17 +760,22 @@ describe('terminal runtime', () => {
   });
 
   it('retains exited sessions until explicit close', async () => {
-    const harness = createHarness();
+    const broadcastUiEvent = vi.fn();
+    const harness = createHarness({ broadcastUiEvent });
     try {
       await harness.routes.post.get('/api/terminal/create')({ body: { sessionId: 'term-1', cwd: '/repo' } }, createResponse());
+      expect(broadcastUiEvent.mock.calls).toEqual([[{ type: 'openchamber:terminal-sessions-changed', properties: {} }]]);
       harness.processes[0].emitData('last output');
+      expect(broadcastUiEvent).toHaveBeenCalledTimes(1);
       harness.processes[0].emitExit(7, 0);
+      expect(broadcastUiEvent).toHaveBeenCalledTimes(2);
       const resize = createResponse();
       harness.routes.post.get('/api/terminal/:sessionId/resize')({ params: { sessionId: 'term-1' }, body: { cols: 80, rows: 24 } }, resize);
       expect(resize.statusCode).toBe(200);
       const closed = createResponse();
       await harness.routes.delete.get('/api/terminal/:sessionId')({ params: { sessionId: 'term-1' } }, closed);
       expect(closed.body).toEqual({ success: true });
+      expect(broadcastUiEvent).toHaveBeenCalledTimes(3);
     } finally { await harness.runtime.shutdown(); }
   });
 
@@ -962,6 +995,9 @@ describe('terminal runtime', () => {
       const bounded = await second.next('snapshot');
       expect(bounded.history).toBe(expectedHistory);
       expect(Buffer.byteLength(bounded.history)).toBeLessThanOrEqual(512 * 1024);
+      expect(bounded.gzipped).toBeUndefined();
+      second.socket.send(createTerminalWsControlFrame({ t: 'attach', v: 3, s: 'term-live', z: 1 }));
+      expect(await second.next('snapshot')).toMatchObject({ gzipped: true, q: bounded.q, history: expectedHistory });
       processes[0].emitExit(7);
       expect(await second.next('exit')).toMatchObject({ s: 'term-live', q: bounded.q + 1, exitCode: 7 });
 

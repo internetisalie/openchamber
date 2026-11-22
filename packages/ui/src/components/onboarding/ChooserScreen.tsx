@@ -14,6 +14,7 @@ import { desktopHostsGet, desktopHostsSet } from '@/lib/desktopHosts';
 import { useI18n } from '@/lib/i18n';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import { useEnterprisePolicyStore } from '@/stores/useEnterprisePolicyStore';
+import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 
 const DOCS_URL = 'https://github.com/internetisalie/opencode/releases';
 const POLL_INTERVAL_MS = 2500;
@@ -231,9 +232,11 @@ export function ChooserScreen({ onCliAvailable, localAvailable = true }: Chooser
   const showLocal = localAvailable && (!isDesktopApp || activeTab === 'local');
 
   return (
-    <div
-      className="app-region-drag h-full flex items-center justify-center bg-transparent p-8 cursor-default select-none overflow-y-auto"
+    <ScrollableOverlay
+      outerClassName="h-full bg-transparent"
+      className="app-region-drag flex items-center justify-center p-8 cursor-default select-none"
       onMouseDown={handleDragStart}
+      disableHorizontal
     >
       <div className="w-full max-w-md">
         <header className="flex flex-col items-center text-center">
@@ -408,6 +411,6 @@ export function ChooserScreen({ onCliAvailable, localAvailable = true }: Chooser
           </div>
         )}
       </div>
-    </div>
+    </ScrollableOverlay>
   );
 }

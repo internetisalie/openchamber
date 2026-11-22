@@ -21,10 +21,8 @@
 }:
 
 let
-  # Runtime PATH parity with the Docker image (Dockerfile lines 29-58):
-  # the server spawns opencode, git, ssh, python3, and cloudflared. opencode
-  # comes from upstream's flake, pinned to the 2.x version OpenChamber
-  # requires (nixpkgs' opencode package is the older 1.x line).
+  # The Nix CLI supports managed OpenCode. It provides the same fork version
+  # as the bundled Docker target; the default external image omits OpenCode.
   runtimePath = lib.makeBinPath [
     bun
     nodejs

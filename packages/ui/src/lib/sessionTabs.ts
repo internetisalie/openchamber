@@ -4,11 +4,14 @@ import { useSessionUIStore } from '@/sync/session-ui-store';
 import { useProjectsStore } from '@/stores/useProjectsStore';
 import { useUIStore } from '@/stores/useUIStore';
 import { isChatDirectoryPath } from '@/lib/chatDirectories';
+import { getRuntimeKey } from '@/lib/runtime-switch';
+import { sessionTabScopeFor, sessionTabSeedFor } from '@/lib/sessionTabScope';
 
 /**
- * Activate the nth (0-based) header session tab, counting only tabs whose
- * session is present in the loaded session list — the same rule the strip
- * uses for rendering, so the digit matches what the user sees.
+ * Activate the nth (0-based; negative counts from the end) header session
+ * tab, counting only tabs whose session is present in the loaded session
+ * list — the same rule the strip uses for rendering, so the digit matches
+ * what the user sees.
  */
 export const activateSessionTabByIndex = (index: number): boolean => {
   const { tabIds } = useSessionTabsStore.getState();
@@ -16,7 +19,8 @@ export const activateSessionTabByIndex = (index: number): boolean => {
     useGlobalSessionsStore.getState().activeSessions.map((session) => [session.id, session] as const),
   );
   const renderable = tabIds.filter((id) => sessionsById.has(id));
-  const session = renderable[index] ? sessionsById.get(renderable[index]) : null;
+  const id = renderable.at(index);
+  const session = id ? sessionsById.get(id) : null;
   if (!session) return false;
   useSessionUIStore.getState().setCurrentSession(session.id, resolveGlobalSessionDirectory(session));
   return true;
@@ -76,6 +80,22 @@ export const closeSessionTabAndActivateNeighbour = (sessionId: string): void => 
   }
 
   closeTab(sessionId);
+};
+
+/**
+ * With separate tabs per workspace each folder keeps its own tabs; a moved
+ * session's tab goes with it, so the place it left stops showing it.
+ */
+export const followSessionTabMove = (sessionId: string, destinationDirectory: string): void => {
+  const runtimeKey = getRuntimeKey();
+  const scope = sessionTabScopeFor(runtimeKey, destinationDirectory);
+  if (!scope) return;
+  useSessionTabsStore.getState().followSessionMove(sessionId, scope, `${runtimeKey}|`, () => {
+    // A seed taken from a partial list would be stored for good, as in the strip.
+    const { hasLoaded, activeSessions } = useGlobalSessionsStore.getState();
+    if (!hasLoaded) return null;
+    return sessionTabSeedFor(destinationDirectory, activeSessions, useProjectsStore.getState().projects.map((project) => project.path));
+  });
 };
 
 /**

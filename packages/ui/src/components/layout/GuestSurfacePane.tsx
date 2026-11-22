@@ -3,7 +3,9 @@ import React from 'react';
 import type { SurfaceInputEvent, SurfaceModifiers } from '@openchamber/sdk';
 
 import { Button } from '@/components/ui/button';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { copyTextToClipboard } from '@/lib/clipboard';
+import { useDeviceInfo } from '@/lib/device';
 import { useI18n } from '@/lib/i18n';
 import { isGuestActive } from '@/lib/guests/capabilities';
 import { useGuestsStore } from '@/lib/guests/store';
@@ -45,6 +47,8 @@ export const GuestSurfacePane: React.FC<Props> = ({ mode }) => {
   const guestId = pluginIdFromMode(mode);
   const guest = useGuestsStore((state) => state.guests.find((entry) => entry.id === guestId) ?? null);
   const active = guest !== null && isGuestActive(guest) && guest.service?.surface === true;
+  // New package files stop the service, which ends the session; a new client attaches to the next one.
+  const packageKey = `${guest?.version ?? ''}:${guest?.revision ?? 0}`;
 
   const containerRef = React.useRef<HTMLDivElement | null>(null);
   const canvasRef = React.useRef<HTMLCanvasElement | null>(null);
@@ -67,6 +71,9 @@ export const GuestSurfacePane: React.FC<Props> = ({ mode }) => {
   const [agentActive, setAgentActive] = React.useState(false);
   const [hasFrame, setHasFrame] = React.useState(false);
   const [focused, setFocused] = React.useState(false);
+  // A finger has no hover and no keyboard until a field asks for one: the status says a tap.
+  const { isMobile, hasTouchOnlyPointer } = useDeviceInfo();
+  const touch = isMobile || hasTouchOnlyPointer;
 
   const drawFrame = React.useCallback(async (frame: SurfaceFrame) => {
     const canvas = canvasRef.current;
@@ -120,7 +127,7 @@ export const GuestSurfacePane: React.FC<Props> = ({ mode }) => {
       frameSizeRef.current = null;
       setHasFrame(false);
     };
-  }, [active, drawFrame, guestId, setControl]);
+  }, [active, drawFrame, guestId, packageKey, setControl]);
 
   // Tell the extension how much room the panel has, so a browser or a
   // simulator can lay itself out at that size instead of being scaled.
@@ -221,7 +228,7 @@ export const GuestSurfacePane: React.FC<Props> = ({ mode }) => {
     event.preventDefault();
     event.stopPropagation();
     if (action === 'down' && isCopyChord(event)) clipboardAfterFlushRef.current = true;
-    queue({ type: 'key', action, key: event.key, code: event.code, modifiers: modifiersOf(event) });
+    queue({ type: 'key', action, key: event.key, code: event.code, keyCode: event.keyCode, modifiers: modifiersOf(event) });
   };
 
   const onPaste = (event: React.ClipboardEvent<HTMLDivElement>) => {
@@ -250,12 +257,14 @@ export const GuestSurfacePane: React.FC<Props> = ({ mode }) => {
     if (connection.status === 'ended') return `contextPanel.surface.ended.${connection.reason}` as const;
     if (control.controller === 'user') return control.mine ? 'contextPanel.surface.status.youControl' : 'contextPanel.surface.status.otherControls';
     if (control.controller === 'agent' || agentActive) return 'contextPanel.surface.status.agentWorking';
+    if (touch) return 'contextPanel.surface.status.readyTouch';
     return focused ? 'contextPanel.surface.status.readyFocused' : 'contextPanel.surface.status.ready';
   })();
 
   return (
     <div className="flex h-full flex-col bg-[var(--surface-background)]">
-      <div className="flex h-8 shrink-0 items-center gap-2 border-b border-border px-3">
+      {/* A touch screen's buttons are 36px (mobile.css), so the row grows to hold them. */}
+      <div className="flex h-8 shrink-0 items-center gap-2 border-b border-border px-3 pointer-coarse:h-11">
         <span className="typography-meta min-w-0 flex-1 truncate text-foreground" title={title || guest.name}>
           {title || guest.name}
         </span>
@@ -269,14 +278,24 @@ export const GuestSurfacePane: React.FC<Props> = ({ mode }) => {
           {t(statusKey)}
         </span>
         {control.controller === 'user' && control.mine ? (
-          <Button size="xs" variant="outline" onClick={release}>
-            {t('contextPanel.surface.handBack')}
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button size="xs" variant="outline" onClick={release}>
+                {t('contextPanel.surface.handBack')}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" sideOffset={6}>{t('contextTooltips.panel.releaseSurface')}</TooltipContent>
+          </Tooltip>
         ) : null}
         {connection.status === 'ended' ? (
-          <Button size="xs" variant="outline" onClick={() => clientRef.current?.retry()}>
-            {t('contextPanel.surface.retry')}
-          </Button>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button size="xs" variant="outline" onClick={() => clientRef.current?.retry()}>
+                {t('contextPanel.surface.retry')}
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" sideOffset={6}>{t('contextTooltips.panel.reconnectSurface')}</TooltipContent>
+          </Tooltip>
         ) : null}
       </div>
       <div
@@ -297,10 +316,14 @@ export const GuestSurfacePane: React.FC<Props> = ({ mode }) => {
       >
         <canvas
           ref={canvasRef}
-          className={cn('max-h-full max-w-full', hasFrame ? 'block' : 'hidden', control.controller === 'user' && !control.mine ? 'cursor-not-allowed' : 'cursor-default')}
+          // touch-none: a finger on the picture drives the page under it; the
+          // browser must not take the drag as a scroll or the drawer's swipe.
+          className={cn('max-h-full max-w-full touch-none', hasFrame ? 'block' : 'hidden', control.controller === 'user' && !control.mine ? 'cursor-not-allowed' : 'cursor-default')}
           onPointerDown={onPointer('down')}
           onPointerMove={onPointer('move')}
           onPointerUp={onPointer('up')}
+          // A touch the system takes back still lets go of the page's button.
+          onPointerCancel={onPointer('up')}
           onWheel={onWheel}
           onContextMenu={(event) => event.preventDefault()}
         />

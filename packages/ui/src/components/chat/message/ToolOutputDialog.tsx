@@ -2,7 +2,7 @@ import { isShellTool, isSubagentTool, isWriteTool } from '@/lib/opencode/tools';
 import React from 'react';
 import { Dialog, DialogContent } from '@/components/ui/dialog';
 import { File as PierreFile, PatchDiff } from '@pierre/diffs/react';
-import { WorkerHighlightedCode } from '@/components/code/WorkerHighlightedCode';
+import { HighlightedCode } from '@/components/code/HighlightedCode';
 import { createPortal } from 'react-dom';
 
 import { cn } from '@/lib/utils';
@@ -32,13 +32,15 @@ import { StatusImage } from '@/components/ui/status-image';
 import { Icon } from "@/components/icon/Icon";
 import { getToolIcon } from './parts/toolPresentation';
 import { useGuestToolPresentation } from '@/lib/guests/tool-presentation';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { useI18n, type I18nKey, type I18nParams } from '@/lib/i18n';
 import { runtimeFetch } from '@/lib/runtime-fetch';
 import { isVSCodeRuntime } from '@/lib/desktop';
 import { toast } from '@/components/ui';
 import { saveFile } from './parts/saveFile';
 import { MermaidLoadFailure, getMermaidDataUrlSourcePromise, isCurrentMermaidLoadRequest, isMermaidLoadFailure, nextMermaidLoadRequestId } from './toolOutputDialogMermaid';
-import { PIERRE_DIFF_TINT_CSS } from '@/lib/shiki/pierreDiffTint';
+import { PIERRE_DIFF_TINT_CSS, PIERRE_SEPARATOR_CSS } from '@/lib/shiki/pierreDiffTint';
+import { ScrollableOverlay } from '@/components/ui/ScrollableOverlay';
 
 interface ToolOutputDialogProps {
     popup: ToolPopupContent;
@@ -64,12 +66,7 @@ type PierreThemeConfig = {
 
 const TOOL_DIFF_UNSAFE_CSS = `
   ${PIERRE_DIFF_TINT_CSS}
-  [data-diff-header],
-  [data-diff] {
-    [data-separator] {
-      height: 24px !important;
-    }
-  }
+  ${PIERRE_SEPARATOR_CSS}
 `;
 
 const TOOL_DIFF_METRICS = {
@@ -101,15 +98,15 @@ const usePierreThemeConfig = (): PierreThemeConfig => {
         [availableThemes, darkThemeId, fallbackDarkTheme],
     );
 
-    React.useEffect(() => {
-        ensurePierreThemeRegistered(lightTheme);
-        ensurePierreThemeRegistered(darkTheme);
-    }, [darkTheme, lightTheme]);
+    // Registered during render, as in the tool diff preview: an edited theme
+    // gets a new name, and the dialog must not render with one not yet known.
+    const lightThemeName = ensurePierreThemeRegistered(lightTheme);
+    const darkThemeName = ensurePierreThemeRegistered(darkTheme);
 
     const currentVariant = themeSystem?.currentTheme.metadata.variant ?? 'light';
 
     return {
-        theme: { light: lightTheme.metadata.id, dark: darkTheme.metadata.id },
+        theme: { light: lightThemeName, dark: darkThemeName },
         themeType: currentVariant === 'dark' ? 'dark' : 'light',
     };
 };
@@ -440,24 +437,34 @@ const ImagePreviewDialog: React.FC<{
 
             {hasMultipleImages && (
                 <>
-                    <button
-                        type="button"
-                        onMouseDown={(event) => event.stopPropagation()}
-                        onClick={showPrevious}
-                        className="absolute inset-s-3 top-1/2 -translate-y-1/2 z-10 h-10 w-10 flex items-center justify-center rounded-full bg-surface-elevated/90 text-surface-elevated-foreground hover:bg-surface-elevated focus:outline-none focus:ring-2 focus:ring-ring"
-                        aria-label={t('chat.toolOutputDialog.image.previousAria')}
-                    >
-                        <Icon name="arrow-left-s" className="h-6 w-6" />
-                    </button>
-                    <button
-                        type="button"
-                        onMouseDown={(event) => event.stopPropagation()}
-                        onClick={showNext}
-                        className="absolute inset-e-3 top-1/2 -translate-y-1/2 z-10 h-10 w-10 flex items-center justify-center rounded-full bg-surface-elevated/90 text-surface-elevated-foreground hover:bg-surface-elevated focus:outline-none focus:ring-2 focus:ring-ring"
-                        aria-label={t('chat.toolOutputDialog.image.nextAria')}
-                    >
-                        <Icon name="arrow-right-s" className="h-6 w-6" />
-                    </button>
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <button
+                                type="button"
+                                onMouseDown={(event) => event.stopPropagation()}
+                                onClick={showPrevious}
+                                className="absolute inset-s-3 top-1/2 -translate-y-1/2 z-10 h-10 w-10 flex items-center justify-center rounded-full bg-surface-elevated/90 text-surface-elevated-foreground hover:bg-surface-elevated focus:outline-none focus:ring-2 focus:ring-ring"
+                                aria-label={t('chat.toolOutputDialog.image.previousAria')}
+                            >
+                                <Icon name="arrow-left-s" className="h-6 w-6" />
+                            </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" sideOffset={6}>{t('chat.toolOutputDialog.image.previousAria')}</TooltipContent>
+                    </Tooltip>
+                    <Tooltip>
+                        <TooltipTrigger asChild>
+                            <button
+                                type="button"
+                                onMouseDown={(event) => event.stopPropagation()}
+                                onClick={showNext}
+                                className="absolute inset-e-3 top-1/2 -translate-y-1/2 z-10 h-10 w-10 flex items-center justify-center rounded-full bg-surface-elevated/90 text-surface-elevated-foreground hover:bg-surface-elevated focus:outline-none focus:ring-2 focus:ring-ring"
+                                aria-label={t('chat.toolOutputDialog.image.nextAria')}
+                            >
+                                <Icon name="arrow-right-s" className="h-6 w-6" />
+                            </button>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" sideOffset={6}>{t('chat.toolOutputDialog.image.nextAria')}</TooltipContent>
+                    </Tooltip>
                 </>
             )}
 
@@ -974,7 +981,6 @@ const MermaidPreviewDialog: React.FC<{
                                         singleTilde={false}
                                         content={mermaidMarkdown}
                                         variant="tool"
-                                        allowMermaidWheelEvents
                                         className="markdown-mermaid-fullscreen h-full"
                                         mermaidControls={mermaidControls}
                                         enableFileReferences={false}
@@ -1039,7 +1045,7 @@ const ToolOutputDialog: React.FC<ToolOutputDialogProps> = ({ popup, onOpenChange
                     </div>
                 </div>
                 <div className="flex-1 min-h-0 rounded-xl oc-tile overflow-hidden">
-                    <div className="tool-output-surface h-full max-h-[75vh] overflow-y-auto px-3 pe-4">
+                    <ScrollableOverlay outerClassName="h-full max-h-[75vh]" className="tool-output-surface px-3 pe-4" disableHorizontal>
                         {popup.metadata?.input && typeof popup.metadata.input === 'object' &&
                             Object.keys(popup.metadata.input).length > 0 &&
                             popup.metadata?.tool !== 'patch' ? (() => {
@@ -1064,7 +1070,7 @@ const ToolOutputDialog: React.FC<ToolOutputDialogProps> = ({ popup, onOpenChange
                                     </div>
                                     {isShellTool(metaTool) && getInputValue('command') ? (
                                         <div className="tool-input-surface oc-tile rounded-xl mx-3">
-                                            <WorkerHighlightedCode
+                                            <HighlightedCode
                                                 language="bash"
                                                 code={getInputValue('command')!}
                                                 style={toolDisplayStyles.getPopupStyles()}
@@ -1161,7 +1167,7 @@ const ToolOutputDialog: React.FC<ToolOutputDialogProps> = ({ popup, onOpenChange
                                 if (tool === 'web-search' || tool === 'websearch' || tool === 'search_web') {
                                     return (
                                         renderWebSearchOutput(popup.content) || (
-                                            <WorkerHighlightedCode
+                                            <HighlightedCode
                                                 language="text"
                                                 code={popup.content}
                                                 style={toolDisplayStyles.getPopupContainerStyles()}
@@ -1189,7 +1195,7 @@ const ToolOutputDialog: React.FC<ToolOutputDialogProps> = ({ popup, onOpenChange
                                 }
 
                                 return (
-                                    <WorkerHighlightedCode
+                                    <HighlightedCode
                                         language={popup.language || 'text'}
                                         code={popup.content}
                                         style={toolDisplayStyles.getPopupContainerStyles()}
@@ -1205,7 +1211,7 @@ const ToolOutputDialog: React.FC<ToolOutputDialogProps> = ({ popup, onOpenChange
                             <div className="typography-meta">{t('chat.toolOutputDialog.noOutputProduced')}</div>
                         </div>
                     )}
-                    </div>
+                    </ScrollableOverlay>
                 </div>
             </DialogContent>
         </Dialog>

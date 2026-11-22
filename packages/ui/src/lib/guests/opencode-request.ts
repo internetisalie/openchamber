@@ -28,7 +28,7 @@ export const proxyGuestOpenCodeRequest = async (
   if (guest?.enabled === false) {
     return failed('DISABLED', 'This extension is disabled in Settings -> Extensions.');
   }
-  if (!guest || !guestMay(guest, 'opencode')) {
+  if (!guest || !guestMay(guest, 'opencode-plugin')) {
     return failed('NOT_GRANTED', 'The user has not allowed this capability for the extension.');
   }
   const plugin = guest.openCode?.plugins.find((entry) => entry.id === request.pluginId);

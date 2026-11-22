@@ -13,8 +13,11 @@ export const createGracefulShutdownRuntime = (dependencies) => {
     sessionGoalRuntime,
     contextObligatoryRuntime,
     sessionWarmingRuntime,
+    sessionTodosRuntime,
     autoReviewRuntime,
     prWatchRuntime,
+    extensionWaitsRuntime = null,
+    mergeFollowRuntime,
     messageQueueRuntime,
     dispatchResultsRuntime,
     workflowRuntime = null,
@@ -40,6 +43,7 @@ export const createGracefulShutdownRuntime = (dependencies) => {
     tunnelAuthController,
     beginGuestServiceShutdown,
     stopAllGuestServices,
+    extensionServiceLifetime,
     extensionSessionEvents,
     getGuestSurfaceRuntime,
     getRealtimeProxyRuntime,
@@ -47,6 +51,7 @@ export const createGracefulShutdownRuntime = (dependencies) => {
     getRelayService,
     getRelayReconcileTimer,
     getSpacesHost = () => null,
+    stopFolderWatches = () => {},
   } = dependencies;
 
   let shutdownPromise = null;
@@ -77,6 +82,9 @@ export const createGracefulShutdownRuntime = (dependencies) => {
     // subscriber in the same tick, so no event reaches a service's refusal
     // ("the host is shutting down") and reads as a broken service entry.
     extensionSessionEvents?.stop?.();
+    extensionServiceLifetime?.stop?.();
+    // The same for wait checks: a refused check would back off a healthy type.
+    extensionWaitsRuntime?.stop?.();
     syncToHmrState();
     console.log('Starting graceful shutdown...');
     const exitProcess = typeof options.exitProcess === 'boolean' ? options.exitProcess : getExitOnShutdown();
@@ -91,6 +99,7 @@ export const createGracefulShutdownRuntime = (dependencies) => {
       () => getSpacesHost()?.close(),
       () => getRelayService()?.stop(),
       () => getDictationRuntime()?.stop(),
+      stopFolderWatches,
       () => openCodeWatcherRuntime.stop(),
       () => sessionRuntime.dispose(),
       () => sessionAssistRuntime?.stop?.(),
@@ -98,8 +107,10 @@ export const createGracefulShutdownRuntime = (dependencies) => {
       () => sessionGoalRuntime?.stop?.(),
       () => contextObligatoryRuntime?.stop?.(),
       () => sessionWarmingRuntime?.stop?.(),
+      () => sessionTodosRuntime?.stop?.(),
       () => autoReviewRuntime?.stop?.(),
       () => prWatchRuntime?.stop?.(),
+      () => mergeFollowRuntime?.stop?.(),
       () => messageQueueRuntime?.stop?.(),
       () => dispatchResultsRuntime?.stop?.(),
       () => workflowRuntime?.shutdown(),

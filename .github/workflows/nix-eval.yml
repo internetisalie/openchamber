@@ -54,3 +54,22 @@ jobs:
 
       - name: Build server and desktop
         run: nix build --no-link -L .#openchamber .#openchamber-desktop
+
+      - name: Smoke test the packaged CLI and its update refusal
+        run: |
+          set -euo pipefail
+          expected_version=$(nix eval --raw .#openchamber.version)
+          backend_version=$(nix eval --raw .#opencode-cli.version)
+          app=$(nix build --no-link --print-out-paths .#openchamber)
+          backend=$(nix build --no-link --print-out-paths .#opencode-cli)
+          HOME=$(mktemp -d)
+          trap 'rm -rf "$HOME"' EXIT
+          export HOME XDG_CONFIG_HOME="$HOME/config" XDG_CACHE_HOME="$HOME/cache" XDG_DATA_HOME="$HOME/data" XDG_STATE_HOME="$HOME/state"
+          reported_version=$("$app/bin/openchamber" --version)
+          test "${reported_version%%-internetisalie.*}" = "$expected_version"
+          test "$("$backend/bin/opencode" --version)" = "opencode v$backend_version"
+          if "$app/bin/openchamber" update --json > "$HOME/update.json"; then
+            echo 'The packaged fork CLI allowed an in-place update' >&2
+            exit 1
+          fi
+          grep -F 'FORK_MANUAL_UPDATE_REQUIRED' "$HOME/update.json"

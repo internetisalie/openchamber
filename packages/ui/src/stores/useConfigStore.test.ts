@@ -15,6 +15,7 @@ let liveProviderIdsByDirectory = new Map<string, string>();
 let liveProviderVariants: string[] | undefined;
 let getProvidersCalls = 0;
 let getConfigCalls = 0;
+let configByDirectory = new Map<string, Config>();
 let listAgentsCalls = 0;
 let liveAgents: TestAgent[] = [];
 let listAgentsImpl: ((directory?: string | null) => Promise<TestAgent[]>) | null = null;
@@ -30,7 +31,7 @@ let probeHealthOptions: Array<{ waitMs?: number } | undefined> = [];
 let loadSettingsImpl: (() => Promise<DesktopSettings | null>) | null = null;
 let projectsState: {
   activeProjectId: string | null;
-  projects: Array<{ id: string; path: string; label: string; defaultAgent?: string }>;
+  projects: Array<{ id: string; path: string; label: string; defaultAgent?: string; defaultModel?: string; defaultVariant?: string }>;
 } = {
   activeProjectId: 'project',
   projects: [
@@ -145,6 +146,8 @@ mock.module('@/stores/useProjectsStore', () => ({
 }));
 
 let directoryAvailability: 'available' | 'missing' | 'unknown' = 'available';
+let clientDirectory = DIRECTORY;
+let clientDirectoryMoves: Array<string | undefined> = [];
 
 const opencodeClientModule = await import('@/lib/opencode/client');
 mock.module('@/lib/opencode/client', () => ({
@@ -153,9 +156,12 @@ mock.module('@/lib/opencode/client', () => ({
   OpencodeApiError: Error,
   normalizeOpencodeError: (operation: string, error: unknown) => new Error(`${operation}: ${String(error)}`),
   opencodeClient: {
-    setDirectory: mock(() => undefined),
-    getDirectory: mock(() => DIRECTORY),
+    setDirectory: mock((directory?: string) => {
+      clientDirectoryMoves.push(directory);
+    }),
+    getDirectory: mock(() => clientDirectory),
     getFilesystemHome: async () => '/workspace',
+    getFilesystemHomeInfo: async () => ({ home: '/workspace', chatsRoot: '/workspace/.config/openchamber/chats' }),
     getSystemInfo: async () => ({ homeDirectory: '/workspace' }),
     checkHealth: () => checkHealthImpl(),
     probeHealth: (options?: { waitMs?: number }) => {
@@ -190,14 +196,21 @@ mock.module('@/lib/opencode/client', () => ({
       const impl = listAgentsImpl as ((directory?: string | null) => Promise<TestAgent[]>) | null;
       return impl ? impl(directory) : liveAgents;
     }),
-    getConfig: mock(async () => {
+    getConfig: mock(async (directory?: string | null) => {
       getConfigCalls += 1;
-      return {};
+      return configByDirectory.get(directory ?? '') ?? {};
     }),
     clearConfigCache: mock(() => undefined),
     getDirectoryAvailability: mock(async () => directoryAvailability),
     invalidateAgentList: mock(() => undefined),
   },
+}));
+
+let trustPendingDirectories = new Set<string>();
+const opencodeTrustModule = await import('@/lib/opencodeTrust');
+mock.module('@/lib/opencodeTrust', () => ({
+  ...opencodeTrustModule,
+  isOpenCodeTrustPending: async (directory: string) => trustPendingDirectories.has(directory),
 }));
 
 mock.module('@/contexts/runtimeAPIRegistry', () => ({
@@ -253,7 +266,7 @@ const {
   useConfigStore,
   selectConfigAgentsForDirectory,
   selectProvidersForDirectory,
-  selectImageOnlyProvidersForDirectory,
+  selectSettingsOnlyProvidersForDirectory,
   selectCatalogLoadedForDirectory,
   markConfigCatalogStale,
   selectKnownAgent,
@@ -285,12 +298,16 @@ describe('useConfigStore provider persistence', () => {
     liveProviderVariants = undefined;
     getProvidersCalls = 0;
     getConfigCalls = 0;
+    configByDirectory = new Map<string, Config>();
     listAgentsCalls = 0;
     liveAgents = [];
     listAgentsImpl = null;
     getProvidersForConfigImpl = null;
+    trustPendingDirectories = new Set<string>();
     withDirectoryCalls = [];
     currentFetchDirectory = DIRECTORY;
+    clientDirectory = DIRECTORY;
+    clientDirectoryMoves = [];
     persistedOpenChamberSettings = {};
     settingsLoadCalls = 0;
     checkHealthImpl = async () => true;
@@ -300,6 +317,7 @@ describe('useConfigStore provider persistence', () => {
     setSyncRefs({} as never, { children: new Map(), getState: () => undefined } as never, DIRECTORY);
     useSelectionStore.setState({
       sessionModelSelections: new Map(),
+      sessionPickedModels: new Map(),
       sessionAgentSelections: new Map(),
       sessionAgentModelSelections: new Map(),
       lastUsedProvider: null,
@@ -557,13 +575,30 @@ describe('useConfigStore provider persistence', () => {
       ['chat', ['talk']],
       ['mixed', ['talk']],
     ]);
-    expect(selectImageOnlyProvidersForDirectory(state, DIRECTORY).map((entry) => [entry.id, entry.models.map((item) => item.modelID)])).toEqual([
+    expect(selectSettingsOnlyProvidersForDirectory(state, DIRECTORY).map((entry) => [entry.id, entry.models.map((item) => item.modelID)])).toEqual([
       ['wawa', ['flare']],
     ]);
-    expect(selectImageOnlyProvidersForDirectory(state, OTHER_DIRECTORY)).toEqual([]);
+    expect(selectSettingsOnlyProvidersForDirectory(state, OTHER_DIRECTORY)).toEqual([]);
 
     useConfigStore.getState().invalidateProviderCache(DIRECTORY);
-    expect(selectImageOnlyProvidersForDirectory(useConfigStore.getState(), DIRECTORY)).toEqual([]);
+    expect(selectSettingsOnlyProvidersForDirectory(useConfigStore.getState(), DIRECTORY)).toEqual([]);
+  });
+
+  test('a provider with no model at all is kept for Settings and stays out of the chat catalog', async () => {
+    // What a Copilot Free or Student sign-in leaves: OpenCode lists the provider
+    // and answers no model for it.
+    getProvidersForConfigImpl = async () => ({
+      providers: [providerInfo('chat'), providerInfo('github-copilot')],
+      models: [model('chat', 'talk')],
+      default: { providerID: 'chat', id: 'talk' },
+    });
+    await useConfigStore.getState().activateDirectory(DIRECTORY);
+
+    const state = useConfigStore.getState();
+    expect(state.providers.map((entry) => entry.id)).toEqual(['chat']);
+    expect(selectSettingsOnlyProvidersForDirectory(state, DIRECTORY).map((entry) => [entry.id, entry.models])).toEqual([
+      ['github-copilot', []],
+    ]);
   });
 
   test('Settings without a project reads the active catalog', () => {
@@ -1172,6 +1207,66 @@ describe('useConfigStore provider persistence', () => {
     expect(state.currentModelId).toBe('gpt-5.5');
     expect(state.currentVariant).toBe('high');
   });
+
+  test('[issue-5933] a manual model pick survives picking an agent that configures a model', () => {
+    const sessionId = 'ses_5933_manual_model_survives_agent';
+    useSessionUIStore.setState({ currentSessionId: sessionId });
+    useConfigStore.setState({
+      activeDirectoryKey: DIRECTORY,
+      providers: [
+        provider('openai', 'gpt-5.5', ['low', 'high']),
+        provider('anthropic', 'claude-3', ['low', 'high']),
+      ],
+      agents: [testAgent('plan', { model: { providerID: 'openai', modelID: 'gpt-5.5' } })],
+      settingsDefaultModel: 'openai/gpt-5.5',
+      // Restores also mark the model manual; the pending pick records intent.
+      currentProviderId: 'anthropic',
+      currentModelId: 'claude-3',
+      currentVariant: undefined,
+      selectionSource: 'manual',
+      directoryScoped: {},
+    });
+
+    useSelectionStore.getState().pickSessionModel(sessionId, 'anthropic', 'claude-3');
+    // Picking an agent must not move the session off the model the user chose.
+    useConfigStore.getState().setAgent('plan');
+
+    const state = useConfigStore.getState();
+    expect(state.currentProviderId).toBe('anthropic');
+    expect(state.currentModelId).toBe('claude-3');
+    expect(state.selectionSource).toBe('manual');
+    expect(useSelectionStore.getState().getAgentModelForSession(sessionId, 'plan')).toEqual({
+      providerId: 'anthropic',
+      modelId: 'claude-3',
+    });
+  });
+
+  for (const scenario of ['older override', 'undiscovered pinned model', 'restored selection', 'draft pick']) {
+    test(`[issue-5933] model precedence with ${scenario}`, () => {
+      const sessionId = 'ses_5933_precedence';
+      useSessionUIStore.setState({ currentSessionId: scenario === 'draft pick' ? null : sessionId });
+      useConfigStore.setState({
+        activeDirectoryKey: DIRECTORY,
+        providers: [provider('anthropic', 'claude-3', ['low', 'high']), provider('openai', 'gpt-5.5')],
+        agents: [testAgent('plan', { model: {
+          providerID: 'openai', modelID: scenario === 'undiscovered pinned model' ? 'not-discovered' : 'gpt-5.5',
+        } })],
+        settingsDefaultModel: 'openai/gpt-5.5',
+        currentProviderId: 'anthropic', currentModelId: 'claude-3', selectionSource: 'manual',
+        currentVariant: 'high', currentVariantSelection: { override: 'high', inherited: 'low' },
+      });
+      const selection = useSelectionStore.getState();
+      if (scenario === 'older override') selection.saveAgentModelForSession(sessionId, 'plan', 'openai', 'gpt-5.5');
+      if (scenario !== 'restored selection') selection.pickSessionModel(sessionId, 'anthropic', 'claude-3');
+      else selection.saveSessionModelSelection(sessionId, 'anthropic', 'claude-3');
+
+      useConfigStore.getState().setAgent('plan');
+
+      expect(useConfigStore.getState().currentModelId).toBe(scenario === 'restored selection' ? 'gpt-5.5' : 'claude-3');
+      expect(useConfigStore.getState().selectionSource).toBe(scenario === 'restored selection' ? 'auto' : 'manual');
+      expect(useConfigStore.getState().currentVariant).toBe(scenario === 'restored selection' ? undefined : 'high');
+    });
+  }
 
   test('[issue-4601] the settings effort stays with the settings model', () => {
     const sessionId = 'ses_4601_settings_effort';
@@ -1799,6 +1894,78 @@ describe('useConfigStore provider persistence', () => {
     expect(useConfigStore.getState().projectConfigErrors).toEqual({});
   });
 
+  test('startup with an open chat loads the chat folder catalog, not the active project one (#5522)', async () => {
+    const chatDirectory = '/workspace/.config/openchamber/chats/chat-1';
+    clientDirectory = chatDirectory;
+    const agentDirectories: Array<string | null | undefined> = [];
+    listAgentsImpl = async (directory) => {
+      agentDirectories.push(directory);
+      return [testAgent('build')];
+    };
+    useSessionUIStore.setState({ currentSessionId: 'ses_chat', currentSessionDirectory: chatDirectory });
+    await useConfigStore.getState().initializeApp();
+
+    expect(useConfigStore.getState().isInitialized).toBe(true);
+    expect(useConfigStore.getState().activeDirectoryKey).toBe(chatDirectory);
+    expect(agentDirectories).toEqual([chatDirectory]);
+    expect(clientDirectoryMoves).toEqual([]);
+  });
+
+  test('startup with a chat draft loads the Chats root catalog, not the active project one (#6283)', async () => {
+    clientDirectory = DIRECTORY;
+    const agentDirectories: Array<string | null | undefined> = [];
+    listAgentsImpl = async (directory) => {
+      agentDirectories.push(directory);
+      return [testAgent('build')];
+    };
+    const draftBefore = useSessionUIStore.getState().newSessionDraft;
+    useSessionUIStore.setState({ currentSessionId: null, newSessionDraft: { ...draftBefore, open: true, target: 'chat' } });
+    try {
+      await useConfigStore.getState().initializeApp();
+    } finally {
+      useSessionUIStore.setState({ newSessionDraft: draftBefore });
+    }
+
+    expect(useConfigStore.getState().activeDirectoryKey).toBe('/workspace/.config/openchamber/chats');
+    expect(agentDirectories).toEqual(['/workspace/.config/openchamber/chats']);
+    expect(clientDirectoryMoves).toEqual([]);
+  });
+
+  test('startup left a chat draft while the Chats root was loading keeps the opened session catalog (#6283)', async () => {
+    const chatDirectory = '/workspace/.config/openchamber/chats/chat-1';
+    clientDirectory = chatDirectory;
+    const agentDirectories: Array<string | null | undefined> = [];
+    listAgentsImpl = async (directory) => {
+      agentDirectories.push(directory);
+      return [testAgent('build')];
+    };
+    const draftBefore = useSessionUIStore.getState().newSessionDraft;
+    useSessionUIStore.setState({ currentSessionId: null, newSessionDraft: { ...draftBefore, open: true, target: 'chat' } });
+    try {
+      const startup = useConfigStore.getState().initializeApp();
+      useSessionUIStore.setState({ currentSessionId: 'ses_chat', currentSessionDirectory: DIRECTORY, newSessionDraft: draftBefore });
+      await startup;
+    } finally {
+      useSessionUIStore.setState({ newSessionDraft: draftBefore });
+    }
+
+    expect(useConfigStore.getState().activeDirectoryKey).toBe(DIRECTORY);
+    expect(agentDirectories).toEqual([DIRECTORY]);
+  });
+
+  test('startup without an open session still loads an unknown folder under the active project', async () => {
+    clientDirectory = '/workspace';
+    const agentDirectories: Array<string | null | undefined> = [];
+    listAgentsImpl = async (directory) => {
+      agentDirectories.push(directory);
+      return [testAgent('build')];
+    };
+    await useConfigStore.getState().initializeApp();
+
+    expect(useConfigStore.getState().activeDirectoryKey).toBe(DIRECTORY);
+    expect(agentDirectories).toEqual([DIRECTORY]);
+  });
+
   test('an unreachable server is recorded as the startup failure', async () => {
     probeHealthImpl = async () => 'unreachable';
     await useConfigStore.getState().initializeApp();
@@ -1837,6 +2004,37 @@ describe('useConfigStore provider persistence', () => {
 
     expect(useConfigStore.getState().isInitialized).toBe(true);
     expect(useConfigStore.getState().lastInitFailure).toBeNull();
+  }, 10_000);
+
+  test('a project folder OpenCode cannot open does not block startup, even when our server can read it', async () => {
+    listAgentsImpl = async () => {
+      throw Object.assign(new Error('agent.list failed: Location not found: /100.64.0.1/share'), { tag: 'LocationNotFoundError' });
+    };
+    await useConfigStore.getState().initializeApp();
+
+    expect(useConfigStore.getState().isInitialized).toBe(true);
+    expect(useConfigStore.getState().lastInitFailure).toBeNull();
+  }, 10_000);
+
+  test('a project the user has not trusted does not block startup', async () => {
+    listAgentsImpl = async () => {
+      throw Object.assign(new Error('agent.list failed (403): unexpected status'), { status: 403 });
+    };
+    trustPendingDirectories = new Set([DIRECTORY]);
+    await useConfigStore.getState().initializeApp();
+
+    expect(useConfigStore.getState().isInitialized).toBe(true);
+    expect(useConfigStore.getState().lastInitFailure).toBeNull();
+  }, 10_000);
+
+  test('a 403 from a trusted project still fails startup', async () => {
+    listAgentsImpl = async () => {
+      throw Object.assign(new Error('agent.list failed (403): unexpected status'), { status: 403 });
+    };
+    await useConfigStore.getState().initializeApp();
+
+    expect(useConfigStore.getState().isInitialized).toBe(false);
+    expect(useConfigStore.getState().lastInitFailure?.step).toBe('loadAgents');
   }, 10_000);
 
   test('a failed agent load records its error text, and a later success clears it', async () => {
@@ -2199,6 +2397,36 @@ describe('useConfigStore provider persistence', () => {
     expect(useConfigStore.getState().providers.map((entry) => entry.id)).toEqual(['plugin']);
   });
 
+  test('fresh provider and agent triggers during a fresh read share a post-call replacement', async () => {
+    const providers = deferred<TestProviderResponse>();
+    const agents = deferred<TestAgent[]>();
+    const newProviders = deferred<TestProviderResponse>();
+    const newAgents = deferred<TestAgent[]>();
+    let providerReads = 0;
+    let agentReads = 0;
+    getProvidersForConfigImpl = () => ++providerReads === 1 ? providers.promise : newProviders.promise;
+    listAgentsImpl = () => ++agentReads === 1 ? agents.promise : newAgents.promise;
+    const providerBefore = getProvidersCalls;
+    const agentBefore = listAgentsCalls;
+    const triggers = Array.from({ length: 8 }, () => [
+      useConfigStore.getState().loadProviders({ directory: DIRECTORY, fresh: true }),
+      useConfigStore.getState().loadAgents({ directory: DIRECTORY, fresh: true }),
+    ]).flat();
+    providers.resolve(providerResponse('old'));
+    agents.resolve([{ name: 'build', mode: 'primary' }]);
+    await Promise.all(triggers.slice(0, 2));
+    for (let index = 0; index < 20; index += 1) await Promise.resolve();
+    expect(getProvidersCalls - providerBefore).toBe(2);
+    expect(listAgentsCalls - agentBefore).toBe(2);
+    newProviders.resolve(providerResponse('live'));
+    newAgents.resolve([{ name: 'new-build', mode: 'primary' }]);
+    await Promise.all(triggers);
+    expect(getProvidersCalls - providerBefore).toBe(2);
+    expect(listAgentsCalls - agentBefore).toBe(2);
+    expect(useConfigStore.getState().directoryScoped[DIRECTORY]?.providers[0]?.id).toBe('live');
+    expect(useConfigStore.getState().directoryScoped[DIRECTORY]?.agents[0]?.name).toBe('new-build');
+  });
+
   test('a directory whose providers never loaded is read once more on its own', async () => {
     let calls = 0;
     getProvidersForConfigImpl = async () => {
@@ -2316,7 +2544,7 @@ describe('useConfigStore provider persistence', () => {
     expect(useConfigStore.getState().providers).toEqual([]);
   });
 
-  test('keeps a saved default model while a sidecar temporarily omits it', async () => {
+  test('a saved default the live catalog no longer lists gives way without being cleared', async () => {
     liveAgents = [testAgent('build')];
     liveProviderId = 'sidecar';
     persistedOpenChamberSettings = { defaultModel: 'sidecar/default' };
@@ -2326,7 +2554,86 @@ describe('useConfigStore provider persistence', () => {
 
     expect(useConfigStore.getState().settingsDefaultModel).toBe('sidecar/default');
     expect(useConfigStore.getState().currentProviderId).toBe('sidecar');
-    expect(useConfigStore.getState().currentModelId).toBe('default');
+    expect(useConfigStore.getState().currentModelId).toBe('sidecar-model');
+  });
+
+  test('a live catalog without the project default selects the global default (provider removed)', async () => {
+    liveAgents = [testAgent('build')];
+    projectsState.projects[0] = { ...projectsState.projects[0], defaultModel: 'removed/chosen', defaultVariant: 'high' };
+    persistedOpenChamberSettings = { defaultModel: 'global/global-model', defaultVariant: 'low' };
+    getProvidersForConfigImpl = async () => ({
+      providers: [providerInfo('global'), providerInfo('opencode')],
+      models: [model('global', 'global-model', ['low', 'high']), model('opencode', 'big-pickle')],
+      default: { providerID: 'opencode', id: 'big-pickle' },
+    });
+
+    await useConfigStore.getState().loadProviders({ directory: DIRECTORY });
+    await useConfigStore.getState().loadAgents({ directory: DIRECTORY });
+    expect(useConfigStore.getState()).toMatchObject({ currentProviderId: 'global', currentModelId: 'global-model', currentVariant: 'low' });
+
+    useConfigStore.getState().applyDefaultModelAgentSelection();
+    expect(useConfigStore.getState()).toMatchObject({ currentProviderId: 'global', currentModelId: 'global-model', currentVariant: 'low' });
+    // The project keeps its setting: reconnecting the provider brings it back.
+    expect(projectsState.projects[0]?.defaultModel).toBe('removed/chosen');
+  });
+
+  test('a draft on the project default moves to the global default when a re-read drops its provider', async () => {
+    liveAgents = [testAgent('build')];
+    projectsState.projects[0] = { ...projectsState.projects[0], defaultModel: 'project/chosen' };
+    persistedOpenChamberSettings = { defaultModel: 'global/global-model' };
+    const withProject = {
+      providers: [providerInfo('project'), providerInfo('global')],
+      models: [model('project', 'chosen'), model('global', 'global-model')],
+      default: { providerID: 'global', id: 'global-model' },
+    };
+    getProvidersForConfigImpl = async () => withProject;
+    await useConfigStore.getState().loadProviders({ directory: DIRECTORY });
+    await useConfigStore.getState().loadAgents({ directory: DIRECTORY });
+    expect(useConfigStore.getState()).toMatchObject({ currentProviderId: 'project', currentModelId: 'chosen' });
+
+    getProvidersForConfigImpl = async () => providerResponse('global', 'global-model');
+    await useConfigStore.getState().loadProviders({ directory: DIRECTORY, fresh: true });
+    expect(useConfigStore.getState()).toMatchObject({ currentProviderId: 'global', currentModelId: 'global-model' });
+  });
+
+  test('a re-read that drops the project default falls to the agent pin when no global default runs', async () => {
+    liveAgents = [testAgent('build', { model: { providerID: 'agent', modelID: 'pinned' } })];
+    projectsState.projects[0] = { ...projectsState.projects[0], defaultModel: 'project/chosen' };
+    const catalog = (withProject: boolean) => ({
+      providers: [...(withProject ? [providerInfo('project')] : []), providerInfo('agent'), providerInfo('opencode')],
+      models: [...(withProject ? [model('project', 'chosen')] : []), model('agent', 'pinned'), model('opencode', 'big-pickle')],
+      default: { providerID: 'opencode', id: 'big-pickle' },
+    });
+    getProvidersForConfigImpl = async () => catalog(true);
+    await useConfigStore.getState().loadProviders({ directory: DIRECTORY });
+    await useConfigStore.getState().loadAgents({ directory: DIRECTORY });
+    expect(useConfigStore.getState()).toMatchObject({ currentProviderId: 'project', currentModelId: 'chosen' });
+
+    getProvidersForConfigImpl = async () => catalog(false);
+    await useConfigStore.getState().loadProviders({ directory: DIRECTORY, fresh: true });
+    expect(useConfigStore.getState()).toMatchObject({ currentProviderId: 'agent', currentModelId: 'pinned' });
+  });
+
+  test('with neither configured default in the live catalog the last chat pick and fallback skip missing models too', async () => {
+    liveAgents = [testAgent('build')];
+    projectsState.projects[0] = { ...projectsState.projects[0], defaultModel: 'removed/chosen' };
+    persistedOpenChamberSettings = { defaultModel: 'removed/global' };
+    useUIStore.getState().setLastSelectedModel('removed', 'picked');
+    getProvidersForConfigImpl = async () => providerResponse('opencode', 'big-pickle');
+
+    await useConfigStore.getState().loadProviders({ directory: DIRECTORY });
+    await useConfigStore.getState().loadAgents({ directory: DIRECTORY });
+    expect(useConfigStore.getState()).toMatchObject({ currentProviderId: 'opencode', currentModelId: 'big-pickle' });
+  });
+
+  test('an empty live catalog keeps the configured default', async () => {
+    liveAgents = [testAgent('build')];
+    persistedOpenChamberSettings = { defaultModel: 'sidecar/chosen' };
+    getProvidersForConfigImpl = async () => ({ ...providerResponse('opencode', 'big-pickle'), providers: [], models: [] });
+
+    await useConfigStore.getState().loadProviders({ directory: DIRECTORY });
+    await useConfigStore.getState().loadAgents({ directory: DIRECTORY });
+    expect(useConfigStore.getState()).toMatchObject({ currentProviderId: 'sidecar', currentModelId: 'chosen' });
   });
 
   test('a fresh draft keeps its configured identity and thinking before discovery and after return', async () => {
@@ -2340,13 +2647,10 @@ describe('useConfigStore provider persistence', () => {
     });
     persistedOpenChamberSettings = { defaultModel: 'sidecar/chosen', defaultVariant: 'high', defaultAgent: 'build' };
     liveAgents = [testAgent('build')];
-    getProvidersForConfigImpl = async () => (providerResponse('opencode', 'big-pickle'));
+    getProvidersForConfigImpl = async () => (providerResponse('sidecar', 'chosen', ['high']));
     await useConfigStore.getState().loadProviders({ directory: DIRECTORY });
     await useConfigStore.getState().loadAgents({ directory: DIRECTORY });
     useConfigStore.getState().applyDefaultModelAgentSelection();
-    expect(useConfigStore.getState()).toMatchObject({ currentProviderId: 'sidecar', currentModelId: 'chosen', currentVariant: 'high' });
-    getProvidersForConfigImpl = async () => (providerResponse('sidecar', 'chosen', ['high']));
-    await useConfigStore.getState().loadProviders({ directory: DIRECTORY });
     expect(useConfigStore.getState()).toMatchObject({ currentProviderId: 'sidecar', currentModelId: 'chosen', currentVariant: 'high' });
     expect(useConfigStore.getState().getCurrentModel()?.modelID).toBe('chosen');
   });
@@ -2376,7 +2680,11 @@ describe('useConfigStore provider persistence', () => {
 
   test('does not choose Big Pickle while settings are still loading', async () => {
     useConfigStore.setState({ settingsDefaultsLoaded: false });
-    getProvidersForConfigImpl = async () => (providerResponse('opencode', 'big-pickle'));
+    getProvidersForConfigImpl = async () => ({
+      providers: [providerInfo('opencode'), providerInfo('sidecar')],
+      models: [model('opencode', 'big-pickle'), model('sidecar', 'chosen')],
+      default: { providerID: 'opencode', id: 'big-pickle' },
+    });
     await useConfigStore.getState().loadProviders({ directory: DIRECTORY });
     useConfigStore.getState().applyDefaultModelAgentSelection();
     expect(useConfigStore.getState().currentModelId).toBe('');
@@ -3479,6 +3787,69 @@ describe('useConfigStore provider persistence', () => {
     expect(hydrated.directoryScoped[OTHER_DIRECTORY]?.providers).toEqual([]);
     expect(selectCatalogLoadedForDirectory(hydrated, 'models', OTHER_DIRECTORY)).toBe(false);
     expect(selectCatalogLoadedForDirectory(hydrated, 'agents', OTHER_DIRECTORY)).toBe(false);
+  });
+
+  describe('defaults of a directory that is not active', () => {
+    const worktree = `${OTHER_DIRECTORY}/.oc/worktrees/quiet-otter`;
+
+    beforeEach(() => {
+      // The composer of the active project holds a pick of its own.
+      useConfigStore.setState({
+        activeDirectoryKey: DIRECTORY,
+        providers: [provider('live', 'chosen')],
+        agents: [testAgent('build'), testAgent('review')],
+        currentProviderId: 'live',
+        currentModelId: 'chosen',
+        currentAgentName: 'review',
+        selectionSource: 'manual',
+        agentSelectionSource: 'manual',
+      });
+      liveProviderIdsByDirectory.set(worktree, 'wt');
+      listAgentsImpl = async (directory) => (directory === worktree
+        ? [{ name: 'build', mode: 'primary' }, { name: 'plan', mode: 'primary' }]
+        : [{ name: 'build', mode: 'primary' }, { name: 'review', mode: 'primary' }]);
+    });
+
+    test('come from that directory and leave the composer pick alone', async () => {
+      configByDirectory.set(worktree, { default_agent: 'plan' });
+      projectsState.projects[1] = { ...projectsState.projects[1], defaultModel: 'wt/wt-model' };
+
+      const resolved = await useConfigStore.getState().resolveDirectoryDefaultSelection(worktree);
+
+      expect(resolved).toEqual({ agentName: 'plan', providerId: 'wt', modelId: 'wt-model', variant: undefined });
+      const state = useConfigStore.getState();
+      expect(state.activeDirectoryKey).toBe(DIRECTORY);
+      expect([state.currentProviderId, state.currentModelId, state.currentAgentName]).toEqual(['live', 'chosen', 'review']);
+    });
+
+    test('give a model the effort that directory\'s project configures for it', () => {
+      projectsState.projects[0] = { ...projectsState.projects[0], defaultModel: 'shared/model', defaultVariant: 'high' };
+      projectsState.projects[1] = { ...projectsState.projects[1], defaultModel: 'shared/model', defaultVariant: 'low' };
+
+      const state = useConfigStore.getState();
+      expect(state.getDefaultVariantForModel('shared', 'model')).toBe('high');
+      expect(state.getDefaultVariantForModel('shared', 'model', worktree)).toBe('low');
+    });
+
+    test('leave the agent to OpenCode when the directory names none it can read', async () => {
+      listAgentsImpl = async () => [];
+
+      const resolved = await useConfigStore.getState().resolveDirectoryDefaultSelection(worktree);
+
+      expect(resolved).toEqual({ agentName: undefined, providerId: 'wt', modelId: 'wt-model', variant: undefined });
+    });
+
+    test('answer nothing once the runtime changed', async () => {
+      const agents = deferred<TestAgent[]>();
+      listAgentsImpl = () => agents.promise;
+      switchRuntimeEndpoint({ apiBaseUrl: 'https://defaults-a.example', runtimeKey: 'defaults-a' });
+
+      const resolving = useConfigStore.getState().resolveDirectoryDefaultSelection(worktree);
+      switchRuntimeEndpoint({ apiBaseUrl: 'https://defaults-b.example', runtimeKey: 'defaults-b' });
+      agents.resolve([{ name: 'plan', mode: 'primary' }]);
+
+      expect(await resolving).toBeNull();
+    });
   });
 });
 

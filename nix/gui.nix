@@ -160,6 +160,7 @@ stdenv.mkDerivation {
         CFBundleVersion="${version}",
         CFBundleURLTypes=[dict(CFBundleURLName="OpenChamber", CFBundleURLSchemes=["openchamber"])],
         NSLocalNetworkUsageDescription=package["build"]["mac"]["extendInfo"]["NSLocalNetworkUsageDescription"],
+        NSAppleEventsUsageDescription=package["build"]["mac"]["extendInfo"]["NSAppleEventsUsageDescription"],
     )
     with open(path, "wb") as handle:
         plistlib.dump(info, handle)
@@ -202,23 +203,17 @@ stdenv.mkDerivation {
       "${self}/packages/electron/resources/icons/app-icon.png" \
       "${self}/packages/electron/resources/icons/tray" "$resources/icons/"
     mkdir -p "$resources/opencode-cli"
-    cp "${opencodeCli}/bin/opencode" "$resources/opencode-cli/opencode"
-    chmod 0755 "$resources/opencode-cli/opencode"
+    # Keep the wrapped binary with the original Nix package.
+    ln -s "${opencodeCli}/bin/opencode" "$resources/opencode-cli/opencode"
 
-    # Pin invariant: the bundled CLI must be the version
-    # packages/electron/package.json asks for (upstream's flake appends the
-    # git rev, hence the substring match). The CLI needs a writable HOME
-    # even for --version.
-    stagedVersion="$(
-      HOME="$(mktemp -d)" OPENCODE_DISABLE_MODELS_FETCH=1 "$resources/opencode-cli/opencode" --version 2>/dev/null
-    )"
-    case "$stagedVersion" in
-      *"v${opencodeCliVersion}"*) ;;
-      *)
-        echo "opencode CLI version mismatch: staged '$stagedVersion', want ${opencodeCliVersion}"
-        exit 1
-        ;;
-    esac
+    # Validate the copied launcher, including its ability to find the real binary.
+    probeHome=$(mktemp -d)
+    stagedVersion="$(HOME="$probeHome" OPENCODE_DISABLE_MODELS_FETCH=1 "$resources/opencode-cli/opencode" --version)"
+    rm -r "$probeHome"
+    if [ "$stagedVersion" != "opencode v${opencodeCliVersion}" ]; then
+      echo "opencode CLI version mismatch: staged '$stagedVersion', want ${opencodeCliVersion}"
+      exit 1
+    fi
 
     mkdir -p "$out/bin"
     platformFlags=()
