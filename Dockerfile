@@ -4,8 +4,8 @@ FROM oven/bun:1.4.4 AS base
 WORKDIR /app
 
 FROM base AS opencode-pin
-ENV OPENCODE_VERSION=2.3.2-internetisalie.1 \
-    OPENCODE_SHA256=1ad27563118985930cc6ba0dd48a918036c40fa7c5c63cd6c18fb3272f461c36
+ENV OPENCODE_VERSION=2.3.2-internetisalie.2 \
+    OPENCODE_SHA256=d4c80a9fb537894e424c4f6bdc832c984ef31a511c538ea4dcd89420ec0412c6
 
 FROM opencode-pin AS opencode-release
 ADD --checksum=sha256:${OPENCODE_SHA256} --chmod=755 https://github.com/internetisalie/opencode/releases/download/v${OPENCODE_VERSION}/opencode-linux-x64-baseline /opencode
